@@ -1,0 +1,34 @@
+The following persons have contributed to the Quake project over the years:
+
+Leonardo Ramirez	Initial formulation for the solving method and
+			earthquake source generation.
+			First version of quakesource.c, quakesource.h,
+			geometrics.h.  Extensive contributions to psolve.c,
+			stations.{c,h}, planes.{c,h}, checkpointing.{c,h}
+
+Julio Lopez		Parallel I/O for bulk wavefield and mesh output 
+			Initial version of output.{c,h}, util.{c,h},
+			htimer.h, commutil.{c,h}, funcname.h.  Extensive
+			changes to psolve.{c,h}, quakesource.c, cvm.c.
+			Minor modifications to octor{c,h}.  Initial version
+			of the etre library.
+
+Ricardo Taborda		Non-linear formulation.  Initial version of
+			non-linear.{c,h}.  Extensive contributions to psolve.c
+			
+Haydar Karaoglu		New decomposition method.  Contributions to psolve.c
+
+John Urbanic		Plane output routines. Initial version of plane.{c,h}
+			Changes to geometrics.c
+
+Tiankai Tu		Parallel octree mesh generation and etree library.
+			First version of octor.c, octor.h, psolve.c and cvm
+			modules.  Initial version of the the etree libray in
+			the etree directory.
+
+Jacobo Bielak		Mathematical formulation for the numerical solving
+			method, damping, boundary conditions, earthquake
+			source generation.
+
+David O'Hallaron	Design of the overall parallel solver and mesh
+			generator.

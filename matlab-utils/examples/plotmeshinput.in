@@ -1,0 +1,14 @@
+x dimension in km : 800
+y dimension in km : 800
+z dimension in km : 800
+where to start plotting (x coordinate) : 500
+where to end plotting (x coordinate) : 600
+where to start plotting (y coordinate) : 500
+where to end plotting (y coordinate) : 800
+where to start plotting (z coordinate) :100
+where to end plotting (z coordinate) : 150
+which of these to plot as 4th dimension Vs(1) Vp(2) or Rho(3): 3
+number of processors used : 8
+path to directory where coordinates are stored : /Users/administrator/testrun/outputfiles/For_Matlab
+path to directory where data are stored : /Users/administrator/testrun/outputfiles/For_Matlab
+plot processor(p) or data(d) : d

@@ -1,0 +1,37 @@
+The Etree Library: A System for Manipulating Large Octrees on Disk.
+
+Copyright (c) 2003
+Tiankai Tu and  David R. O'Hallaron 
+Carnegie Mellon University.
+All rights reserved.
+
+May not be used, modified, or copied without permission.
+
+Contact: 
+Tiankai Tu
+Computer Science Department
+Carnegie Mellon University
+5000 Forbes Avenue
+Pittsburgh, PA 15213
+email: tutk@cs.cmu.edu
+
+
+Files:
+
+Makefile	 "Makefile" to build the library, simply type 'make'
+README		 This file
+
+btree.c		 B-tree related routines definition
+btree.h		 B-tree related routines declaration
+buffer.c	 Page cache routines definition
+buffer.h	 Page cache routines declaration
+code.c		 Locational code routines definition
+code.h		 Locational code routines declaration
+dlink.c		 Double-linked list routines definition
+dlink.h		 Double-linked list routines declaration
+etree.c		 Etree routines definition (i.e., implementation)
+etree.h		 Etree API (i.e., routines declaration)
+schema.h     Schema manipulation routines declaration
+schema.c     Schema manipulation routines definition
+xplatform.h  Declaration of routines that support cross platform operations
+xplatform.c  Definition of routines that support cross platform operations

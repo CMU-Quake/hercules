@@ -1,0 +1,17 @@
+###############################################################################
+#                                                                             #
+# physics.in: Physical quantities input file to CMU FEM toolchain.            #
+# Lines start with # are comments. Empty lines are ignored.		      #
+#                                                                             #
+###############################################################################
+
+region_origin_latitude_deg  = 34.500000
+region_origin_longitude_deg = -121.000000 
+region_depth_shallow_m      = 0
+region_length_east_m        = 600000
+region_length_north_m       = 300000
+region_depth_deep_m         = 84375 
+region_azimuth_leftface_deg = 0
+type_of_damping		    = rayleigh
+source_directory	    = sourcepoint
+source_directory_output     = scratch/sourcetmp

@@ -1,0 +1,33 @@
+###############################################################################
+#                                                                             #
+# physics.in: Physical quantities input file to CMU FEM toolchain.            #
+#             Lines start with # are comments. Empty lines are ignored.       #
+#                                                                             #
+###############################################################################
+
+region_origin_latitude_deg  = 40.7756
+region_origin_longitude_deg = 23.1997
+region_depth_shallow_m      = 0
+region_length_east_m        = 1000
+region_length_north_m       = 1000
+region_depth_deep_m         = 500
+
+output_mesh              = 1
+output_displacement      = 0
+output_velocity          = 0
+output_parallel          = 1
+simulation_output_rate   = 8
+
+output_displacement_file = disp.h4d
+output_velocity_file     = vel.h4d
+output_stats_file        = output-stats.txt
+
+region_azimuth_leftface_deg = 0
+
+type_of_damping   = rayleigh
+
+source_directory  = /scratcha/hkaraogl/simple_case/inputfiles/sourcefiles
+
+source_directory_output =/scratcha/hkaraogl/simple_case/outputfiles/srctmp
+
+

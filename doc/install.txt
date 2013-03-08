@@ -1,0 +1,561 @@
+Hercules Ground-Motion Simulation Tool chain
+===========================================
+Julio Lopez
+$Id: install.txt,v 1.10 2010/12/01 09:22:24 jclopez Exp $
+
+Hercules is an application developed by the CMU Quake project to simulate
+the motion of the ground during strong earthquakes.  The simulation is
+carried out by numerically solving in parallel a large number of partial
+differential equations (_Navier Equation_) using the Finite Element Method
+(FEM).
+
+Credits
+-------
+
+Many people have made contributions to the Hercules source code over time.
+The main developers are: Leonardo Ramirez-Guzman, Tiankai Tu, Ricardo
+Taborda, John Urbanic and Julio Lopez.  The project principal
+investigators are Jacobo Bielak and David O'Hallaron.
+
+
+This document describes how to build and run the Hercules parallel solver.
+
+
+Building Hercules
+-----------------
+
+This document assumes you have a copy of the Hercules source code.  In the
+following instructions, the variable +$HERCULES_DIR+ refers to top
+directory of the Hercules source distribution (i.e., the one containing
+the top-level `Makefile`, and the `common.mk` and `systemdef.mk` files,
+among others).  Below is an example of the contents of `$HERCULES_DIR`.
+
+
+......................................................................
+-rw-r--r--  1 user group 11401 Nov 30  2007 ChangeLog
+-rw-r--r--  1 user group   569 Jul 16  2006 common.mk		<1>
+drwxr-xr-x  2 user group  2048 Jul 22 17:12 CVS
+drwxr-xr-x  3 user group  2048 Jul 22 17:12 doc
+drwxr-xr-x  3 user group  2048 Jul 22 13:45 etree
+drwxr-xr-x  4 user group  2048 Jul 22 17:12 examples		<2>
+-rw-r--r--  1 user group  1420 Jul 22 17:12 Makefile		<3>
+drwxr-xr-x  3 user group  2048 Jul 22 13:45 octor
+drwxr-xr-x  5 user group  2048 Aug 23  2007 quake		<4>
+-rw-r--r--  1 user group   383 Aug 23  2007 README
+-rw-r--r--  1 user group  3142 Nov 30  2007 systemdef.mk	<5>
+-rw-r-----  1 user group   585 Jul 13  2007 user.mk		<6>
+drwxr-xr-x  8 user group  4096 Jul 22 13:49 visualize
+......................................................................
+
+<1> File included in the Makefile with common flags used across
+    different platforms.
+
+<2> Directory with sample configuration files, including an example for
+    the `user.mk` file.
+
+<3> Main make file
+
+<4> Directory containing the source code for the main application.
+
+<5> File included in the main Makefile.  This contains compilation flags
+    that are specific to different platforms.
+
+<6> File with user-specific compilation flags.  The contents of this file
+    are explained below.
+
+
+Build-time configuration variables
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In order to build Hercules, the user specifies a set of compilation flags
+according to the platform where the application will execute.  These flags
+are stored in a file named `user.mk`.  Here is a list containing a few
+variables that can be specified in this file.
+
++SYSTEM+::     The make variable `SYSTEM` *MUST* be set in `user.mk`.
+	       This variable sets the platform where the code is being
+	       compiled and executed.  Other build flags are set
+	       accordingly depending on the value of this variable.  Valid
+	       values for this variable are: `LINUX-MPICH`, `BIGBEN`,
+	       `LEMIEUX`, `BGW`, `BGL`, `USCHPC`, `SCEC`.  Set the value of
+	       this variable to `LINUX-MPICH` when compiling the tools for
+	       execution in Linux(TM) clusters with the
+	       http://www.mcs.anl.gov/research/projects/mpich2[MPICH
+	       library].
+
++CFLAGS+::     User-specific flags for the compiler.
+
++CPPFLAGS+::   User-specific flags for the pre-processor.
+
++LDFLAGS+::    User-specific flags for the linker.
+
++VIS_CFLAGS+:: User-specific flags for the compilation of the visualization
+	       module.  If it is set to empty, then the code is compiled
+	       without visualization support.
+
+//////////////////////////////
++RUN_DIR+::    This variable is undocumented on purpose.  It will be
+	       removed in the future.  Currently it is necessary to set
+	       it for the code to compile, although its value is not
+	       really used.
+
++MPI_DIR+::    Directory where the MPI library is installed.
+//////////////////////////////
+
+
+.user.mk
+
+---------------------------------------------------------------------------
+# -*- Makefile -*-
+#
+# Description:  Local user preferences for Quake's Hercules tool chain build
+#               process.
+#
+
+SYSTEM=LINUX-MPICH
+
+RUN_DIR = /scratch/user/hercules-runs
+CFLAGS += -g -ggdb -O0 -DDEBUG
+#CFLAGS += -O3 -msse2
+
+#LDFLAGS += -g
+
+# Vis
+#VIS_CFLAGS = -DVIS -DVISINTERVAL=10
+VIS_CFLAGS =
+
+# I/O
+# - Prevent database replication
+# - Defining the SCEC macro prevents CVM database replication
+IO_CPPFLAGS = -DUSECVMDB -DSCEC  -DPROCPERNODE=4000
+---------------------------------------------------------------------------
+
+Compiling
+~~~~~~~~~
+
+To compile, run make on the top directory of the Hercules distribution
+(+$HERCULES_DIR+) as shown below:
+
+......................................................................
+
+ $ cd ${HERCULES_DIR}
+ $ make clean
+ $ make
+
+......................................................................
+
+
+
+Running Hercules
+----------------
+
+In order to run the Hercules tool chain, a set of execution
+parameters must be specified in the appropriate configuration files.
+These parameters include simulation-specific variables as well as the
+locations of input and output files.
+
+Inputs
+~~~~~~
+
+The execution input comprises the following:
+
+* Command line arguments.
+* Configuration files:
+  - +physics.in+
+  - +numerical.in+
+* Ground Material Database (GMD).
+* Earthquake rupture description.
+
+
+Outputs
+~~~~~~~
+
+Hercules produces the following outputs:
+
+* Mesh: Octree FEM mesh.
+* Displacement and velocity wave fields:  Data describing the displacement
+  and velocity of each mesh nodal point.
+* Monitor file: It contains monitoring information about the progress of
+  the simulation.  This file is very useful for checking progress in
+  batch environments.
+
+
+Run-time Configuration Parameters
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An execution of the Hercules tool chain is controlled through the
+parameters set in the command line arguments and the respective
+configuration files.
+
+Command line arguments
+^^^^^^^^^^^^^^^^^^^^^^
+
+The Hercules parallel solver program (+psolve+) takes the following
+command line arguments:
+
+GMD_NAME::     Filename for the Ground Material Database.
+PHYSICS.IN::   Name of the configuration file containing physics-related
+	       configuration parameters.
+NUMERICAL.IN:: Name of the configuration file containing various parameters
+	       in connection with the numerical simulation.
+MESH::	       File name for the output mesh
+DISPLACEMENT:: Filename for the displacement output field (_not used_).
+
+The <<LaunchingHercules,Section below>> contains a sample shell script
+that sets the command line arguments and launches the corresponding MPI
+job for the tool chain.
+
+
+Ground Material Database (GMD)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The ground material model is stored as an etree database file.  All the
+Hercules simulation processes need read access to this file.  The
+simulation processes access query this database during the mesh generation
+phase.  In order to make this file available to all the simulation
+processes, the file must be either stored in a distributed file system
+(e.g., Lustre) or it must be copied to a local directory in each of the
+compute hosts.  However, the complete path name for this file must be the
+same for all the processes.
+
+Suppose +$HERCULES_JOB_DIR+ is the directory used for the tool chain
+execution, that is, it contains your configuration and data files.  And,
++gmd.e+ is the etree file for the ground material database.  You could
+create a subdirectory named +material-models+ for storing your material
+models and then copy your file to that directory. For example:
+......................................................................
+   $ cd ${HERCULES_JOB_DIR}
+   $ mkdir material-models
+   $ cp my-material-database-source/gmd.e material-models
+......................................................................
+
+The Hercules main program obtains the location of the material database
+from the command line arguments.   <<LaunchingHercules,Below>> there is
+a sample shell for specifying the command line arguments for the
+tool chain.
+
+Configuration Files
+^^^^^^^^^^^^^^^^^^^
+
+The configuration files, `numerical.in` and `physics.in` contain various
+simulation parameters.  In particular, they contains parameters related to
+the output such as the location of the output files.  Sample configuration
+files are located in `$HERCULES_DIR/examples/test1`.  Here is a list of
+sample files (including different source types) that are contained in the
+examples directory of the Hercules distribution.
+
+.Examples directory
+
+........................................................................
++ examples
+|---+ test1
+|   |--   numerical.in
+|   |--   physics.in
+|   |---+ sourceplane
+|   |   |-- rake.in
+|   |   |-- slip.in
+|   |   `-- source.in
+|   |---+ sourcepoint
+|   |   `-- source.in
+|   `---+ sourceterashake
+|       |-- kink.in
+|       |-- rake.in
+|       |-- slip.in
+|       `-- source.in
+`-- user.mk-linux-mpich
+
+........................................................................
+
+
+.Configuration file `physics.in`
+
+The `physics.in` configuration file contains the following parameters:
+
++region_*+::		These parameters specify the location and extent
+			of the region where the event is
+			simulated. `region_origin_latitude_deg` and
+			`region_origin_longitude_deg` specify the location
+			of the South-West (bottom-left) corner of the
+			region in degrees.  `region_length_east_m` and
+			`region_length_north_m` specify the extent of the
+			region (in meters) to the North and East
+			respectively.  `region_depth_shallow_m` and
+			`region_depth_deep_m` specify the top and bottom
+			depth of the region in meters, e.g., 0--37500
+			meters.  `region_azimuth_leftface_deg` specifies
+			the angle between the leftmost face (line) of the
+			region and the meridian line going through the
+			region origin (South-West corner).  This is used
+			for tilted regions -- not parallel to the Equator.
+			*Note* These parameters must be modified to match
+			the parameters in the Ground Material Database
+			(GMD).
+
++type_of_damping+::	Simulation damping type (string).  It can take one
+			of the following values: "+rayleigh+", "+mass+",
+			"+none+".
+
+
++source_directory+::	Name of the directory containing the Earthquake
+			source rupture specification.  It can be relative
+			to the runtime directory or an absolute path name.
+			This directory must have a file named `source.in`
+			containing the parameters for the source rupture.
+
++source_directory_output+:: Name of the directory the location of the
+			    generated rupture files.  These are
+			    intermediate files that are generated by
+			    the solver.  They describe the forces
+			    involved in the rupture process.
+
+Here is a sample `physics.in` file.
+
+------------------------------------------------------------------------
+#
+# physics.in
+#
+# Physical quantities input file to CMU FEM tool chain.
+# Lines starting with '#' are comments.
+# Empty lines are ignored.
+#
+#
+
+region_origin_latitude_deg  = 33.580002
+region_origin_longitude_deg = -118.699997
+region_depth_shallow_m      = 0
+region_length_east_m        = 100000
+region_length_north_m       = 100000
+region_depth_deep_m         = 37500
+region_azimuth_leftface_deg = 0
+
+type_of_damping = mass
+
+source_directory = sourcepoint
+source_directory_output = sourcetmp
+------------------------------------------------------------------------
+
+.Earthquake Rupture description
+
+The file `source.in` in the source directory contains the parameters
+that are relevant to the event source.  Certain types of sources
+require additional data files depending on their type.  The source
+directory is specified as a parameter in `physics.in`.  Any additional
+files needed for the rupture are expected to be in the source directory.
+
+
+.Configuration file `numerical.in`
+
+This file contains various simulation parameters such as the maximum wave
+frequency to resolve for, the stepping interval (delta t), etc.  Below is
+a sample excerpt of a `numerical.in` file containing the parameters that
+are relevant to I/O.
+
+.Relevant I/O parameters in `numerical.in`
+
+------------------------------------------------------------------------
+#
+# Set to 1 if the results are needed. 0, otherwise.
+#
+output_displacement    = 1
+output_velocity        = 0
+output_mesh            = 1
+output_parallel        = 1
+simulation_output_rate = 10
+
+
+output_displacement_file = disp.h4d
+output_velocity_file     = vel.h4d
+output_stats_file        = output-stats.txt
+------------------------------------------------------------------------
+
+`output_mesh`:: Controls whether or not the output mesh should be
+		written to disk.
+
+`output_displacement`:: Controls whether or not to write the displacement
+			field to disk.
+
+`output_velocity`:: This parameter control whether or not the velocity
+		    field should be saved to disk.  When set to 1, the
+		    solver produces a file with the velocity field.
+
+`output_parallel`:: This parameter specifies whether or not the output
+		    should be performed in parallel.  This requires a
+		    POSIX compliant parallel file system.  This affects
+		    only the writing of the displacement and velocity
+		    fields, not the FEM mesh.  When set to 0, the
+		    sequential I/O code is used, i.e., node 0 collect the
+		    data from all nodes and then writes it to disk.
+
+`output_*_file`::   These parameters refer to the file names for the
+		    displacement, velocity and I/O statistic output files
+		    respectively.  The file names are either absolute path
+		    names (if they start with{nbsp}/) or names relative to
+		    the `$RUN_DIR` compile-time variable, set when the tool
+		    chain was built.
+
+
+
+
+[[LaunchingHercules]]
+Launching the MPI Hercules process
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Command line arguments:
+
+- Shell script `quake.sh`: You can use the sample shell script below to
+launch the solver.  To use this shell, you need to copy the `psolve`
+executable to the job directory (i.e., the directory that contains the
+input files).  Modify the NUM_PROC variable to specify the number of
+processes to launch.
+
+anchor:sample_quake_sh[Sample quake.sh]
+
+.Script to launch the MPI job (quake.sh)
+------------------------------------------------------------------------
+#!/bin/sh
+#
+# Description: Run Quake's Hercules numerical solver tool chain
+#
+
+# turn echo on
+set -v
+
+# set this directory appropriately
+# JOBDIR=my-job-dir
+JOBDIR=`dirname $0`
+NUM_PROC=2
+
+if [ -n "${JOBDIR}" ] ; then
+    JOBDIR=${PWD}
+fi
+
+PSOLVE_EXE=${JOBDIR}/psolve
+
+# GMD file
+GMD_NAME=${JOBDIR}/material-models/gmd.e
+PHYSICS_IN=${JOBDIR}/physics.in
+NUMERICAL_IN=${JOBDIR}/numerical.in
+MESH_OUT=${JOBDIR}/mesh.e
+RES_OUT=${JOBDIR}/disp-out.q4d
+
+mpiexec -np ${NUM_PROC} ${PSOLVE_EXE} ${GMD_NAME} \
+    ${PHYSICS_IN} ${NUMERICAL_IN} ${MESH_OUT} ${RES_OUT}
+------------------------------------------------------------------------
+
+Setting up MPI
+--------------
+
+Below are the instructions for running Hercules using MPICH-1 and MPICH-2
+respectively.
+
+MPICH-1
+~~~~~~~
+
+See the http://www-unix.mcs.anl.gov/mpi/mpich1/docs.html[MPICH 1
+documentation].
+
+MPICH-2
+~~~~~~~
+
+Running a process with MPICH-2 on a compute cluster requires configuring
+and launching the MPD daemon on the cluster members.  Below is a summary
+of the steps involved, for additional information please refer to the
+http://www.mcs.anl.gov/research/projects/mpich2/documentation/index.php?s=docs[MPICH-2 documentation].
+
+
+Create a MPD password file
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Create a file named +mpd.conf+ in your +$\{HOME\}+ directory.  Using the
+format shown below, assign a password that the MPD daemons will user for
+authentication.
+
+
+..mpd.conf file
+
+------------------------------------------------------------------------
+MPD_SECRETWORD=my-secret-word
+------------------------------------------------------------------------
+
+Change the file permissions so only the file owner can read it `(600)
+[-rw-------]`
+
+......................................................................
+   $ chmod 600 ${HOME}/.mpd.conf
+......................................................................
+
+
+Create a hosts files
+^^^^^^^^^^^^^^^^^^^^
+
+Create a file named `mpd.hosts`, each line containing a
+`hostname:number_of_cpus` tuple.  Omit localhost from the list of hosts.
+For example, assuming all the hosts in the cluster have 8 CPU cores, then
+the `mpd.hosts` file would look as follows:
+
+------------------------------------------------------------------------
+host00:8
+host01:8
+host02:8
+....
+------------------------------------------------------------------------
+
+
+Launch the MPD daemons
+^^^^^^^^^^^^^^^^^^^^^^
+
+Assuming the `mpd.hosts` file is in the current directory, launch the MPD
+processes in a set of hosts.  Suppose you want to run your MPI process on
+80 CPUS in 10 nodes (8 CPUs per node), then use the following command:
+
+......................................................................
+   $ mpdboot --ncpus=8 --totalnum=10 --file=mpd.hosts
+......................................................................
+
+This will start 10 MPD processes, one in the local host, the other 9
+processes are started on hosts specified in the mpd.hosts file.  The
+`--ncpus=8` parameter is used to specify the number of CPU cores for
+the local host.  
+
+Executing the MPI process
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A set of MPI processes (i.e., MPI job) can be started using `mpiexec` as
+follows:
+
+......................................................................
+   $ mpiexec -np <number_of_processors> program [program_arguments]
+......................................................................
+
+For convenience, use the xref:sample_quake_sh[sample quake.sh shell
+script] to launch the Hercules MPI processes.
+
+
+Terminate / shut down the MPD daemons
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+When all the MPI jobs have finished, shut down the running MPD daemons
+using the `mpdallexit` script:
+......................................................................
+   $ mpdallexit
+......................................................................
+
+
+Extracting a waveform
+---------------------
+
+......................................................................
+   $ cd ${HERCULES_DIR}/quake/forward
+   $ make q4node
+   $ q4node <displacement_file> <node_id>
+......................................................................
+
+/////////////////////////////////////////////////////////////////////
+ LocalWords:  CMU Navier FEM Tiankai Tu Taborda Urbanic Jacobo Bielak DIR txt
+ LocalWords:  O'Hallaron jclopez Exp mk systemdef rw ChangeLog drwxr xr CVS BGW
+ LocalWords:  etree octor README MPICH BIGBEN LEMIEUX BGL USCHPC SCEC CFLAGS cd
+ LocalWords:  CPPFLAGS pre LDFLAGS MPI Quake's CVM DUSECVMDB DSCEC DPROCPERNODE
+ LocalWords:  GMD Octree psolve LaunchingHercules Lustre mkdir cp gmd deg disp
+ LocalWords:  leftface sourcepoint sourcetmp vel PROC JOBDIR PWD fi EXE mpiexec
+ LocalWords:  np NUM mpd conf SECRETWORD
+/////////////////////////////////////////////////////////////////////

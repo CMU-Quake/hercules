@@ -1,0 +1,2 @@
+This directory contains wrapper code around etree library 
+and tools for querying the mesh etree. Used by both the mesher and the solver.

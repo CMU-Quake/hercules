@@ -1,0 +1,91 @@
+###############################################################################
+#                                                                             #
+# source.in:  Source quantities input file to CMU FEM toolchain.              #
+#             Lines start with # are comments. Empty lines are ignored.       #
+#                                                                             #
+# Revised version that facilitate parameter conversions.                      #
+# Leonardo Ramirez 2006                                                       #
+#                                                                             #
+###############################################################################
+
+
+###############################################################################
+#                                                                              
+# FILTER RELATED (ONLY BUTTERWORTH )
+#                                                                              
+###############################################################################
+
+source_is_filtered = 1
+
+threshold_frequency    = .5
+
+number_of_poles        = 22
+
+
+###############################################################################
+#                                                                              
+# SOURCE DESCRIPTION                                                           
+#                                                                              
+###############################################################################
+
+number_of_time_windows = 6
+
+time_windows =
+0 1 2 3 4 5
+
+
+type_of_source = planewithkinks
+
+
+###############################################################################
+#                                                                             
+# STRIKE SLIP TYPE SOURCES                                                     
+#                                                                             
+###############################################################################
+
+
+source_function_type = exponential
+
+average_risetime_sec = .5 
+
+extended_average_rupture_velocity   = 3000 
+
+extended_cell_size_down_dip_m       = 200.
+
+
+#the extended edge is assigned (1 recomended )
+extended_isminimumedgeautomatic = 1
+
+extended_depth_m                    = 0
+
+extended_cells_along_strike         = 1000 
+#extended_cells_along_strike         = 500
+extended_cells_down_dip             = 75
+#extended_cells_down_dip             = 32
+
+
+extended_hypocenter_along_strike_m  = 1.9871e5
+extended_hypocenter_down_dip_m      = 10e3
+extended_dip_deg                    = 90
+extended_number_of_kinks            = 6
+
+
+extended_kinks =
+	
+-117.4982 34.2895
+-117.2382 34.1547
+-116.7748 33.9878
+-116.4770 33.9240
+-116.2463 33.7882
+-115.7119 33.3501
+
+#
+#  Used to locate extended_kinks in mesh coordinates
+#
+
+domain_surface_corners =
+		      
+ -121.0        34.5
+ -118.951292   36.621696
+ -113.943965   33.122341
+ -116.032285   31.082920

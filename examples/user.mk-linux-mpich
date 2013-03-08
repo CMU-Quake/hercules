@@ -1,0 +1,45 @@
+# -*- Makefile -*-
+#
+# Description:  Local user preferences for Quake's Hercules toolchain build
+#               process.
+#
+
+SYSTEM=LINUX-MPICH
+
+#
+# Use the following CFLAGS value for debugging.
+#
+CFLAGS += -g -ggdb -O0 -DDEBUG
+
+#
+# Use the following CFLAGS value for actual production simulation.
+#
+#CFLAGS += -O3 -msse2
+
+#
+# The CVM_SRCPATH and CVM_DESTDIR variable do not need to be defined
+# in CFLAGS.  If they are not defined at compile time, they are read
+# from run-time environment variables of the same name set by the
+# process (e.g., shell) launching the solver.
+#
+#RUN_DIR = /scratch/user-name/hercules-runs
+#CFLAGS += -DCVM_SRCPATH=\"$(RUN_DIR)/cvmdb/labase.e\"
+#CFLAGS += -DCVM_DESTDIR=\"$(RUN_DIR)/\"
+
+#
+# Linker flag used to include debugging symbols in the executables and libs.
+#
+#LDFLAGS += -g
+
+# Vis
+#VIS_CFLAGS = -DVIS -DVISINTERVAL=10
+VIS_CFLAGS =
+
+# I/O
+# - Prevent database replication
+# - Definining the SCEC macro prevents CVM database replication
+# - Definining USECVMDB allows the code to use CVM etrees for the
+#   mesh generation.
+IO_CPPFLAGS = -DUSECVMDB -DSCEC  -DPROCPERNODE=4000
+
+#IO_CFLAGS -DNO_OUTPUT

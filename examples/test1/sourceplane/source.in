@@ -1,0 +1,64 @@
+
+# source.in:  Source quantities input file to CMU FEM toolchain.
+#             Lines start with # are comments. Empty lines are ignored.
+#
+#           
+#
+# Revised version that facilitate parameter conversions.
+# Leonardo Ramirez 2006
+#
+#
+#       Northridge 1994 earthquake, valid up to 1.OHz source. 
+#       The source is taken from Wald's webpage for Northridge inversion.
+#
+#
+
+
+################################################################################
+#                                                                              #
+# Filter related                                                               #
+#                                                                              #
+################################################################################
+
+source_is_filtered = 0 
+
+threshold_frequency    = 1.2
+
+number_of_poles        = 22
+
+number_of_time_windows  = 3
+
+time_windows=
+0 .4 .8
+
+type_of_source = plane
+
+################################################################################
+#                                                                              #
+# Plane                                                                        #
+#                                                                              #
+################################################################################
+source_function_type = quadratic
+
+average_risetime_sec = .6 
+
+extended_cell_size_along_strike_m   =  1285.7
+extended_cell_size_down_dip_m       =  1714.3
+
+
+#the extended edge is assigned yes (1 ) no(0)
+extended_isminimumedgeautomatic = 1
+
+#extended_minimum_edge_m             = 500. 
+
+extended_lat_deg                    = 34.3870
+extended_long_deg                   =-118.5976
+extended_depth_m                    = 5000
+
+extended_cells_along_strike         = 14
+extended_cells_down_dip             = 14
+extended_hypocenter_along_strike_m  = 15000
+extended_hypocenter_down_dip_m      = 19400
+extended_strike_deg                 = 122
+extended_dip_deg                    = 40
+extended_average_rupture_velocity   = 3000

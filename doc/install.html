@@ -1,0 +1,1214 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
+    "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<head>
+<meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8" />
+<meta name="generator" content="AsciiDoc 8.6.1" />
+<title>Hercules Ground-Motion Simulation Tool chain</title>
+<style type="text/css">
+/* Debug borders */
+p, li, dt, dd, div, pre, h1, h2, h3, h4, h5, h6 {
+/*
+  border: 1px solid red;
+*/
+}
+
+body {
+  margin: 1em 5% 1em 5%;
+}
+
+a {
+  color: blue;
+  text-decoration: underline;
+}
+a:visited {
+  color: fuchsia;
+}
+
+em {
+  font-style: italic;
+  color: navy;
+}
+
+strong {
+  font-weight: bold;
+  color: #083194;
+}
+
+tt {
+  color: navy;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: #527bbd;
+  font-family: sans-serif;
+  margin-top: 1.2em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+}
+
+h1, h2, h3 {
+  border-bottom: 2px solid silver;
+}
+h2 {
+  padding-top: 0.5em;
+}
+h3 {
+  float: left;
+}
+h3 + * {
+  clear: left;
+}
+
+div.sectionbody {
+  font-family: serif;
+  margin-left: 0;
+}
+
+hr {
+  border: 1px solid silver;
+}
+
+p {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+ul, ol, li > p {
+  margin-top: 0;
+}
+
+pre {
+  padding: 0;
+  margin: 0;
+}
+
+span#author {
+  color: #527bbd;
+  font-family: sans-serif;
+  font-weight: bold;
+  font-size: 1.1em;
+}
+span#email {
+}
+span#revnumber, span#revdate, span#revremark {
+  font-family: sans-serif;
+}
+
+div#footer {
+  font-family: sans-serif;
+  font-size: small;
+  border-top: 2px solid silver;
+  padding-top: 0.5em;
+  margin-top: 4.0em;
+}
+div#footer-text {
+  float: left;
+  padding-bottom: 0.5em;
+}
+div#footer-badges {
+  float: right;
+  padding-bottom: 0.5em;
+}
+
+div#preamble {
+  margin-top: 1.5em;
+  margin-bottom: 1.5em;
+}
+div.tableblock, div.imageblock, div.exampleblock, div.verseblock,
+div.quoteblock, div.literalblock, div.listingblock, div.sidebarblock,
+div.admonitionblock {
+  margin-top: 1.0em;
+  margin-bottom: 1.5em;
+}
+div.admonitionblock {
+  margin-top: 2.0em;
+  margin-bottom: 2.0em;
+  margin-right: 10%;
+  color: #606060;
+}
+
+div.content { /* Block element content. */
+  padding: 0;
+}
+
+/* Block element titles. */
+div.title, caption.title {
+  color: #527bbd;
+  font-family: sans-serif;
+  font-weight: bold;
+  text-align: left;
+  margin-top: 1.0em;
+  margin-bottom: 0.5em;
+}
+div.title + * {
+  margin-top: 0;
+}
+
+td div.title:first-child {
+  margin-top: 0.0em;
+}
+div.content div.title:first-child {
+  margin-top: 0.0em;
+}
+div.content + div.title {
+  margin-top: 0.0em;
+}
+
+div.sidebarblock > div.content {
+  background: #ffffee;
+  border: 1px solid silver;
+  padding: 0.5em;
+}
+
+div.listingblock > div.content {
+  border: 1px solid silver;
+  background: #f4f4f4;
+  padding: 0.5em;
+}
+
+div.quoteblock, div.verseblock {
+  padding-left: 1.0em;
+  margin-left: 1.0em;
+  margin-right: 10%;
+  border-left: 5px solid #dddddd;
+  color: #777777;
+}
+
+div.quoteblock > div.attribution {
+  padding-top: 0.5em;
+  text-align: right;
+}
+
+div.verseblock > pre.content {
+  font-family: inherit;
+}
+div.verseblock > div.attribution {
+  padding-top: 0.75em;
+  text-align: left;
+}
+/* DEPRECATED: Pre version 8.2.7 verse style literal block. */
+div.verseblock + div.attribution {
+  text-align: left;
+}
+
+div.admonitionblock .icon {
+  vertical-align: top;
+  font-size: 1.1em;
+  font-weight: bold;
+  text-decoration: underline;
+  color: #527bbd;
+  padding-right: 0.5em;
+}
+div.admonitionblock td.content {
+  padding-left: 0.5em;
+  border-left: 3px solid #dddddd;
+}
+
+div.exampleblock > div.content {
+  border-left: 3px solid #dddddd;
+  padding-left: 0.5em;
+}
+
+div.imageblock div.content { padding-left: 0; }
+span.image img { border-style: none; }
+a.image:visited { color: white; }
+
+dl {
+  margin-top: 0.8em;
+  margin-bottom: 0.8em;
+}
+dt {
+  margin-top: 0.5em;
+  margin-bottom: 0;
+  font-style: normal;
+  color: navy;
+}
+dd > *:first-child {
+  margin-top: 0.1em;
+}
+
+ul, ol {
+    list-style-position: outside;
+}
+ol.arabic {
+  list-style-type: decimal;
+}
+ol.loweralpha {
+  list-style-type: lower-alpha;
+}
+ol.upperalpha {
+  list-style-type: upper-alpha;
+}
+ol.lowerroman {
+  list-style-type: lower-roman;
+}
+ol.upperroman {
+  list-style-type: upper-roman;
+}
+
+div.compact ul, div.compact ol,
+div.compact p, div.compact p,
+div.compact div, div.compact div {
+  margin-top: 0.1em;
+  margin-bottom: 0.1em;
+}
+
+div.tableblock > table {
+  border: 3px solid #527bbd;
+}
+thead, p.table.header {
+  font-family: sans-serif;
+  font-weight: bold;
+  color: #527bbd;
+}
+tfoot {
+  font-weight: bold;
+}
+td > div.verse {
+  white-space: pre;
+}
+p.table {
+  margin-top: 0;
+}
+/* Because the table frame attribute is overriden by CSS in most browsers. */
+div.tableblock > table[frame="void"] {
+  border-style: none;
+}
+div.tableblock > table[frame="hsides"] {
+  border-left-style: none;
+  border-right-style: none;
+}
+div.tableblock > table[frame="vsides"] {
+  border-top-style: none;
+  border-bottom-style: none;
+}
+
+
+div.hdlist {
+  margin-top: 0.8em;
+  margin-bottom: 0.8em;
+}
+div.hdlist tr {
+  padding-bottom: 15px;
+}
+dt.hdlist1.strong, td.hdlist1.strong {
+  font-weight: bold;
+}
+td.hdlist1 {
+  vertical-align: top;
+  font-style: normal;
+  padding-right: 0.8em;
+  color: navy;
+}
+td.hdlist2 {
+  vertical-align: top;
+}
+div.hdlist.compact tr {
+  margin: 0;
+  padding-bottom: 0;
+}
+
+.comment {
+  background: yellow;
+}
+
+.footnote, .footnoteref {
+  font-size: 0.8em;
+}
+
+span.footnote, span.footnoteref {
+  vertical-align: super;
+}
+
+#footnotes {
+  margin: 20px 0 20px 0;
+  padding: 7px 0 0 0;
+}
+
+#footnotes div.footnote {
+  margin: 0 0 5px 0;
+}
+
+#footnotes hr {
+  border: none;
+  border-top: 1px solid silver;
+  height: 1px;
+  text-align: left;
+  margin-left: 0;
+  width: 20%;
+  min-width: 100px;
+}
+
+div.colist td {
+  padding-right: 0.5em;
+  padding-bottom: 0.3em;
+  vertical-align: top;
+}
+div.colist td img {
+  margin-top: 0.3em;
+}
+
+@media print {
+  div#footer-badges { display: none; }
+}
+
+div#toc {
+  margin-bottom: 2.5em;
+}
+
+div#toctitle {
+  color: #527bbd;
+  font-family: sans-serif;
+  font-size: 1.1em;
+  font-weight: bold;
+  margin-top: 1.0em;
+  margin-bottom: 0.1em;
+}
+
+div.toclevel1, div.toclevel2, div.toclevel3, div.toclevel4 {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+div.toclevel2 {
+  margin-left: 2em;
+  font-size: 0.9em;
+}
+div.toclevel3 {
+  margin-left: 4em;
+  font-size: 0.9em;
+}
+div.toclevel4 {
+  margin-left: 6em;
+  font-size: 0.9em;
+}
+
+</style>
+<script type="text/javascript">
+/*<![CDATA[*/
+window.onload = function(){asciidoc.footnotes();}
+var asciidoc = {  // Namespace.
+
+/////////////////////////////////////////////////////////////////////
+// Table Of Contents generator
+/////////////////////////////////////////////////////////////////////
+
+/* Author: Mihai Bazon, September 2002
+ * http://students.infoiasi.ro/~mishoo
+ *
+ * Table Of Content generator
+ * Version: 0.4
+ *
+ * Feel free to use this script under the terms of the GNU General Public
+ * License, as long as you do not remove or alter this notice.
+ */
+
+ /* modified by Troy D. Hanson, September 2006. License: GPL */
+ /* modified by Stuart Rackham, 2006, 2009. License: GPL */
+
+// toclevels = 1..4.
+toc: function (toclevels) {
+
+  function getText(el) {
+    var text = "";
+    for (var i = el.firstChild; i != null; i = i.nextSibling) {
+      if (i.nodeType == 3 /* Node.TEXT_NODE */) // IE doesn't speak constants.
+        text += i.data;
+      else if (i.firstChild != null)
+        text += getText(i);
+    }
+    return text;
+  }
+
+  function TocEntry(el, text, toclevel) {
+    this.element = el;
+    this.text = text;
+    this.toclevel = toclevel;
+  }
+
+  function tocEntries(el, toclevels) {
+    var result = new Array;
+    var re = new RegExp('[hH]([2-'+(toclevels+1)+'])');
+    // Function that scans the DOM tree for header elements (the DOM2
+    // nodeIterator API would be a better technique but not supported by all
+    // browsers).
+    var iterate = function (el) {
+      for (var i = el.firstChild; i != null; i = i.nextSibling) {
+        if (i.nodeType == 1 /* Node.ELEMENT_NODE */) {
+          var mo = re.exec(i.tagName);
+          if (mo && (i.getAttribute("class") || i.getAttribute("className")) != "float") {
+            result[result.length] = new TocEntry(i, getText(i), mo[1]-1);
+          }
+          iterate(i);
+        }
+      }
+    }
+    iterate(el);
+    return result;
+  }
+
+  var toc = document.getElementById("toc");
+  var entries = tocEntries(document.getElementById("content"), toclevels);
+  for (var i = 0; i < entries.length; ++i) {
+    var entry = entries[i];
+    if (entry.element.id == "")
+      entry.element.id = "_toc_" + i;
+    var a = document.createElement("a");
+    a.href = "#" + entry.element.id;
+    a.appendChild(document.createTextNode(entry.text));
+    var div = document.createElement("div");
+    div.appendChild(a);
+    div.className = "toclevel" + entry.toclevel;
+    toc.appendChild(div);
+  }
+  if (entries.length == 0)
+    toc.parentNode.removeChild(toc);
+},
+
+
+/////////////////////////////////////////////////////////////////////
+// Footnotes generator
+/////////////////////////////////////////////////////////////////////
+
+/* Based on footnote generation code from:
+ * http://www.brandspankingnew.net/archive/2005/07/format_footnote.html
+ */
+
+footnotes: function () {
+  var cont = document.getElementById("content");
+  var noteholder = document.getElementById("footnotes");
+  var spans = cont.getElementsByTagName("span");
+  var refs = {};
+  var n = 0;
+  for (i=0; i<spans.length; i++) {
+    if (spans[i].className == "footnote") {
+      n++;
+      // Use [\s\S] in place of . so multi-line matches work.
+      // Because JavaScript has no s (dotall) regex flag.
+      note = spans[i].innerHTML.match(/\s*\[([\s\S]*)]\s*/)[1];
+      noteholder.innerHTML +=
+        "<div class='footnote' id='_footnote_" + n + "'>" +
+        "<a href='#_footnoteref_" + n + "' title='Return to text'>" +
+        n + "</a>. " + note + "</div>";
+      spans[i].innerHTML =
+        "[<a id='_footnoteref_" + n + "' href='#_footnote_" + n +
+        "' title='View footnote' class='footnote'>" + n + "</a>]";
+      var id =spans[i].getAttribute("id");
+      if (id != null) refs["#"+id] = n;
+    }
+  }
+  if (n == 0)
+    noteholder.parentNode.removeChild(noteholder);
+  else {
+    // Process footnoterefs.
+    for (i=0; i<spans.length; i++) {
+      if (spans[i].className == "footnoteref") {
+        var href = spans[i].getElementsByTagName("a")[0].getAttribute("href");
+        href = href.match(/#.*/)[0];  // Because IE return full URL.
+        n = refs[href];
+        spans[i].innerHTML =
+          "[<a href='#_footnote_" + n +
+          "' title='View footnote' class='footnote'>" + n + "</a>]";
+      }
+    }
+  }
+}
+
+}
+/*]]>*/
+</script>
+</head>
+<body class="article">
+<div id="header">
+<h1>Hercules Ground-Motion Simulation Tool chain</h1>
+<span id="author">Julio Lopez</span><br />
+<span id="revnumber">version 1.9,</span>
+<span id="revdate">2009/04/17</span>
+</div>
+<div id="content">
+<div id="preamble">
+<div class="sectionbody">
+<div class="paragraph"><p>Hercules is an application developed by the CMU Quake project to simulate
+the motion of the ground during strong earthquakes.  The simulation is
+carried out by numerically solving in parallel a large number of partial
+differential equations (<em>Navier Equation</em>) using the Finite Element Method
+(FEM).</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_credits">Credits</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Many people have made contributions to the Hercules source code over time.
+The main developers are: Leonardo Ramirez-Guzman, Tiankai Tu, Ricardo
+Taborda, John Urbanic and Julio Lopez.  The project principal
+investigators are Jacobo Bielak and David O&#8217;Hallaron.</p></div>
+<div class="paragraph"><p>This document describes how to build and run the Hercules parallel solver.</p></div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_building_hercules">Building Hercules</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>This document assumes you have a copy of the Hercules source code.  In the
+following instructions, the variable <tt>$HERCULES_DIR</tt> refers to top
+directory of the Hercules source distribution (i.e., the one containing
+the top-level <tt>Makefile</tt>, and the <tt>common.mk</tt> and <tt>systemdef.mk</tt> files,
+among others).  Below is an example of the contents of <tt>$HERCULES_DIR</tt>.</p></div>
+<div class="literalblock">
+<div class="content">
+<pre><tt>-rw-r--r--  1 user group 11401 Nov 30  2007 ChangeLog
+-rw-r--r--  1 user group   569 Jul 16  2006 common.mk           <b>&lt;1&gt;</b>
+drwxr-xr-x  2 user group  2048 Jul 22 17:12 CVS
+drwxr-xr-x  3 user group  2048 Jul 22 17:12 doc
+drwxr-xr-x  3 user group  2048 Jul 22 13:45 etree
+drwxr-xr-x  4 user group  2048 Jul 22 17:12 examples            <b>&lt;2&gt;</b>
+-rw-r--r--  1 user group  1420 Jul 22 17:12 Makefile            <b>&lt;3&gt;</b>
+drwxr-xr-x  3 user group  2048 Jul 22 13:45 octor
+drwxr-xr-x  5 user group  2048 Aug 23  2007 quake               <b>&lt;4&gt;</b>
+-rw-r--r--  1 user group   383 Aug 23  2007 README
+-rw-r--r--  1 user group  3142 Nov 30  2007 systemdef.mk        <b>&lt;5&gt;</b>
+-rw-r-----  1 user group   585 Jul 13  2007 user.mk             <b>&lt;6&gt;</b>
+drwxr-xr-x  8 user group  4096 Jul 22 13:49 visualize</tt></pre>
+</div></div>
+<div class="colist arabic"><ol>
+<li>
+<p>
+File included in the Makefile with common flags used across
+    different platforms.
+</p>
+</li>
+<li>
+<p>
+Directory with sample configuration files, including an example for
+    the <tt>user.mk</tt> file.
+</p>
+</li>
+<li>
+<p>
+Main make file
+</p>
+</li>
+<li>
+<p>
+Directory containing the source code for the main application.
+</p>
+</li>
+<li>
+<p>
+File included in the main Makefile.  This contains compilation flags
+    that are specific to different platforms.
+</p>
+</li>
+<li>
+<p>
+File with user-specific compilation flags.  The contents of this file
+    are explained below.
+</p>
+</li>
+</ol></div>
+<div class="sect2">
+<h3 id="_build_time_configuration_variables">Build-time configuration variables</h3>
+<div class="paragraph"><p>In order to build Hercules, the user specifies a set of compilation flags
+according to the platform where the application will execute.  These flags
+are stored in a file named <tt>user.mk</tt>.  Here is a list containing a few
+variables that can be specified in this file.</p></div>
+<div class="dlist"><dl>
+<dt class="hdlist1">
+<tt>SYSTEM</tt>
+</dt>
+<dd>
+<p>
+The make variable <tt>SYSTEM</tt> <strong>MUST</strong> be set in <tt>user.mk</tt>.
+               This variable sets the platform where the code is being
+               compiled and executed.  Other build flags are set
+               accordingly depending on the value of this variable.  Valid
+               values for this variable are: <tt>LINUX-MPICH</tt>, <tt>BIGBEN</tt>,
+               <tt>LEMIEUX</tt>, <tt>BGW</tt>, <tt>BGL</tt>, <tt>USCHPC</tt>, <tt>SCEC</tt>.  Set the value of
+               this variable to <tt>LINUX-MPICH</tt> when compiling the tools for
+               execution in Linux&#8482; clusters with the
+               <a href="http://www.mcs.anl.gov/research/projects/mpich2">MPICH
+               library</a>.
+</p>
+</dd>
+<dt class="hdlist1">
+<tt>CFLAGS</tt>
+</dt>
+<dd>
+<p>
+User-specific flags for the compiler.
+</p>
+</dd>
+<dt class="hdlist1">
+<tt>CPPFLAGS</tt>
+</dt>
+<dd>
+<p>
+User-specific flags for the pre-processor.
+</p>
+</dd>
+<dt class="hdlist1">
+<tt>LDFLAGS</tt>
+</dt>
+<dd>
+<p>
+User-specific flags for the linker.
+</p>
+</dd>
+<dt class="hdlist1">
+<tt>VIS_CFLAGS</tt>
+</dt>
+<dd>
+<p>
+User-specific flags for the compilation of the visualization
+               module.  If it is set to empty, then the code is compiled
+               without visualization support.
+</p>
+</dd>
+</dl></div>
+<div class="listingblock">
+<div class="title">user.mk</div>
+<div class="content">
+<pre><tt># -*- Makefile -*-
+#
+# Description:  Local user preferences for Quake's Hercules tool chain build
+#               process.
+#
+
+SYSTEM=LINUX-MPICH
+
+RUN_DIR = /scratch/user/hercules-runs
+CFLAGS += -g -ggdb -O0 -DDEBUG
+#CFLAGS += -O3 -msse2
+
+#LDFLAGS += -g
+
+# Vis
+#VIS_CFLAGS = -DVIS -DVISINTERVAL=10
+VIS_CFLAGS =
+
+# I/O
+# - Prevent database replication
+# - Defining the SCEC macro prevents CVM database replication
+IO_CPPFLAGS = -DUSECVMDB -DSCEC  -DPROCPERNODE=4000</tt></pre>
+</div></div>
+</div>
+<div class="sect2">
+<h3 id="_compiling">Compiling</h3>
+<div class="paragraph"><p>To compile, run make on the top directory of the Hercules distribution
+(<tt>$HERCULES_DIR</tt>) as shown below:</p></div>
+<div class="literalblock">
+<div class="content">
+<pre><tt> $ cd ${HERCULES_DIR}
+ $ make clean
+ $ make</tt></pre>
+</div></div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_running_hercules">Running Hercules</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>In order to run the Hercules tool chain, a set of execution
+parameters must be specified in the appropriate configuration files.
+These parameters include simulation-specific variables as well as the
+locations of input and output files.</p></div>
+<div class="sect2">
+<h3 id="_inputs">Inputs</h3>
+<div class="paragraph"><p>The execution input comprises the following:</p></div>
+<div class="ulist"><ul>
+<li>
+<p>
+Command line arguments.
+</p>
+</li>
+<li>
+<p>
+Configuration files:
+</p>
+<div class="ulist"><ul>
+<li>
+<p>
+<tt>physics.in</tt>
+</p>
+</li>
+<li>
+<p>
+<tt>numerical.in</tt>
+</p>
+</li>
+</ul></div>
+</li>
+<li>
+<p>
+Ground Material Database (GMD).
+</p>
+</li>
+<li>
+<p>
+Earthquake rupture description.
+</p>
+</li>
+</ul></div>
+</div>
+<div class="sect2">
+<h3 id="_outputs">Outputs</h3>
+<div class="paragraph"><p>Hercules produces the following outputs:</p></div>
+<div class="ulist"><ul>
+<li>
+<p>
+Mesh: Octree FEM mesh.
+</p>
+</li>
+<li>
+<p>
+Displacement and velocity wave fields:  Data describing the displacement
+  and velocity of each mesh nodal point.
+</p>
+</li>
+<li>
+<p>
+Monitor file: It contains monitoring information about the progress of
+  the simulation.  This file is very useful for checking progress in
+  batch environments.
+</p>
+</li>
+</ul></div>
+</div>
+<div class="sect2">
+<h3 id="_run_time_configuration_parameters">Run-time Configuration Parameters</h3>
+<div class="paragraph"><p>An execution of the Hercules tool chain is controlled through the
+parameters set in the command line arguments and the respective
+configuration files.</p></div>
+<div class="sect3">
+<h4 id="_command_line_arguments">Command line arguments</h4>
+<div class="paragraph"><p>The Hercules parallel solver program (<tt>psolve</tt>) takes the following
+command line arguments:</p></div>
+<div class="dlist"><dl>
+<dt class="hdlist1">
+GMD_NAME
+</dt>
+<dd>
+<p>
+Filename for the Ground Material Database.
+</p>
+</dd>
+<dt class="hdlist1">
+PHYSICS.IN
+</dt>
+<dd>
+<p>
+Name of the configuration file containing physics-related
+               configuration parameters.
+</p>
+</dd>
+<dt class="hdlist1">
+NUMERICAL.IN
+</dt>
+<dd>
+<p>
+Name of the configuration file containing various parameters
+               in connection with the numerical simulation.
+</p>
+</dd>
+<dt class="hdlist1">
+MESH
+</dt>
+<dd>
+<p>
+File name for the output mesh
+</p>
+</dd>
+<dt class="hdlist1">
+DISPLACEMENT
+</dt>
+<dd>
+<p>
+Filename for the displacement output field (<em>not used</em>).
+</p>
+</dd>
+</dl></div>
+<div class="paragraph"><p>The <a href="#LaunchingHercules">Section below</a> contains a sample shell script
+that sets the command line arguments and launches the corresponding MPI
+job for the tool chain.</p></div>
+</div>
+<div class="sect3">
+<h4 id="_ground_material_database_gmd">Ground Material Database (GMD)</h4>
+<div class="paragraph"><p>The ground material model is stored as an etree database file.  All the
+Hercules simulation processes need read access to this file.  The
+simulation processes access query this database during the mesh generation
+phase.  In order to make this file available to all the simulation
+processes, the file must be either stored in a distributed file system
+(e.g., Lustre) or it must be copied to a local directory in each of the
+compute hosts.  However, the complete path name for this file must be the
+same for all the processes.</p></div>
+<div class="paragraph"><p>Suppose <tt>$HERCULES_JOB_DIR</tt> is the directory used for the tool chain
+execution, that is, it contains your configuration and data files.  And,
+<tt>gmd.e</tt> is the etree file for the ground material database.  You could
+create a subdirectory named <tt>material-models</tt> for storing your material
+models and then copy your file to that directory. For example:</p></div>
+<div class="literalblock">
+<div class="content">
+<pre><tt>   $ cd ${HERCULES_JOB_DIR}
+   $ mkdir material-models
+   $ cp my-material-database-source/gmd.e material-models</tt></pre>
+</div></div>
+<div class="paragraph"><p>The Hercules main program obtains the location of the material database
+from the command line arguments.   <a href="#LaunchingHercules">Below</a> there is
+a sample shell for specifying the command line arguments for the
+tool chain.</p></div>
+</div>
+<div class="sect3">
+<h4 id="_configuration_files">Configuration Files</h4>
+<div class="paragraph"><p>The configuration files, <tt>numerical.in</tt> and <tt>physics.in</tt> contain various
+simulation parameters.  In particular, they contains parameters related to
+the output such as the location of the output files.  Sample configuration
+files are located in <tt>$HERCULES_DIR/examples/test1</tt>.  Here is a list of
+sample files (including different source types) that are contained in the
+examples directory of the Hercules distribution.</p></div>
+<div class="literalblock">
+<div class="title">Examples directory</div>
+<div class="content">
+<pre><tt>+ examples
+|---+ test1
+|   |--   numerical.in
+|   |--   physics.in
+|   |---+ sourceplane
+|   |   |-- rake.in
+|   |   |-- slip.in
+|   |   `-- source.in
+|   |---+ sourcepoint
+|   |   `-- source.in
+|   `---+ sourceterashake
+|       |-- kink.in
+|       |-- rake.in
+|       |-- slip.in
+|       `-- source.in
+`-- user.mk-linux-mpich</tt></pre>
+</div></div>
+<div class="paragraph"><div class="title">Configuration file <tt>physics.in</tt></div><p>The <tt>physics.in</tt> configuration file contains the following parameters:</p></div>
+<div class="dlist"><dl>
+<dt class="hdlist1">
+<tt>region_*</tt>
+</dt>
+<dd>
+<p>
+These parameters specify the location and extent
+                        of the region where the event is
+                        simulated. <tt>region_origin_latitude_deg</tt> and
+                        <tt>region_origin_longitude_deg</tt> specify the location
+                        of the South-West (bottom-left) corner of the
+                        region in degrees.  <tt>region_length_east_m</tt> and
+                        <tt>region_length_north_m</tt> specify the extent of the
+                        region (in meters) to the North and East
+                        respectively.  <tt>region_depth_shallow_m</tt> and
+                        <tt>region_depth_deep_m</tt> specify the top and bottom
+                        depth of the region in meters, e.g., 0&#8212;37500
+                        meters.  <tt>region_azimuth_leftface_deg</tt> specifies
+                        the angle between the leftmost face (line) of the
+                        region and the meridian line going through the
+                        region origin (South-West corner).  This is used
+                        for tilted regions&#8201;&#8212;&#8201;not parallel to the Equator.
+                        <strong>Note</strong> These parameters must be modified to match
+                        the parameters in the Ground Material Database
+                        (GMD).
+</p>
+</dd>
+<dt class="hdlist1">
+<tt>type_of_damping</tt>
+</dt>
+<dd>
+<p>
+Simulation damping type (string).  It can take one
+                        of the following values: "<tt>rayleigh</tt>", "<tt>mass</tt>",
+                        "<tt>none</tt>".
+</p>
+</dd>
+<dt class="hdlist1">
+<tt>source_directory</tt>
+</dt>
+<dd>
+<p>
+Name of the directory containing the Earthquake
+                        source rupture specification.  It can be relative
+                        to the runtime directory or an absolute path name.
+                        This directory must have a file named <tt>source.in</tt>
+                        containing the parameters for the source rupture.
+</p>
+</dd>
+<dt class="hdlist1">
+<tt>source_directory_output</tt>
+</dt>
+<dd>
+<p>
+Name of the directory the location of the
+                            generated rupture files.  These are
+                            intermediate files that are generated by
+                            the solver.  They describe the forces
+                            involved in the rupture process.
+</p>
+</dd>
+</dl></div>
+<div class="paragraph"><p>Here is a sample <tt>physics.in</tt> file.</p></div>
+<div class="listingblock">
+<div class="content">
+<pre><tt>#
+# physics.in
+#
+# Physical quantities input file to CMU FEM tool chain.
+# Lines starting with '#' are comments.
+# Empty lines are ignored.
+#
+#
+
+region_origin_latitude_deg  = 33.580002
+region_origin_longitude_deg = -118.699997
+region_depth_shallow_m      = 0
+region_length_east_m        = 100000
+region_length_north_m       = 100000
+region_depth_deep_m         = 37500
+region_azimuth_leftface_deg = 0
+
+type_of_damping = mass
+
+source_directory = sourcepoint
+source_directory_output = sourcetmp</tt></pre>
+</div></div>
+<div class="paragraph"><div class="title">Earthquake Rupture description</div><p>The file <tt>source.in</tt> in the source directory contains the parameters
+that are relevant to the event source.  Certain types of sources
+require additional data files depending on their type.  The source
+directory is specified as a parameter in <tt>physics.in</tt>.  Any additional
+files needed for the rupture are expected to be in the source directory.</p></div>
+<div class="paragraph"><div class="title">Configuration file <tt>numerical.in</tt></div><p>This file contains various simulation parameters such as the maximum wave
+frequency to resolve for, the stepping interval (delta t), etc.  Below is
+a sample excerpt of a <tt>numerical.in</tt> file containing the parameters that
+are relevant to I/O.</p></div>
+<div class="listingblock">
+<div class="title">Relevant I/O parameters in <tt>numerical.in</tt></div>
+<div class="content">
+<pre><tt>#
+# Set to 1 if the results are needed. 0, otherwise.
+#
+output_displacement    = 1
+output_velocity        = 0
+output_mesh            = 1
+output_parallel        = 1
+simulation_output_rate = 10
+
+
+output_displacement_file = disp.h4d
+output_velocity_file     = vel.h4d
+output_stats_file        = output-stats.txt</tt></pre>
+</div></div>
+<div class="dlist"><dl>
+<dt class="hdlist1">
+<tt>output_mesh</tt>
+</dt>
+<dd>
+<p>
+Controls whether or not the output mesh should be
+                written to disk.
+</p>
+</dd>
+<dt class="hdlist1">
+<tt>output_displacement</tt>
+</dt>
+<dd>
+<p>
+Controls whether or not to write the displacement
+                        field to disk.
+</p>
+</dd>
+<dt class="hdlist1">
+<tt>output_velocity</tt>
+</dt>
+<dd>
+<p>
+This parameter control whether or not the velocity
+                    field should be saved to disk.  When set to 1, the
+                    solver produces a file with the velocity field.
+</p>
+</dd>
+<dt class="hdlist1">
+<tt>output_parallel</tt>
+</dt>
+<dd>
+<p>
+This parameter specifies whether or not the output
+                    should be performed in parallel.  This requires a
+                    POSIX compliant parallel file system.  This affects
+                    only the writing of the displacement and velocity
+                    fields, not the FEM mesh.  When set to 0, the
+                    sequential I/O code is used, i.e., node 0 collect the
+                    data from all nodes and then writes it to disk.
+</p>
+</dd>
+<dt class="hdlist1">
+<tt>output_*_file</tt>
+</dt>
+<dd>
+<p>
+These parameters refer to the file names for the
+                    displacement, velocity and I/O statistic output files
+                    respectively.  The file names are either absolute path
+                    names (if they start with&#160;/) or names relative to
+                    the <tt>$RUN_DIR</tt> compile-time variable, set when the tool
+                    chain was built.
+</p>
+</dd>
+</dl></div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="LaunchingHercules">Launching the MPI Hercules process</h3>
+<div class="paragraph"><p>Command line arguments:</p></div>
+<div class="ulist"><ul>
+<li>
+<p>
+Shell script <tt>quake.sh</tt>: You can use the sample shell script below to
+launch the solver.  To use this shell, you need to copy the <tt>psolve</tt>
+executable to the job directory (i.e., the directory that contains the
+input files).  Modify the NUM_PROC variable to specify the number of
+processes to launch.
+</p>
+</li>
+</ul></div>
+<div class="paragraph"><p><a id="sample_quake_sh"></a></p></div>
+<div class="listingblock">
+<div class="title">Script to launch the MPI job (quake.sh)</div>
+<div class="content">
+<pre><tt>#!/bin/sh
+#
+# Description: Run Quake's Hercules numerical solver tool chain
+#
+
+# turn echo on
+set -v
+
+# set this directory appropriately
+# JOBDIR=my-job-dir
+JOBDIR=`dirname $0`
+NUM_PROC=2
+
+if [ -n "${JOBDIR}" ] ; then
+    JOBDIR=${PWD}
+fi
+
+PSOLVE_EXE=${JOBDIR}/psolve
+
+# GMD file
+GMD_NAME=${JOBDIR}/material-models/gmd.e
+PHYSICS_IN=${JOBDIR}/physics.in
+NUMERICAL_IN=${JOBDIR}/numerical.in
+MESH_OUT=${JOBDIR}/mesh.e
+RES_OUT=${JOBDIR}/disp-out.q4d
+
+mpiexec -np ${NUM_PROC} ${PSOLVE_EXE} ${GMD_NAME} \
+    ${PHYSICS_IN} ${NUMERICAL_IN} ${MESH_OUT} ${RES_OUT}</tt></pre>
+</div></div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_setting_up_mpi">Setting up MPI</h2>
+<div class="sectionbody">
+<div class="paragraph"><p>Below are the instructions for running Hercules using MPICH-1 and MPICH-2
+respectively.</p></div>
+<div class="sect2">
+<h3 id="_mpich_1">MPICH-1</h3>
+<div class="paragraph"><p>See the <a href="http://www-unix.mcs.anl.gov/mpi/mpich1/docs.html">MPICH 1
+documentation</a>.</p></div>
+</div>
+<div class="sect2">
+<h3 id="_mpich_2">MPICH-2</h3>
+<div class="paragraph"><p>Running a process with MPICH-2 on a compute cluster requires configuring
+and launching the MPD daemon on the cluster members.  Below is a summary
+of the steps involved, for additional information please refer to the
+<a href="http://www.mcs.anl.gov/research/projects/mpich2/documentation/index.php?s=docs">MPICH-2 documentation</a>.</p></div>
+<div class="sect3">
+<h4 id="_create_a_mpd_password_file">Create a MPD password file</h4>
+<div class="paragraph"><p>Create a file named <tt>mpd.conf</tt> in your <tt>${HOME}</tt> directory.  Using the
+format shown below, assign a password that the MPD daemons will user for
+authentication.</p></div>
+<div class="listingblock">
+<div class="title">.mpd.conf file</div>
+<div class="content">
+<pre><tt>MPD_SECRETWORD=my-secret-word</tt></pre>
+</div></div>
+<div class="paragraph"><p>Change the file permissions so only the file owner can read it <tt>(600)
+[-rw-------]</tt></p></div>
+<div class="literalblock">
+<div class="content">
+<pre><tt>   $ chmod 600 ${HOME}/.mpd.conf</tt></pre>
+</div></div>
+</div>
+<div class="sect3">
+<h4 id="_create_a_hosts_files">Create a hosts files</h4>
+<div class="paragraph"><p>Create a file named <tt>mpd.hosts</tt>, each line containing a
+<tt>hostname:number_of_cpus</tt> tuple.  Omit localhost from the list of hosts.
+For example, assuming all the hosts in the cluster have 8 CPU cores, then
+the <tt>mpd.hosts</tt> file would look as follows:</p></div>
+<div class="listingblock">
+<div class="content">
+<pre><tt>host00:8
+host01:8
+host02:8
+....</tt></pre>
+</div></div>
+</div>
+<div class="sect3">
+<h4 id="_launch_the_mpd_daemons">Launch the MPD daemons</h4>
+<div class="paragraph"><p>Assuming the <tt>mpd.hosts</tt> file is in the current directory, launch the MPD
+processes in a set of hosts.  Suppose you want to run your MPI process on
+80 CPUS in 10 nodes (8 CPUs per node), then use the following command:</p></div>
+<div class="literalblock">
+<div class="content">
+<pre><tt>   $ mpdboot --ncpus=8 --totalnum=10 --file=mpd.hosts</tt></pre>
+</div></div>
+<div class="paragraph"><p>This will start 10 MPD processes, one in the local host, the other 9
+processes are started on hosts specified in the mpd.hosts file.  The
+<tt>--ncpus=8</tt> parameter is used to specify the number of CPU cores for
+the local host.</p></div>
+</div>
+<div class="sect3">
+<h4 id="_executing_the_mpi_process">Executing the MPI process</h4>
+<div class="paragraph"><p>A set of MPI processes (i.e., MPI job) can be started using <tt>mpiexec</tt> as
+follows:</p></div>
+<div class="literalblock">
+<div class="content">
+<pre><tt>   $ mpiexec -np &lt;number_of_processors&gt; program [program_arguments]</tt></pre>
+</div></div>
+<div class="paragraph"><p>For convenience, use the <a href="#sample_quake_sh">sample quake.sh shell
+script</a> to launch the Hercules MPI processes.</p></div>
+</div>
+<div class="sect3">
+<h4 id="_terminate_shut_down_the_mpd_daemons">Terminate / shut down the MPD daemons</h4>
+<div class="paragraph"><p>When all the MPI jobs have finished, shut down the running MPD daemons
+using the <tt>mpdallexit</tt> script:</p></div>
+<div class="literalblock">
+<div class="content">
+<pre><tt>   $ mpdallexit</tt></pre>
+</div></div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_extracting_a_waveform">Extracting a waveform</h2>
+<div class="sectionbody">
+<div class="literalblock">
+<div class="content">
+<pre><tt>   $ cd ${HERCULES_DIR}/quake/forward
+   $ make q4node
+   $ q4node &lt;displacement_file&gt; &lt;node_id&gt;</tt></pre>
+</div></div>
+</div>
+</div>
+</div>
+<div id="footnotes"><hr /></div>
+<div id="footer">
+<div id="footer-text">
+Version 1.9<br />
+Last updated 2010-11-30 17:36:00 EST
+</div>
+</div>
+</body>
+</html>

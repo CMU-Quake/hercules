@@ -1,0 +1,59 @@
+###############################################################################
+#
+# numerical.in: Numerical parameters that control FEM simulation.
+#
+# Lines start with a # are comments. Empty lines are ignored.
+#
+###############################################################################
+    
+
+simulation_wave_max_freq_hz	= 0.1
+
+simulation_start_time_sec	= 0
+#simulation_end_time_sec	= 220
+simulation_end_time_sec		= 10
+simulation_delta_time_sec	= .02
+
+simulation_node_per_wavelength	= 8 
+simulation_shear_velocity_min	= 500
+simulation_output_rate		= 10
+
+the_threshold_damping		= .05
+the_threshold_Vp_over_Vs	= 3
+do_damping_statistics		= 0
+
+
+# 
+# Set to 1 if the results are needed. 0, otherwise.
+#
+simulation_displacement_out	= 1
+simulation_velocity_out		= 0
+
+
+#
+# File to keep track of the progress
+#
+monitor_file			= monitor.txt
+
+number_output_stations		= 0
+use_checkpoint			= 0
+checkpointing_rate		= 50
+checkpoint_path			= checkpoints
+
+###############################################################################
+#    
+# Output Plane Information 
+#
+###############################################################################
+
+number_output_planes		= 1
+output_planes_print_rate	= 10
+output_planes_directory		= output/planes
+
+###############################################################################
+#         Lat        Long    Dpth dStrk stpsAlStr   dDp stpsDp  strk   dp
+##############################################################################
+output_planes = 
+   34.500000  -121.000000       0  1000   300   1000     600     0    0
+   34.500000  -121.000000       0  200   1500    200    3000     0    0
+

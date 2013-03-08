@@ -1,0 +1,93 @@
+# -*- Text -*-
+#
+# numerical.in: Numerical parameters that control FEM simulation.
+#
+# Lines start with a # are comments. Empty lines are ignored.
+#
+# ------------------------------------------------------------------------
+
+simulation_wave_max_freq_hz	= 0.1
+
+simulation_start_time_sec	= 0
+#simulation_end_time_sec	= 220
+simulation_end_time_sec		= 10
+simulation_delta_time_sec	= .02
+
+simulation_node_per_wavelength	= 8 
+simulation_shear_velocity_min	= 500
+simulation_output_rate		= 10
+
+the_threshold_damping		= .05
+the_threshold_Vp_over_Vs	= 3
+do_damping_statistics		= 0
+
+
+output_parallel			= 1
+
+#
+# Set to 1 in order to produce a full 4D displacement wavefield output.
+#
+output_displacement		= 1
+output_displacement_file	= output/wavefield/displacement.h4d
+
+output_velocity			= 0
+output_velocity_file		= output/wavefield/velocity.h4d
+
+
+#
+# File to keep track of the progress
+#
+monitor_file			= monitor.txt
+
+use_checkpoint			= 0
+checkpointing_rate		= 50
+checkpoint_path			= checkpoints
+
+# ------------------------------------------------------------------------
+#    
+# Output Plane Information 
+#
+# ------------------------------------------------------------------------
+
+number_output_planes		= 1
+output_planes_print_rate	= 10
+output_planes_directory		= planes
+
+
+# ------------------------------------------------------------------------
+#         Lat        Long    Dpth dStrk stpsAlStr   dDp stpsDp  strk   dp
+# ------------------------------------------------------------------------
+# WARNING!: These plane coordinates do not fall within the LA basin, they
+# are for the TeraShake domain
+#
+output_planes = 
+   34.500000  -121.000000       0  1000   300   1000     600     0    0
+   34.500000  -121.000000       0  200   1500    200    3000     0    0
+
+#
+# WARNING!: These corner coordinates are not exact for the LA basin region
+#
+# The domain surface corners are specified clockwise, that is:
+# - lower-left
+# - top-left
+# - top-right
+# - lower-right
+#
+domain_surface_corners	=
+ -118.699997  33.580002
+ -118.699997  34.481534
+ -117.617528  34.481534
+ -117.617528  33.580002
+
+# ----------------------------------------------------------------------------
+# Output Stations (observation points)
+number_output_stations        = 1
+output_stations_print_rate    = 1
+output_stations_directory     = stations
+
+# ----------------------------------------------------------------------------
+#         Lat             Long        Dpth
+# ----------------------------------------------------------------------------
+
+output_stations =
+34.0        -118.5        0.00000

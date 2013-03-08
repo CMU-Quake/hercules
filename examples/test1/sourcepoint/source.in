@@ -1,0 +1,34 @@
+# source.in:  Source quantities input file to CMU FEM toolchain.
+# Lines start with # are comments. Empty lines are ignored.
+#
+
+source_is_filtered  = 0
+threshold_frequency = 1.2
+number_of_poles     = 22
+type_of_source      = point
+
+#
+# it is a point
+#
+
+source_function_type = quadratic
+average_risetime_sec = .5
+moment_amplitude     = 1e15
+
+
+#
+# Source Location
+#
+lonlat_or_cartesian = 0
+hypocenter_lat_deg  = 34.0
+hypocenter_long_deg = -118.5
+hypocenter_depth_m  = 1000
+source_strike_deg   = 0
+source_dip_deg      = 90
+source_rake_deg     = 0
+
+domain_surface_corners =
+ -118.699997 33.580002 
+ -118.699997 34.481534 
+ -117.617528 34.481534 
+ -117.617528 33.580002 

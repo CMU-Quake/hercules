@@ -1,0 +1,3926 @@
+********************************************************************************
+                            ChangeLog File
+********************************************************************************
+
+Please add at the top of this file, a description of the latests changes
+you have made to the source code.  Please follow the following format:
+
+YYYY/MM/DD Author name <email@domain.foo>
+
+	* filename_1: 
+	
+	  General description of changes done in filename_1. Reaching column 80
+	  go to the next line please. The star separation lines have exactly
+	  80 stars to help you with this.
+
+	* filename_2 (function_A):
+
+	  General description of changes done in filename_2, assocaited with 
+	  function_A.
+
+	* filename_2 (function_B):
+
+	- Itemized description of changes in function_B of filename_1.
+
+	- Continued itemized description of changes in function_B of filename_1.
+
+	* filename_3:
+
+	- Itemized description of changes done in filename_3.
+
+	- Continued itemized description of changes done in filename_3.
+
+	(function_C):
+	
+	- Itemized description of changes to function_C in filename_3.
+
+	(function_D):
+	
+	- Itemized description of changes to multiple functions in filename_3. 
+	
+	
+********************************************************************************
+	
+2012-07-14 Yigit Isbiliroglu <yisbilir@andrew.cmu.edu>
+
+	A major bug which crashes program(building module) with the increaased 
+	number of processors is resolved with this version. Other small fixes are
+	applied to buildings module.
+		
+	* quake/forward/buildings.c:
+		
+	(get_airprops):
+	
+	- x,y and z coordinates of the air elements are adjusted wrt shifted origin
+	(if any).
+	
+	* quake/forward/drm.c:
+	
+	(searchBucketList):
+	
+	- return is included to avoid warning from the compiler.
+	
+	* quake/forward/meshformatlab.c:
+	
+	(saveMeshCoordinatesForMatlab):
+	
+	- changes to  print the damping ratios .(if wanted)
+	
+	* quake/forward/psolve.c:
+		
+	(setrec):
+	
+	- new parameters are fed into bldgs_setrec function.
+	
+	(main):
+	
+	- new parameters are fed into saveMeshCoordinatesForMatlab function.
+	
+	(mesh_generate):
+	
+	- second pass to octor_carvebuildings is eliminated. Since timer still
+	exists it is not deleted completely.
+	
+	* octor.c:
+	
+	(oct_getnextleaf):
+	
+	- second if statement is modified in order not to go to octants that I dont
+	possess.
+	
+	(oct_installleaf):
+	
+	- second if statement is modified and another line is added in order not to
+	get a 'false next leaf' in  oct_getnextleaf.
+	
+	(node_setproperty):
+	
+	- a bug is fixed for touches == 2 case(2).
+	
+	(octor_carvebuildings):
+	
+	- built-in function oct_shrink is now used to eliminate the air elements.
+	- an unneccesary call to tree_setcom is deleted.
+	
+	(octor_partitiontree):
+	
+	- another variable is added (irecv).
+	- PIs with 0 elements(due to carving) are not included in the MPI 
+	communications. For this, another for loop is included(line 4682). Also
+	if statement(line 4723) is modified.
+	
+	- NOTE: all changes related to fix are tagged by the name 'yigit'.
+	
+	
+********************************************************************************
+
+2012-06-19 Dorian Restrepo <drestrep@andrew.cmu.edu>
+
+	All changes in this commit are related to new alternative for rate-independent
+	plasticity in the nonlinear module.
+
+	* quake/forward/nonlinear.h:
+
+	- Added option for rate-independent plasticity.
+	- Added new structs vector_t and qpvectors_t
+	- Added new variables to the structs nlsolver_t, nlconstants_t and nlstation_t
+	- Added new method compute_dLambdaII
+
+	* quake/forward/nonlinear.c:
+	
+	(isThisElementNonLinear):
+	
+	- New lower limit for nonlinear parameters.
+	
+	(nonlinear_init):
+	
+	- added broadcasting of the new variables: theNonLinVsMin, thePlasticityModel, theHardeningModulus
+	
+	(nonlinear_initparameters):
+	
+	- Added parsing lines, sanity checks and modification of previous arrays sizes for 
+	  storing the three new variables mentioned in (nonlinear_init)
+	
+	(nonlinear_solver_init):
+	
+	- Memory allocation of new structs myNonlinSolver->ep1 and myNonlinSolver->ep2
+	- added interpolation line for the hardening modulus 
+	
+	(compute_dLambda):
+	
+	- Added module for the calculation of the plastic multiplier according with rate-independant theory.
+
+	(compute_dLambdaII):
+	
+	- This is an updated version of (compute_dlambda) and the one that currently is been used for the nonlinear module. Its -
+	  expression for the material update is much more simple, easy and accurate than the one used in (compute_dlambda). In the-
+      future the previous function (compute_dLambda) should be deprecated.
+      
+    (tensor_t compute_pstrain2):
+    
+    - added lines for the updated plastic strains corresponding to rate-independant theory
+    
+    (compute_nonlinear_state):
+    
+    - added module for the material update algorithm corresponding to rate-independant theory.
+    - line: if ( ( theMaterialModel == LINEAR ) || ( J2 == 0 ) ); was replaced by: if ( ( theMaterialModel == LINEAR ) )
+    
+    (nonlinear_stations_init):
+    
+    - added pointer for the equivalent plastic strain.
+    
+    (print_nonlinear_stations):
+    
+    - added variables and module for the material update algorithm corresponding to rate-independant theory.
+    - last column printed was changed from "k" to "k + hrd * (*ept)"
+      
+      
+	  
+	
+********************************************************************************
+
+2011-10-19 Yigit Isbiliroglu <yisbilir@andrew.cmu.edu>
+
+	Some bugs are fixed in psolve.c. And timer statistics are added for drm.
+	
+	* quake/forward/psolve.c:
+		
+	(toexpand):
+	
+	- Part1 of drm also goes for drm_toexpand rule.
+	
+	(mesh_correct_properties):
+	
+	- theXForMeshOrigin, theYForMeshOrigin and theZForMeshOrigin are added to
+	query points to correct the mesh properties (to north_m ,east_m and depth_m
+	respectively. This fixes the bug.
+	
+	(solver_run_collect_timers):
+	
+	- Timer Functions are added here for drm.
+	
+	(print_timing_stat):
+	
+	- Similarly code is included to print the drm statistics.
+	
+********************************************************************************
+2011-10-16 Yigit Isbiliroglu <yisbilir@andrew.cmu.edu>
+
+	Some changes have been done to drm module.Now one can define drm_print_rate
+	which makes i/o of drm coordinates faster. Also a bug in psolve.c is fixed.
+
+	* parameters.in
+
+	- Added lines defining the parameters for drm.
+
+	part1_delta_t  = 0.001
+	drm_print_rate = 10
+	( These are also added to below for convenience.)
+	
+	part1_delta_t : is the deltaT used in part1. One can choose a lower deltaT 
+	for part2.
+		
+	* quake/forward/psolve.c:
+	
+	- return value of open_cvmdb is changed to static void from static int.
+	
+	(read_parameters):
+	
+	- Param.theRegionLat, Param.theRegionLong and Param.theRegionDepth  are
+	 broadcasted to all processors, which now  prevents the program to crash.
+		
+	(parse_parameters):
+	
+	- Definitions of unused variables localFourDOutFile,
+	localcvmdb_input_file, localmesh_etree_output_file are deleted.
+	
+	(open_cvmdb):
+	
+	- Exit codes in case of an error have been fixed.
+	
+
+********************************************************************************
+2011-10-07 Yigit Isbiliroglu <yisbilir@andrew.cmu.edu>
+
+	A new feature is added to program. Now, Domain Reduction Method (DRM) is
+	fully implemented in Hercules.For this, drm.c and drm.h files are created.
+	It's worth it to mention that one needs to run 3 simulations related to DRM
+	in order to take advantage of this method, namely Part0, Part1 and Part2.
+	This method is useful if one needs to conduct a more detailed (repeated) 
+	study in a small sub-region within the original big domain.In Part0,drm-box 
+	boundary is defined and coordinates of the drm-nodes are stored(you only 
+	need the small subregion and only let the meshing process to happen). In 
+	Part1, displacements for the drm-nodes (read from the Part0) are stored at 
+	each time step (this is the regular Hercules run except that you store 
+	displacements at some points to be used in Part2). And finally in Part2, 
+	by using the displacements stored in Part1 and converting them to effective 
+	forces, one can do repeated simulations in the small subregion. So Part0
+	and Part1 runs are done ONLY once, then you have everything necessary to do
+	multiple Part2 runs. It is impossible to explain all the details here,but 
+	i tried to explain steps within the code. 
+	
+	* parameters.in
+
+	- Added lines defining the parameters for drm.
+	  One of the following two options should be added to parameters.in
+	
+	# DRM
+	implement_drm  = no
+	
+	OR
+	
+	# DRM
+	implement_drm  = yes
+	drm_directory  = outputfiles/DRM
+
+	which_drm_part = part2
+
+	#                   part0  part1 or part2
+	#............................................................................
+
+	drm_edgesize = 50.0
+	
+	drm_offset_x =  10000.0
+	drm_offset_y =  20000.0
+
+	part1_delta_t  = 0.001 **
+	drm_print_rate = 10  **
+
+	drm_boundary =
+
+     	200      200     600       600      525
+	#   min_x    min_y    max_x    max_y    depth
+	# ............................................................................
+	
+	** Explanations for these two are above.
+	
+	If the implement_drm is no, the program will work as usual.
+	
+	If you want to use DRM, you need to make sure that you created part0,part1
+	and part2 directories under outputfiles/DRM.
+	
+	drm_offset_x and y: distance between origin of the original domain and
+	origin of your sub-domain(in m).
+
+	drm_edgesize: for some reasons (to avoid dangling nodes) we force the
+	drm boundary to consist of same sized elements.This is the desired element
+	size for the drm elements(in m). 
+
+	drm_boundary:limits of your drm boundary(in m). This is according to origin
+	of your small subregion. This is NOT used in PART1.
+		
+	* quake/forward/psolve.c:
+	
+	- drm.h is added in header.
+	
+	- noyesflag_t  drmImplement is defined in Params.
+	
+	- drm_part_t   theDrmPart is defined in Params.
+	
+	(read_parameters):
+	
+	- Param.drmImplement variable is broadcasted to all processors.
+	
+	(parse_parameters):
+	
+	- Added char implement_drm[64].
+		
+	- Added noyesflag_t implementdrm.
+	
+	- implement_drm is parsed by PE0 from parameters.in and sanity
+	  check is done to make sure it is either yes or no. Then, it is assigned
+	  to implementdrm. Also printed on the screen.
+	
+	(mesh_generate):
+
+	- A call to drm_fix_coordinates is added .
+		
+	(toexpand):
+		
+	- An if statement was added to check whether the drm is on or off(except for
+	  Part1).If it is on and the element is in the drm boundary, it forces to 
+	  have same sized elements in the drm boundary,and skips the regular Vs 
+	  rule.
+	
+	(source_init):
+		
+	- An if statement was added at the very beginning of the function.It skips
+	source init if this is a DRM Part0 or Part2 run.
+	
+	(solver_run):
+	
+	- Calls to solver_output_drm_nodes, solver_read_drm_displacements,
+	 solver_compute_effective_drm_force and solver_drm_close are added.I think
+	 names are self explanatory.
+		
+	(main):
+	
+	- An if statement is added to initialize parameters for drm if drm_implement
+	is yes.
+	
+	- And other drm related calls are added after the meshing process.
+
+********************************************************************************
+2011-07-31 John Urbanic <urbanic@.psc.edu>
+
+	Move planes array data out of parameter input file and into own
+	file.  This is first of three such changes and will be soon
+	followed by similar fixes for stations and buildings.  At that time,
+	I will document the new/final input file format.
+
+	* quake/forward/psolve.c:
+
+	- Add new planes array filename to Params.  Passed this to
+	Planes_setup() routine.
+
+	* quake/forward/io_planes.c/h:
+
+	(new/oldplanes_setup):
+
+	- Added in new input parameter to pass planes filename.
+
+	- Now open and parse this new input file instead of reading from
+	general input file data.
+	
+
+********************************************************************************
+2011-07-20 John Urbanic <urbanic@.psc.edu>
+
+	Implementing new input file format and cleaning up psolve.c
+
+	* parameters.in (parameter input file - not a real source file):
+
+	Three previous command line arguments have been moved into the input
+	file.  They are cvmdb_input_file, mesh_etree_output_file, and
+	4D_output_file.  They are currently required.
+
+	* quake/forward/psolve.c:
+
+	- Removed all references, save one, to argv[].  Replaced with proper
+	parameters.
+	
+	- Added last few loose parameters to Param, and removed remote
+	initialization of Global variables Global.myOctree, Global.myMesh and
+	Global.mySolver.
+	
+	(main)
+	
+	- Sole input argument is now the data input file.  This includes, or
+	points to, all other parameters.
+
+	(load_parameters)
+
+	- includes old local_init, but moves out unrelated pieces.  Mostly the
+	cvmdb open and create routines.  Also consolidates all parameter
+	broadcasts.
+
+	(open_cvbdb)
+
+	- Moved all cvmdb initialization code into this.  This replaces code in
+	radom other places, primarily local_init, replicateDB and OpenDB.
+
+	(parse_parameters)
+
+	- just a slightly modified version of old read_params to include new
+	input arguments.  Slight re-arrangement to accomodate heavy
+	modifications to immediately follow.
+
+********************************************************************************	
+2011-07-05 John Urbanic <urbanic@.psc.edu>
+
+	Major changes throughout psolve.c, psolve.h, io_planes.c and ioplanes.h
+
+	* quake/forward/psolve.c:
+
+	All new parameters should be added to Param, and should be passed as
+	individual structures. No new globals should be added to Global, or
+	anywhere.  Those here should eventually be eliminated as globals.
+
+	- All global variables, bar MPI_Comm, have been gathered into Params and
+	Global structures.  They have retained their original names there.
+	Initializers are set as previously.
+
+	- External functions that required passing any of these variables have
+	been changed to pass them as parameters.
+
+	- All VIS defined real-time visualization structures were removed.
+
+	- Some unused (completely unreferenced) variables were removed.  Some
+	variables that look unused were left as they look potentially useful.
+
+	* quake/forward/psolve.h:
+
+	- changes to maintain consistancy with the above.
+
+	* quake/forward/io_planes.c:
+
+	- Eliminated all extern global variables.  All data now passed from
+	outside as parameters.  Only local static private data.
+
+	* quake/forward/io_planes.h:
+
+	- changes to maintain consistancy with the above.
+
+
+********************************************************************************
+2011-05-08 Haydar Karaoglu <hkaraogl@andrew.cmu.edu>
+
+	A new attenuation model (BKT) is implemented into Hercules.
+
+	* quake/forward/stiffness.c
+	
+	* quake/forward/damping.c
+	
+	- New methods to incorporate BKT model.
+	
+	* quake/forward/psolve.c
+	
+	- theQTABLE is added as hard-coded. 
+	- New method to read theQTABLE.
+	- Changes have been made to setrec method to read and store the coefficients related to introduced model for each element.
+	(Velocity profile in the model is being corrected according to the attenuation model within setrec)
+	
+	*quake/forward/quake_util.c
+	
+	- New method to search theQTABLE to get the corresponding coefficients for each element in the mesh.
+	
+	*parameters.in
+	
+	- "bkt" is a new option for the type of damping.
+	- "simulation_velocity_profile_freq_hz" (The frequency for which the given velocity profile holds) should be given if bkt model is to be used, otherwise it should be given as "zero".
+
+********************************************************************************
+2011-05-07 John Urbanic <urbanic@.psc.edu>
+
+	*/quake/forward/psolve.c
+	
+        First definition of Param and Global structures to eliminate all wild
+	global variables.  The process of herding all variables into these
+	has begun.
+
+	
+********************************************************************************
+2010-12-11 John Urbanic <urbanic@.psc.edu>
+	
+	* quake/forward/quakesource.c:
+
+	(compute_myForces_srfh)
+
+	- Changed so that non-participating nodes do not write source force files
+
+********************************************************************************
+2010-11-03 John Urbanic <urbanic@.psc.edu>
+	
+	* quake/forward/psolve.c:
+
+	- re-enabled calls to damping routines
+
+	* quake/forward/io_planes.c:
+
+	(IO_PE_main)
+
+	- accomodated odd combo of number of planes and IO_Pool count
+
+	* quake/forward/checkpointing.c/h:
+
+	- added stdlib.h and copyright headers
+
+********************************************************************************
+2010-10-29 John Urbanic <urbanic@.psc.edu>
+
+	Changes to implement single or double precision selectable compilation
+	
+	* quake/forward/psolve.h:
+
+	- Added SINGLE_PRECISION_SOLVER ifdef to switch between types
+
+	- Changed structures f_vector and n_t to use this type, solver_float
+
+	* quake/forward/psolve.c:
+
+	(compute_adjust, schedule_sendata):
+
+	- Changed doublesperentry to itemsperentry to be size agnostic
+
+	- Changed all relevent doubles to new type, solver_float
+	
+********************************************************************************	
+2010-07-20 John Urbanic <urbanic@.psc.edu>
+
+	* quake/forward/psolve.c:
+
+	- Moved checkpoint timers to io_checkpoint
+
+	* quake/forward/io_checkpoint.c:
+
+	(checkpoint_read, checkpoint_write):
+
+	- Added striping code to scale on Lustre
+	
+********************************************************************************
+
+2010-07-17 John Urbanic <urbanic@.psc.edu>
+
+	* quake/forward/psolve.c:
+
+	- Added header io_checkpoint.h
+
+	- Changed checkpoint_read() and checkpoint_write() parameters
+
+	- Moved all checkpoint related code to io_checkpoint.  Only
+	  one call to checkpoint read and write left in psolve.
+
+	* quake/forward/io_checkpoint.h:
+
+	- Created for io_checkpoint.c.  Only included in psolve.c
+
+	* quake/forward/io_checkpoint.c:
+
+	- Move all checkpoint code here.  Refactored.  Will be
+	  changed a more shortly to accomodate new large scaling
+	  algorithm.
+
+	* quake/forward/Makefile:
+
+	- Modified to accomodate io_checkpoint.c/h
+
+********************************************************************************
+
+2010-07-13 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	* octor/octor.c:
+
+	(node_setproperty):
+
+	- Fixed bug for 6 touches case for a building resting on the surface
+	  with a node in the interior of the bottom face.  This case was
+	  missing.
+
+	* quake/forward/buildings.c:
+
+	- Added header file commutil.h.
+
+	- Added a bunch of global variables to handle the fixed base options.
+	  Will need to re-arrange them in a different way later.
+
+	- Added local prototypes for fixed base methods. (some still missing
+	  to add).
+
+	(basenode_t):
+	
+	- New struct to handle nodes at the base of the buildings.
+
+	(get_fixedbase_flag):
+
+	- New public method to pass the fixed-base flag controller to psolve.
+
+	(basenode_search):
+
+	- New method to determine if a node is on the contact/cut of a building
+	  with the surface. It returns 0 if the node is not in the building
+	  and N > 0, N being the number of the building the node relates to.
+
+	(bldgs_init):
+
+	- Added broadcasting of the base fixed input parameters
+
+	(buildings_initparameters):
+
+	- Added instructions to read the flag to control fixed base options.
+
+	- Added missing instructions to close parametersin file.
+
+	(fixedbase_read, count_base_nodes, map_base_nodes, read_base_input, ...)
+	(bldgs_fixedbase_init, interpolatedisp, bldgs_get_base_disp, ...)
+	(bldgs_load_fixedbase_disps):
+
+	- All new methods to force input at the base of buildings to reproduce
+	  fixed base conditions.
+
+	* quake/forward/buildings.h:
+
+	- Added header file quake_util.h
+
+	- Added public prototypes for get_fixedbase_flag, bldgs_fixedbase_init,
+	  and bldgs_load_fixedbase_disps.
+
+	* quake/forward/psolve.c:
+
+	(solver_load_fixedbase_displacements):
+
+	- Auxiliar method to invoque and load the displacements at the base
+	  of the building nodes.
+
+	(solver_run):
+
+	- Added call to solver_load_fixedbase_displacements.
+
+	(main):
+
+	- Added call to bldgs_fixedbase_init.
+
+********************************************************************************
+
+2010-06-30 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	* octor/octor.c:
+
+	(tree_t):
+
+	- Added new element to know the tick address of the surface. Also
+	  done in .h file for octree_t.
+
+	(tree_setcom):
+
+	- Added bldgs_nodesearch plugin to the parameters and pass it along
+	  to com_allocpstl.
+
+	(com_allocpctl):
+
+	- Added bldgs_nodeseearch plugin and surface tick point and ticksize
+	  to the method's parameters.
+
+	- Style editing on dicard out of bounds if statements.
+
+	- Added new provision to discard 'air' points.
+
+	(node_setproperty):
+
+	- Fixed bug for 6 touches and improved 5 touches case.
+
+	(octor_newtree):
+
+	- Added assignation of tree->surfacep.
+
+	- Changed parameters being sent to com_allocpctl so that in this
+	  first occasion it does not consider the case of buildings yet.
+
+	(octor_carvebuildings):
+
+	- Added new parameters: (1) a plugin from the buildings application;
+	  and (2) a flag to handle the two different calls to this method
+	  differently.
+
+	- Added new sanity checks and temporarily commented out abort
+	  exits.
+
+	(octor_trimfirstleaf):
+
+	- Eliminated! obsolete!
+
+	(octor_partitiontree):
+
+	- Added buildings plugin to the parameters and passes it to tree_setcom.
+
+	(octor_extractmesh):
+
+	- Fractioned the order of ecvaluation to discard 'air' points.
+
+	- Improved error messages.
+	
+	* octor/octor.h:
+
+	- Modified prototypes in accordance with changes in octor.c, i.e.
+	  added parameters to balancetree, carvebuildings, and partitiontree.
+
+	- Eliminated the prototype of the obsolete method octor_trimfirstleaf.
+	
+	(octree_t):
+
+	- Added new item to this structure to have information about the tick
+	  corresponding to the surface for the case of buildings. This is in
+	  agreement with changes in octor.c related to tree_t.
+	
+	* quake/forward/qmesh:
+
+	(main):
+	
+	  Added NULL as the second parameter in octor_partitiontree for 
+	  compliance with recent changes in octor related to buildings meshing.
+	  This is only to get avoid compilation errors. It will have to be 
+	  reviwed in the future for running qmesh.
+
+	* quake/forward/psolve.c:
+
+	- Changed timers related to carving buildings.
+
+	(mesh_generate):
+
+	- Added new parameters requested by octor_* methods.
+
+	- Eliminated call to onsolete method octor_trimfirstleaf and replaced
+	  it with the variation of octor_carvebuildings with flag = 0.
+
+	* quake/forward/buildings.c
+
+	(get_airprops)
+
+	- Added immediate return in case of a failed cvm_query so that queries
+	  out of the domain do not spoil the meshing process for non-cubic
+	  simulation domains.
+
+	(bldgs_nodesearch):
+
+	- Expanded description to be in compliance with onboundarysearch
+	  method.
+
+********************************************************************************
+
+2010-06-17 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	* ..............................checkpoint..............................
+
+	* parameters.in:
+
+	  New and modified lines apply to whether include buildings/foundations
+	  into the model. The whole module is now controlled by the following
+	  line
+
+	  include_buildings = <yes> OR <no>
+
+	  If the above parameter is <yes>, the following input lines apply:
+
+	  number_of_buildings = <INTEGER>
+	  min_octant_size_m   = <DOUBLE>
+	  surface_shift_m     = <DOUBLE>
+	  buildings_n_factor  = <INTEGER>
+	  
+	  If the number of buildings above is > 0 then the following table
+	  applies:
+
+	  building_properties =
+
+	  min_x max_x min_y max_y depth height Vp Vs Rho Vp Vs Rho
+
+	  All values are real.  Coordinates are in local XYZ coordinates
+	  where X=North, Y=East, and Z=Depth.  Coordinates do not have to comply
+	  with etree power of 2 grid. They are adjusted according to the closest
+	  grid point using the minimum octant size in physical coordinates (or
+	  meters).
+
+	  The minimum octant size DO HAVE to be such that:
+
+	  min_octant_size = L / ( 2 ^ N )
+	 
+	  where
+
+	  L is the maximum (dominant) domain dimension, and
+	  N is a positive integer.
+
+	* matlab-utils/examples
+
+	  Simplified file name: Replaced parameters_for_matlab.in for 
+	  plotmeshinput.in
+
+	* matlab-utils/scripts
+
+	  Simplified file name: Replaced plot3d_Hercules_v2.m for plotmesh.m
+
+	* octor/octor.h
+
+	(bldgs_nodesearch_t)
+
+	- New application provided plugin. Helps finding if a vertex does or
+	  does not exist in the simulation domain.
+
+	(octor_newtree)
+
+	- Added input parameter surface_shift
+
+	(octor_carvebuildings, octor_trimfirstleaf)
+
+	- New public functions
+
+	(octor_extractmesh)
+
+	- Added input parameter (function plugin) bldgs_nodesearch.
+
+	* octor/octor.c
+
+	- Added two global variables: theSurfaceShift and theTotalDepth.
+	  The former indicates for how much is the surfaces push down to 
+	  have space for buildings. The latter is the dimension of the
+	  model in depth or Z-direction.
+
+	- Added a typedef struct that is a copy of the edata_t from psolve.h.
+	  We will need to think about these copies in a future re-ingineering
+	  of the whole program.
+
+	(node_setproperty)
+
+	- Completely refactored.  It now allows many more cases of 'touches'
+	  to satisfy with the different options posed by pushing the surface
+	  down and including buildings that protrude from the surface after
+	  they are carved off from the mesh including air elements.
+
+	  A vertex can now be touched by 8, 6, 5, 4, 3, 2 and 1 elements.
+	  The case for 7 touches is there but throws an immediate error.
+
+	  Some of these cases will help in the future to implement topography.
+
+	  Each case is well documented with comments at the beginning and
+	  throughout their sub-cases.
+
+	(octor_carvebuildings)
+
+	- This new method identifies which elements or leaves have a payload 
+	  with a negative value of Vp and eliminates those leaves from the tree.
+	  When a leaf is eliminated, other tree structures and counters are
+	  updated.
+
+	- If a processor is to be left without any element, the method prevents
+	  itself of allowing this by leaving at least one (first/leftmost) leaf
+	  in the local tree, even if this leaf has a negative Vp.
+
+	(octor_trimfirstleaf)
+
+	- This new method eliminates the first leaf of the local tree if
+	  this leaf has a negative value of Vp.  It corrects the special case
+	  describe above.  It occurs after partitioning, thus it assumes that
+	  all processors have now more than 1 leaf/element.
+
+	(backfire_parent)
+
+	- Is a new recursive method invoked by octor_carvebuildings and
+	  octor_trimfirstleaf to make sure that a parent for whom all children
+	  leafs have been eliminated because of them having a negative Vp
+	  is also erased from the tree. Once this happens it calls itself
+	  recursively to make sure that grandpas, great-grandpas and so one
+	  do have childrens with data.
+
+	(octor_partitiontree)
+
+	- Added a temporary sanity check to make sure that after partition,
+	  the first leaf is not pointing to NULL.  May be eliminated later on
+	  when we get sure the buildings carving is working properly.
+
+	- Changed the tree_showstat to 'details' instead of 'brief'.
+
+	(octor_extractmesh)
+
+	- Added new parameter. A plugin to be sent to the node_setproperty
+	  method.
+
+	- Added two sanity checks before traversing the elements to create 
+	  the vertices.  May be eliminated later on when we proof the 
+	  buildings package.
+
+	- Improved error messaging.
+
+	- Additional sanity check before doing the direct sharing. For later
+	  elimination.
+
+	- Also in direct sharing loop.  Corrected style of discards for
+	  potential neighboring vertices.
+
+	- Added a provision to discard vertices that are in the 'air'.
+
+	- Added a sanity check to make sure that the returned procid from
+	  match_zsearch exists.
+
+	- Improved error message for when node_setproperty returns a negative
+	  value.
+
+	* quake/cvm
+
+	  cvmpayload_t is now a typedef from the go.
+
+	* quake/forward/io_planes.h
+
+	  Added copyright header.
+
+	(planes_setup)
+
+	  Added parameter surfaceShift
+
+	* quake/forward/io_planes.c
+
+	- Added copyright header.
+
+	(planes_setup)
+
+	  Added parameter surfaceShift
+
+	(Old_planes_setup, New_planes_setup)
+
+	- Now take the surface shift and adjust the planes origin accrdingly.
+
+	* quake/forward/qmesh.c
+
+	  ***WARNING***  
+	  Changed octor_ calls to comply with the new buildings package.
+	  Not tested.  Only changed to ensure compilation.
+
+	* quake/forward/quake_util.c
+
+	  Cosmetic changes.
+
+	* quake/forward/quakesource.h
+
+	(compute_print_source)
+
+	  Added new parameter: surfaceShift.
+
+	* quake/forward/quakesource.c:
+
+	  ***WARNING*** Buildings are only working properly with SRF source.
+
+	(read_srf_source, source_init_parameters, compute_print_source)
+
+	  Now accepting surfaceShift to adjust source location in the case
+	  of buildings.
+
+	* quake/forward/psolve.c
+
+	- New controller for buildings is a No/Yes flag.
+
+	- Renamed controller for nonlinear analysis.
+
+	(setrec)
+
+	- Added provisions to capture data in octants that belong to a
+	  building.
+
+	- Added an if statement to check if the query point needs to be
+	  pushed down by the surface-shift.
+
+	(mesh_generate)
+
+	- Added parameter in octor_newtree
+
+	- Adedd calls to octor_carvebuildings and octor_trimfirstleaf.
+
+	- Added plugin-passing parameter to octor_extractmesh.
+
+	(toexpand, mesh_correct_properties)
+
+	- Refactored for the case of buildings.
+
+	(print_timing_stat)
+
+	- Added new octor_ buildings-methods timers.
+
+	(source_init)
+
+	- Now passing the surfaceShift.
+
+	(read_stations_info)
+
+	- Now adjusting depths for the case of buildings.
+
+	(main)
+
+	- Modified to make all calls to comply with buildings new provisions
+	  and passing parameters.
+
+	* quake/forward/buildings.h
+	* quake/forward/buildings.c
+
+	  Almost completely refactored.  Took all the work Yigit had done
+	  for the special case of foundations and converted it in what we have
+	  envisioned for the case of full rectangular-prismatic buildings.
+
+	  It would be pointless to describe the many changes done. It is well
+	  commented and organized.  Refer to the header of each method for
+	  explanations.
+	
+
+********************************************************************************
+
+2010-06-02 Yigit Isbiliroglu <yisbilir@.andrew.cmu.edu>
+
+	* meshformatlab.c
+	
+	(saveMeshCoordinatesForMatlab)
+	
+	- This function is modified such that a processor will create output binary 
+	  files if that processor has elements within the specified boundary. In
+	  other words, no empty binary files will be created. For this int counter
+	  is added.
+
+	* matlab-utils/
+	
+	- plot3d_Hercules.m is also modified to be compatible with the changes in
+	  saveMeshCoordinatesForMatlab. Its name is changed to plot3d_Hercules_v2.m
+		
+********************************************************************************
+
+2010-05-17 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	* parameters.in:
+
+	- New lines applicable only if nonlinear flag is active. The parameters
+	  input file should have these two lines:
+
+	  geostatic_loading_time_sec   = 0
+	  geostatic_cushion_time_sec   = 0
+
+	  Values have to be 0 or greater than 0, and their sum cannot be
+	  greater that the total simulation time.  Their sum will effectively
+	  delay the starting of the source (srfh only) and this time should be
+	  considered for defining the simulation time.
+
+	* quake/forward/psolve.c:
+
+	(local_init):
+
+	- Added definition LOCAL_INIT_DOUBLE_MESSAGE_LENGTH to control the
+	  number of doubles to be sent and recieved.
+
+	- Eliminated the USECVMDB specific extension to double_message and
+	  created a double_message_extra instead, that is only created if
+	  the compilation flag is defined.  Changed the casting and collection
+	  of data accordingly.
+
+	(solver_nonlinear_state):
+
+	- Modified input parameters to reflect changes related to the new
+	  geostatic loading functions described below.
+
+	- Added call to compute_bottom_reactions conditioned to the
+	  geostatic loading time.
+
+	(solver_compute_force_gravity):
+
+	- New method that controls the call to compute_addforce_gravity
+	  described below.
+
+	(solver_compute_displacement):
+
+	- Eliminated some commented lines that no longer apply.
+
+	(solver_geostatic_fix):
+
+	- New method that controls the call to geostatic_displacements_fix
+	  in the nonlinear module described below.
+
+	(solver_run_collect_timers):
+
+	- Added new timer for addforces gravity.
+
+	(solver_run):
+
+	- Added/modified calls to solver_nonlinear_state, solver_compute_gravity
+	  and solver_geostatic_fix.
+
+	(printing_timing_stat):
+
+	- Added new timer for gravity forces calculation.
+
+	(source_init):
+
+	- Added globalDelayT (global delay in time for the source in seconds).
+	  For now, this is ONLY VALID for the srfh source type.  It delays the
+	  starting time of the source to accomodate time for the geostatic
+	  loading and cushion. Its value is passed to compute_print_source.
+
+	(main):
+
+	- Added parameters to call of nonlinear_init().
+
+	- Moved nonlinear_solver_init and nonlinear_stations_init to before
+	  calling source_init.
+
+	- Added call to check_balance().  This function checks if the weight
+	  of the model matches that of the reactions for after geostatic loading
+	  is applied.  Will need to be relocated and added provisions for
+	  handleing errors.
+
+	* quake/forward/quakesource.h:
+
+	(compute_print_source):
+	
+	- Added parameter globalDelayT
+
+	* quake/forward/quakesource.c:
+
+	(read_srfh_source):
+
+	- Added parameter globalDelayT.
+
+	- This parameter is added to all theSourceTinitArray entries.
+
+	(source_init_parameters, compute_print_source):
+
+	- Added parameter globalDelayT
+
+	* quake/forward/nonlinear.h:
+
+	- Added typedef struct bottom_elements_f. It has an id that maps to the
+	  table of elements and a vector with the nodal forces to be used as
+	  reactions at the bottom.
+
+	(get_geostatic_total_time, compute_addforce_gravity,...)
+	(compute_bottom_reactions, geostatic_displacement_fix, check_balance):
+
+	- New method prototypes.
+
+	* quake/forward/nonlinear.c:
+
+	- New global variables: theGeostaticLoadingT, theGeostaticCushionT,
+	  theGeostaticFinalStep, myBottomElementsCount, myBottomElements,
+	  totalWeight.
+
+	- Some cosmetic changes.
+
+	(get_geostatic_total_time):
+
+	- Returns the sum of the two variables defining the total
+	  geostatic loading time.
+
+	(nonlinear_init):
+
+	- Added new parameters to apss on to nonlinear_initparameters.
+
+	- Increased the double and int messages arrays.
+
+	- Added boradcasting of new global variables mentioned above.
+
+	(nonlinear_initparameters):
+
+	- Added new arguments and local variables.
+
+	- Now reading geostatic loading parameters.
+
+	(isThisElementAtTheBottom):
+
+	- New method that returns YES if an element is at the bottom, NO
+	  otherwise.
+
+	(nonlinear_print_stats, nonlinear_stats):
+
+	- Now prints/collect infor for how many elements there are at the 
+	  bottom of the model.
+
+	(nonlinear_solver_init):
+
+	- Now calls for counting and mapping the bottom elements for geostatic
+	  loading.
+
+	(check_yield_limit):
+
+	- Set the limit back to 1.5---need more research before settling for
+	  a good value.
+
+	(smooth_rise_factor):
+
+	- New method. Returns a factor between 0 and 1 depending on the current 
+	  step in the pre-simulation stage for geostatic loading. This factor
+	  is used to calculate the progressive addition og gravitational
+	  forces.
+
+	(add_force_reactions):
+
+	- New method. It adds the reactions at the bottom to compensate the 
+	  weight of the model once it is released for the simulation.
+
+	(check_balance):
+
+	- New method. Does not actually checks (it should in the future) but
+	  for now it simply prints to stdout the result and difference of
+	  the total weight of the model and the sum of the reactions at the
+	  bottom.  They should match or be sufficiently close to avoid
+	  numerical errors.
+
+	(compute_addforce_gravity):
+
+	- New method. It computes the contribution of each elememt's weight
+	  for geostatic loading and once total pre-loading is reached it also
+	  calls for adding the reactions at the bottom.
+
+	(compute_bottom_reactions):
+
+	- New method. Computes the reactions at the bottom elements due to
+	  the deformation these elements suffered because of geostatic
+	  loading. It uses the conventional stiffness matrix - displacements
+	  product.
+
+	(geostatic_displacements_fix):
+
+	- New method. Fixes the vertical displacement of the bottom nodes
+	  for applying geostatic gravitational loading.
+
+********************************************************************************
+
+2010-05-20 Yigit Isbiliroglu <yisbilir@.andrew.cmu.edu>
+
+	* matlab-utils/
+
+	A new feature is added to program. A matlab function 'plot3d_Hercules.m'
+	that plots 3d meshing of any specified region within domain is added 
+	into newly created file 'matlab-utils'. Its usage is decribed in the 
+	script itself. A sample 'parameters.in' file is also added in the 
+	subfolder 'examples' under matlab-utils.
+	
+********************************************************************************
+
+2010-05-19 Yigit Isbiliroglu <yisbilir@.andrew.cmu.edu>
+
+	A new feature is added to program. Now, any specific portion of domain 
+	can be plotted in 3D via MATLAB. For this, meshformatlab.c and 
+	meshformatlab.h are created. Element coordinates and data are stored 
+	in binary format. 4th dimension in plot can be Vp, Vs or rho depending 
+	on user preferences. It also can be id of processor which possesses 
+	the data of corresponding element.
+	
+	* parameters.in
+
+	- Added lines defining the parameters for mesh properties of matlab.
+	  One of the following two options should be added to parameters.in
+	
+	# Mesh properties for matlab
+	
+	mesh_coordinates_for_matlab            = no
+	
+	OR
+	
+	# Mesh properties for matlab
+
+	mesh_coordinates_for_matlab            = yes
+	mesh_coordinates_directory_for_matlab  = outputfiles/For_Matlab
+
+	#         min_x       min_y       max_x     max_y     min_z      max_z
+	# .....................................................................
+
+	mesh_corners_matlab =
+
+	0 0 800 800  0  800
+	
+	mesh_corners_matlab defines the portion of the domain of which element
+	properties will be written in a binary file.
+			
+	* quake/forward/psolve.c:
+	
+	- meshformatlab.h is added in header.
+	
+	- static  noyesflag_t  storeMeshCoordinatesForMatlab is defined.
+	
+	(local_init):
+	
+	- storeMeshCoordinatesForMatlab  is broadcasted to all processors.
+	
+	(initparameters):
+	
+	- Added char mesh_coordinates_for_matlab[64].
+	
+	- Added  noyesflag_t  meshCoordinatesForMatlab and initialized as -1.
+	
+	- mesh_coordinates_for_matlab is parsed by PE0 from parameters.in and 
+	  sanity check is done to make sure it is either 'yes' or 'no'. Then, 
+	  assigned to meshCoordinatesForMatlab which is assigned to 
+	  storeMeshCoordinatesForMatlab afterwards. Also printed on the screen.
+	
+	(toexpand):
+	
+	- int returnval is removed.
+	
+	- Regular Vs rule is moved into a new function called vsrule which is 
+	  located in quake_util.c.
+	
+	- A new function 'buildingmagic' is called to check whether an element 
+	  is in	foundation and need to be refined. 
+	
+	(main):
+	
+	- An if statement is added to call saveMeshCoordinatesForMatlab if 
+	  storeMeshCoordinatesForMatlab is 'yes'.
+	  
+	* quake/forward/buildings.c:
+	
+	- A new function 'buildingmagic' is added. It is not doing anything new,
+	  it just calls either foundationSearch or vsrule.
+	
+	(isThisElementInFoundation):
+	
+	- Code repetition is overcomed.For this, incoming parameters of 
+	  isThisElementInFoundation is modified. Again, no change in 
+	  functionality. Now, this function is called by both 
+	  foundationSearch and foundationCorrectProperties.
+	
+	(foundationCorrectProperties):
+	
+	- This function is modified such that now it calls 
+	  isThisElementInFoundation in order to avoid code repetition.
+	
+	* quake/forward/quake_util.c:
+	
+	- A new function 'vsrule' is created and regular Vs rule is moved into 
+	  that function. Now, functions toexpand and buildingmagic calls 
+	  'vsrule' to decide on expansion of octants.
+		  
+********************************************************************************
+
+2010-05-18 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	* quake/forward/psolve.c:
+
+	(main):
+
+	- Added parameter in nonlinear_yield_stats call.
+
+	* quake/forward/nonlinear.h:
+
+	- Added parameter in nonlinear_yield_stats call.
+
+	* quake/forward/nonlinear.c:
+
+	(nonlinear_yield_stats):
+
+	- Entirely new.  It now does not take statistics for all values
+	  of Vs for each processor but does it globally for all processors
+	  and using the ranges defined by the nonlinear table of properties.
+	
+********************************************************************************
+
+2010-05-17 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	* quake/forward/psolve.c:
+
+	(interpolate_station_displacements):
+
+	- Added an if statement to force files to be flushed every 10 times
+	  the stations printing rate. Will need to be improved so that
+	  that factor of 10 is a user defined parameter with certain
+	  default value.
+
+	(main):
+
+	- Added an if statement after solver run that goes to the nonlinear
+	  module for printing yield statistics. Might need to be improved to
+	  capture more statistics.
+
+	* quake/forward/nonlinear.h:
+
+	- Commented out for later elimination the swrtJ2 element in the
+	  nonlinear element constants structure.
+
+	- Added the maxFs and avgFs elements to the constants structure.
+
+	- Added nonlinear_yield_stats prototype.
+
+	* quake/forward/nonlinear.c:
+
+	(compute_nonlinear_state):
+
+	- Moved some variable declarations to the beginning.
+
+	- Fs, J2, and the deviatoric and elastic strain tensor are now 
+	  computed and used in a per quadrature-point form.
+
+	- Fs is now computed also for the linear case.
+
+	- Added commands for storing yield statistics.
+
+	(nonlinear_yield_stats):
+
+	- New method that collects and prints the statistics (max and avg) of
+	  the Fs values. Designed to run in linear case and see the range
+	  of Fs and then in the nonlinear case to check how much above the
+	  limit it goes.
+
+********************************************************************************
+
+2010-05-05 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	- Activated stations print rate. Should have done a long time ago.
+
+	* quake/forward/psolve.c:
+
+	(solver_output_stations):
+
+	- Moved timers to within the conditional.
+
+	(solver_nonlinear_state):
+
+	- Moved timers to within the conditional and separate them into the two 
+	  different timers each call should belong to.  Maybe later, nonlinear
+	  stations printing should have its own timer.
+
+	- Added step and rate parameters.
+
+	(solver_run):
+
+	- Added step parameter in call to solver_nonlinear_state.
+
+	(broadcast_stations_info):
+
+	- Added line to broadcast theStationsPrintRate.
+
+	* quake/forward/nonlinear.h,c:
+
+	(print_nonlinear_stations):
+	
+	- Added step and rate parameters
+
+	* quake/forward/nonlinear.c:
+
+	(print_nonlinear_stations):
+
+	- Boundle the printing in a conditional that checks if the residual
+	  of step/rate is zero.
+
+********************************************************************************
+
+2010-05-05 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	* quake/forward/nonlinear.h:
+
+	(init_tensorptr, get_displacements):
+	
+	- New method prototypes.
+
+	* quake/forward/nonlinear.c:
+
+	(init_tensorptr):
+	
+	- New method. Initializes a tensor pointer to have all tensor 
+	  components equal zero.
+
+	(compute_yield_surface_state):
+
+	- Commented out all options.  Now returns the complete Fs value
+	  regardless of the material model. Required for printing linear
+	  state.
+
+	(get_displacements):
+	
+	- New method. Returns the displacements on the nodes of a given element.
+	  Created to avoid code duplication. Authomatically checks if displace-
+	  ments are all zero. Could be of use in other parts of the code.
+
+	(compute_nonlinear_state)
+
+	- Now capturing displacements using new methdo described above and
+	  skipping for the next element if displacements are zero.
+
+	(nonlinear_stations_init):
+
+	- Now initializes all tensors in a station to zero.
+
+	(print_nonlinear_stations):
+
+	- Moved mapping index declaration to out of the loop. Moved declaration
+	  of lx, ly, lz, and bulk tensors to the beginning. Same for the mapping
+	  index assignation.
+
+	- Now capturing displacements with new method described above and 
+	  jumping to printing if all disps are zero.
+
+	- Moved Fs calculation to out of the conditional to have results for
+	  the linear case.
+
+********************************************************************************
+
+2010-05-04 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	* quake/forward/nonlinear.c:
+
+	- Eliminated commented structs that were moved to psolve.h a while ago.
+
+	(solver_nonlinear_entities, solver_nonlinear_state):
+
+	- Changed name of method, before ..._entities, now ..._state.
+	
+	- Included additional parameter in print_nonlinear_entities, now
+	  called print_nonlinear_stations.
+
+	- Changed to nonlinear module changes for former 
+	  compute_nonlinear_entities, now compute_nonlinear_state.
+
+	(solver_run):
+
+	- Reflects change above.
+
+	* quake/forward/nonlinear.c:
+
+	- Added new global variable to store the nonlinear state of stations
+
+	(qptensors_I1, qptensors_octahedrals, qptensors_deviators,...)
+	(qptensors_J2, compute_qp_strains, copy_qp_tensors)
+
+	- Eliminated. These were obsolete now that I have merged everything to
+	  per-point methods.
+
+	(compute_nonlinear_entities, compute_nonlinear_state):
+
+	- Former compute_nonlinear_entities is now compute_nonlinear_state.
+
+	- Eliminated TODO tag that was completed.
+
+	(nonlinear_stations_init):
+
+	- Added allocation of memory for nonlinear state of stations.
+
+	(interextrapolate):
+
+	- Eliminated. Was not accurate and became obsolete now that stations
+	  are done correctly for each coordinate.
+
+	(print_nonlinear_stations):
+
+	- Completely refactored to do nonlinear state calculations at the
+	  exact coordinates of the station.
+	
+	* quake/forward/nonlinear.h:
+
+	- Refactored to reflect changes in nonlinear.c
+
+	- Added new typedef struct nlstation_t.
+
+********************************************************************************
+
+2010-05-04 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	* quake/forward/nonlinear.c:
+
+	(pqtensors_I1, qptensors_octahedrals, qptensors_deviators,...)
+	(qptensors_J2, compute_cp_strains, copy_qp_tensors):
+
+	- Became obsolete with the move to do computations per (quadrature)
+	  point for later correct implementation of stations.  For now only
+	  commented out. For later removal.
+
+	(compute_nonlinear_entities):
+
+	- Copy of pstrains 2 to 1 moved to correct place.
+
+	- All calculations modified to be per quadrature point and not all 
+	  at once per element.
+
+	- A more natural 'continue' statement that accounts at once for
+	  linearity.
+
+********************************************************************************
+
+2010-05-04 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	* quake/forward/psolve.c:
+
+	(setup_stations_data):
+
+	- Changed header for nonlinear stations.
+
+	* quake/forward/nonlinear.h:
+
+	(nlconstants_t):
+
+	- Changed fsk to fs.
+
+	(stability_methods):
+
+	- Changed name of still_stable to check_yield_limit, and added
+	  check_strain_stability.
+
+	* quake/forward/nonlinear.c:
+
+	- Changes reflected from .h file
+
+	(compute_yield_surface, compute_dLambda, compute_dfds,...)
+	(compute_pstrain2, check_strain_stability):
+
+	- New methods for more modularity and cleaner code for manipulating
+	  nonlinear points and tensors, and check stability.
+
+	(check_yield_limit):
+
+	- Old still_stable improved.
+
+	(compute_nonlinear_entities):
+
+	- Compressed the last section in calls to methods introduced above.
+	  
+	(print_nonlinear_entities):
+
+	- Reduced the number of parameters to print by one, eliminatig 
+	  unnecessary redundancy between Fsk and Fs.
+
+********************************************************************************
+
+2010-04-29 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	* quake/forward/psolve.c:
+
+	- Identation and cosmetic changes.
+
+	(solver_compute_force_damping):
+
+	- Re-activated damping.  It had temporarily been shut down for the 
+	  SC10 paper.
+
+	* quake/forward/nonlinear.h:
+
+	(typedef_structs):
+
+	- New approach to tensors with explicit components and a higher level
+	  structure for the quadrature points.
+
+	- Cosmetic changes in the constants struct and the nonlinear solver 
+	  struct.
+
+	(methods):
+
+	- Changed numerical.in to parameters.in.
+
+	- Rearrange them in the correct order (still need some editing)
+
+	- Added a whole new set of methods to deal with tensors and modified
+	  old ones. See larger explanation below.
+
+	* quake/forward/nonlinear.c:
+
+	- Added definitions for quadrature point coordinate factor QC and
+	  for shape functions table XI.
+
+	(nonlinear_init):
+
+	- Changed to parametersin
+
+	(nonlinear_solver_init):
+
+	- Adapted allocations to the changes in typedefs and structs in .h.
+
+	(tensor_I1, qptensors_I1, tensor_octahedral, qptensors_octahedrals,...)
+	(tensor_deviator, qptensors_deviators, tensor_J2, qptensors_J2,...)
+	(init_tensor, point_strain, compute_qip_strains, point_stress,...)
+	(compute_qp_stresses, subtract_tensors, subtract_qptensors,...)
+	(copy_tensor, copy_qp_tensors):
+
+	- New and changed methods for operations on tensors.
+
+	(point_dxi, compute_qp_dxi):
+
+	- New methods that replace compute_xi_derivatives.
+
+	(compute_addforce_nl, compute_nonlinear_entities,...)
+	(print_nonlinear_entities):
+
+	- Addapted procedures for new treatment of tensors.
+	
+
+********************************************************************************
+
+2010-04-21 Ricardo Taborda <rtaborda@.cmu.edu>
+
+	* parameters.in
+
+	- New options for printing the stiffness matrices to standard output and
+	  to inlcude the velocities and accelerations in the station files. The
+	  new input lines should go like this...
+
+	  print_matrix_k              = <yes> OR <no>
+	  print_station_velocities    = <yes> OR <no>
+	  print_station_accelerations = <yes> OR <no>
+
+	* quake/forward/buildings.h:
+	* quake/forward/buildings.c:
+
+	- Mainly cosmetic changes.
+
+	- Renamed some methods to start with small letters.
+
+	- Also added two TODO messages for future reference.
+
+	* quake/forward/nonlinear.h:
+
+	- Removed the 'dononlinear' type. It is being replaced by a lower level
+	  type called the 'noyesflag' in quake_util.h
+
+	- Added the strainrate and sensitivity variables to the nonlinear
+	  elements constants.
+
+	- theGroupSize is now being passed in nonlinear_solver_init.
+
+	* quake/forward/nonlinear.c:
+
+	- Added global variables: theStrainRates and theSensitivities
+
+	(isThisElementNonLinear):
+
+	- Now passes a YES, NO flag.
+
+	- The Vs cut is now inclusive. An element is declared nonlinear if
+	  its value of Vs <= theNonLinVsCut.
+
+	(interpolate_property_value):
+
+	- Fixed bug for the above ceiling case
+
+	(nonlinear_local_init):
+
+	- Added memory allocation and broadcasting for the two new global 
+	  arrays for the strain rates and sensitivity factors.
+
+	(nonlinear_initparameters):
+
+	- Changed input file name to parametersin.
+
+	- Added memory allocation for the two new global arrays.
+
+	- Change the dimension diven to parsearray from 3 to 5 and added the
+	  lines to collect the array columns and sort them properly.
+
+	(nonlinear_elements_count):
+	(nonlinear_elements_mapping):
+
+	- Changed 0,1 flags to NO,YES flags.
+
+	(nonlinear_solver_init):
+
+	- Now receives theGroupSize as a parameter for doing statistics.
+
+	- Added calls to interpolate the values of strainrate and sensitivity
+	  to be assigned to each element.
+
+	(compute_nonlinear_entities):
+
+	- Now, strainRate and sensitivity values are now those assigned to each
+	  element. Before, they were hard coded.
+
+	- eliminated the use of lambdaZero, now strainRate.
+
+	* quake/forward/psolve.h:
+
+	(mysolver_t):
+	
+	- Added TODO message.
+
+	- Added the 3rd vector of displacements. Necessary for accelerations
+	  to be recorded in stations.
+
+	* quake/forward/psolve.c:
+
+	- Commented out unused global variables. To be deleted next time aorund.
+
+	- Created a 'Some Additional Options' section of global variables
+	  for controling printing K, velocities, and accelerations.
+
+	- Changed dononlinear_t to noyes_t type in the declaration of the
+	  doNonlinear variable.
+
+	(local_init):
+
+	- Total of integer messages is now 16.
+
+	- Now also broadcasting printK, printStationVelocities, and 
+	  printStationAccelerations.
+
+	(initparameters):
+
+	- Changed some flags to the noyesfalg_t.
+
+	- Now reading and storing flags for printing the stiffness matrices, and
+	  printing stations velocities and accelerations.
+
+	(setrec):
+
+	- Deleted unused vartiables and methods that had been commented out.
+
+	(toexpand):
+
+	- Style and cosmetic changes.
+
+	(print_K_stdoutput):
+
+	- Now printing all three K1, K2, and K3 matrices in clean format to 
+	  standard output.
+
+	(solver_init):
+
+	- Printing K matrices is now a user controled option.
+
+	- Added control of memory allocation for tm3 for accelerations depending
+	  on the user selection for printing accelerations to stations.
+
+	(solver_update_status):
+
+	- Moved the star '*' to before the new line control for uniformity
+	  on the standard output file.
+
+	(solver_compute_displacement)
+
+	- Added control for updating tm3 if the print accelerations option is
+	  ON.
+
+	(read_stations_info):
+
+	- Fixed bug in memory allocation check for theStationZ (theStationY
+	  was twice)
+
+	(setup_stations_data):
+
+	- Refactor formating of stations header.
+
+	- Made velocities and accelerations header optional as controlled
+	  by the user.
+
+	(interpolate_station_displacements):
+
+	- Refactor variables of displacements for shorter name and
+	  added new variables for velocities and accelerations.
+
+	- Activated option of printing velocities and accelerations.
+
+	NOTE: If accelerations are printed, so are velocities by default.
+
+	(output_stations_init):
+
+	- Deleted unused variable init_time.
+
+	(main):
+
+	- Added call to stiffness_init for mapping elastic element indices.
+	  This was necessary for compatibility with the nonlinear module.
+
+	* quake/forward/quake_util.h
+
+	- Added the noyesflag_t typedef enumarator for controling no, yes 
+	  options trasparently.
+
+	- Other cosmetic changes.
+
+	* quake/forward/quake_util.c:
+
+	- Expanded comment on how to use the UNDERFLOW_CAP definition.
+
+	- Change the UNDERFLOW_CAP back to 1e-20
+
+	- Re-activated the vector_is_zero and vector_is_all_zero methods.
+	  Left the immediate returns commented and added a comment on how to
+	  use them for scalability tests.
+
+	* quake/forward/quakesource.c:
+
+	(print_myForces):
+	(search_nodes_octant):
+
+	- Were unused. Commented them out.
+
+	* quake/forward/stiffness.h:
+
+	- Added three new methods stiffness_init, linear_elelemts_count, and
+	  linear_elements_mapping, described in stiffness.c changes.
+	
+	* quake/forward/stiffness.c:
+
+	- Included nonlinear.h for calls to isThisElementNonLinear.
+
+	- Included util.h
+
+	- Created Global variables myLinearElementsCount and 
+	  myLinearElementsMapper
+
+	(linear_elements_count):
+	
+	- New method. It counts how many elements in the processor are to be 
+	  treated as linear elastic
+
+	(linear_elements_mapper):
+
+	- New method. It creates a mapper between the table of lements and the 
+	  indices of those elements that will be considered as linera elastic.
+
+	(stiffness_init):
+
+	- New method. It calls the counter and mapper for initialization of 
+	  global variables.
+	
+	(compute_addforces_conventional):
+	(compute_addforces_effective):
+
+	- Changed indices in the main for loops to be only for the amount of
+	  linear elastic elements.
+
+	- Added line that assigns the right element index depending on the 
+	  mapper.
+
+********************************************************************************
+
+2010-04-16 Yigit Isbiliroglu <yisbilir@andrew.cmu.edu>
+
+	A new feature is added to program. Now, foundation of buildings can be
+	refined with desirable resolution for any given Vs value.For this, 
+	buildings.c and buildings.h files are created. 
+	
+	* parameters.in
+
+	- Added lines defining the parameters for building's foundations.
+	  One of the following two options should be added to parameters.in
+	
+	  # Buildings
+	
+	  number_of_buildings           = 0
+	
+	  OR
+	
+	  # Buildings
+
+	  number_of_buildings           = 2
+	  buildings_n_factor            = 4
+	  buildings_Vp_factor           = 2
+	  buildings_Rho_factor          = 3
+
+	  # min_x  min_y  max_x  max_y  depth    Vs
+	  # .......................................
+
+	  building_properties =
+	    
+	    350.0  350.0  450.0  450.0  100.0  1000
+	    100.1  100.1  130.0  130.0  100.0  1000
+	
+	
+	  If the number_of_buildings is 0, the program will work as usual.
+	
+	  building_properties: foundation bounds location and Vs to be assigned
+	  buildings_n_factor:  minimum number of subdivisions per foundation
+	                       edge. Currently effective for all 3 dirs.
+		
+	* quake/forward/psolve.c:
+	
+	- buildings.h is added in header.
+	
+	- static int theNumberOfBuildings is defined.
+	
+	(local_init):
+	
+	- theNumberOfBuildings variable is broadcasted to all processors.
+	
+	(initparameters):
+	
+	- Added int number_of_buildings.
+	
+	- number_of_buildings is parsed by PE0 from parameters.in and sanity
+	  check is done to make sure its value is greater than 0. Then, assigned
+	  to theNumberOfBuildings. Also printed on the screen.
+	
+	(toexpand):
+	
+	- int returnval is defined.
+	
+	- An if statement was added to check whether the PE has buildings or 
+	  not. If it does, it proceeds according to the foundation rules of
+	  expansion and skips the regular Vs rule.
+	
+	(mesh_correct_properties):
+	
+	- An if statement was added at the very beginning of the function. 
+	  It checks whether the element is in a foundation. If yes, the main 
+	  for loop continues with the next element after the properties of 
+	  foundation element are corrected in an independent method.
+	
+	- At the very end of the function, allocated memories for 
+	  foundation_coordinates are freed.
+	
+	(main):
+	
+	- An if statement is added to initialize parameters for buildings and
+	  foundations if theNumberOfBuildings is greater than 0.
+
+********************************************************************************
+
+2010-03-31 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/psolve.c:
+
+	(print_timing_stat):
+	
+	- Mesh stats now total correctly
+
+********************************************************************************
+	
+2010-03-26 Julio Lopez <jclopez@ece.cmu.edu>
+
+	* quake/forward/psolve.c
+
+	(mesh_generate):
+
+	Relocated etree_correct_properties in order to reuse the already
+	open CVM database
+
+	(etree_correct_properties):
+
+	Changed parameter to take a pointer to a etree file instead of
+	a file name.
+
+	(mesh_correct_properties):
+
+	Renamed etree_correct_properties to mesh_correct_properties
+	
+********************************************************************************
+	
+2010-03-21 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/psolve.c:
+
+	(print_timing_stat)
+	(solver_update_status)
+
+	-Fixed display error for simulation rate maximum time
+	
+********************************************************************************
+
+2010-03-20 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/psolve.c:
+
+	Added globals fastestTimeSteps, slowestTimeSteps and MONITOR_STATS_RATE
+	to track simulation print rate and make solver_update_status() more
+	integrated.
+
+	(solver_update_status):
+
+	- Added in tracking for run rate and estimated time to finish.
+
+	(print_timing_stat):
+	
+	- Added in lots of new stats and averages
+
+********************************************************************************
+
+2010-03-19 Julio Lopez <jclopez@ece.cmu.edu>
+
+	* quake/forward/psolve.c (solver_run):
+
+	Restructured and moved pieces to separate functions in preparation
+	for new communication functionality.
+
+	
+2010-03-15 Julio Lopez <jclopez at ece dot cmu dot edu>
+
+	* quake/forward/psolve.c (local_init):
+
+	BUG fix: theTimingBarriersFlag parameter was not being propagated
+	to the compute nodes.  It is now added to the 'int_message'
+	broadcast
+	
+********************************************************************************
+
+2010-03-16 John Urbanic <urbanic@psc.edu>
+
+        * quake/forward/psolve.c
+
+	(solver_run):
+	
+	- removed temporaty barriers around compute addforce routines.
+
+	(print_timing_stat):
+
+	- Added in prints for new timers and stats.
+
+	(main):
+
+	- Added in timers for Mesh and Schedule stats printing.
+
+********************************************************************************
+
+2010-03-15 Julio Lopez <jclopez at ece dot cmu dot edu>
+
+	* quake/forward/psolve.c 
+
+	(solver_run):
+
+	- Fixed timer placement for 'compute_addforces_e'
+	- Added timer for 'damping_addforces'
+
+********************************************************************************
+	
+2010-03-15 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* quake/forward/psolve.c:
+
+	(local_init):
+	
+	- Corrected a bug with broadcasting the stiffness method.
+
+	(solver_run):
+
+	- Commented the call of addforce_damping.  We are forcing NO DAMPING
+	  in order to be able to run performace/scalability problems toward
+	  SC'10 paper.
+
+********************************************************************************
+
+2010-03-10 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/psolve.c
+
+	(solver_run):
+	
+	- added in temporaty barriers around compute addforce routines
+	  for debugging
+
+	(print_timing_stat):
+	
+	- added in Timer_Printall to dump raw timer data
+
+	* quake/forward/stiffness.c
+	
+	(compute_addforce_effective):
+
+	- added in temporary timers for debugging
+	
+	
+********************************************************************************
+2010-03-08 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/quakesource.c
+
+	(source_compute_print_stat)
+
+	- Won't print out data for PEs with no forces
+
+********************************************************************************
+	
+2010-03-05 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* quake/forward/stiffness.c:
+	* quake/forward/psolve.c:
+	
+	- I commented out some of the changes made in the previous commit 
+	  because they could affect performance and linear runs.  
+
+********************************************************************************
+
+2010-03-03 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* quake/forward/nonlinear.h:
+	* quake/forward/nonlinear.c:
+
+	- Changed invalid formulation using rate-independent plasticity
+	  for the so-far-correct implementation of rate-dependent plasticity.
+	  Changes are mainly reflected on the compute_addforce_nl and
+	  compute_nonlinear_entities methods.
+
+	- New methods were also added to make the above more transparent and
+	  easy to follow.
+
+	* quake/forward/stiffness.c:
+
+	- Added include nonlinear.h for call to the isThisElementNonlinear 
+	  method.
+
+	(compute_addforce_conventional)
+	(compute_addforce_effective)
+
+	- Added a check to see if an element is nonlinear.  If it is, then 
+	  it goes to the next element.  Now, elements tagged as nonlinear
+	  do not require to go through these two methods.
+
+	- Clean remanents of old way of computing stiffness contributions
+	  and timers that were left commented out.
+
+	* quake/forward/psolve.c:
+
+	(solver_run):
+
+	- Added aditional parameter in call to compute_nonlinear_entities.
+
+	- Deleted old comments that no longer apply and were related to
+	  an obsolete way of solving the next time step displacements.
+
+	(setup_stations_data):
+
+	- Added header for temporarily permanent printing of velocity.
+	  TODO: Need to come back to this later to make it optional.
+
+	- Also corrected the heading of the nonlinear option.
+
+	(interpolate_station_displacements):
+
+	- Activated printing of velocities.
+	
+********************************************************************************
+
+2010-02-02 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* quake/forward/psolve.c: 
+
+	(main):
+
+	- Added call to the nonlinear stats after the nonlinear stations init.
+
+	* quake/forward/nonlinear.c:
+
+	(nonlinear_solver_init):
+
+	- Eliminated call to nonlinear stats---moved to psolve to have it
+	  after the nonlinear stations are done.
+
+	(compute_nonlinear_entities):
+
+	- Added the 'zero' as the check for the change in the flow rule (fsk).
+
+	(nonlinear_stations_init):
+
+	- Commented out unused variables.
+
+********************************************************************************
+
+2010-02-01 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* quake/forward/psolve.c: 
+
+	(interpolate_station_displacements):
+
+	- Changed the format for printing the time in the station files to a
+	  larger number of significant figures to avoid cut numbers when a very
+	  small delta t is required.
+
+	- Added a 'cor-now-commented' section to print velocities as well.
+
+	(main):
+
+	- Added extra argument in the call of nonlinear_solver_init.
+
+	- Moved the call to nonlinear_stations_init to after the nonlinear
+	  solver has been done.
+
+	* quake/forward/nonlinear.h:
+
+	- Added four new method declarations related to initialization of non-
+	  linear variables and structs and printing stats. More details below.
+
+	* quake/forward/nonlinear.c:
+
+	- Added golval variables for counting nonlinear elements per PE and
+	  for mapping nonlinear elements data to the regular list in myMesh.
+
+	(nonlinear_elements_count):
+
+	- New method. Counts the number of elements that have a Vs less than
+	  the nonlinear Vs cut especified in the parameters file.
+
+	(nonlinear_elelemts_mapping):
+
+	- New method. Allocates memory for the mapping vector in accordance with
+	  previous method and then loops over all elements sotirng the local
+	  element index to the complete list in myMesh.
+
+	(nonlinear_print_stats):
+
+	- New method. Prints stats about the number of nonlinear elements per
+	  PE and the number of stations in nonlinear elements.
+
+	(nonlinear_stats):
+
+	- New method. Gathers the number of nonlinear elelemts and stations in
+	  each PE and pass them to PE0 for printing.
+
+	(nonlinear_solver_init):
+
+	- Added theGroupSize as paremeter.
+
+	- Added the call to the nonlinear elelemts count and mapping methods 
+	  and stats method.
+
+	- Change the allocation of memory for nonlinear solver to be dependant
+	  on the local number of nonlinear elements and not on the total local
+	  nomber of elements.
+
+	- Change loop over all elements to be over nonlinear elements only and
+	  subsequent indexing accordingly.
+
+	(compute_addforce_nl, compute_nonlinear_entities)
+	(nonlinear_stations_init, print_nonlinear_entities):
+
+	- Change loop over all elements to be over nonlinear elements only and
+	  subsequent indexing accordingly.  Also commented out check to the 
+	  nonlinear vs cut because the above makes it unnecessary.
+
+********************************************************************************
+
+2010-01-29 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/psolve.c
+
+	(main)
+	
+	- Eliminated all traces of argv[3], the old physics.in file and shifted
+	  all arguments accordingly in all subroutines called here.  Also fixed
+	  comments.
+
+	(local_init)
+
+	- Combined 2 and 3 args as per above.
+
+	(initparamters)
+
+	- Collapsed both arguments into one as per above.  Just aliased 
+	  physics.in to numerical.in for simplicity.
+	
+********************************************************************************
+
+2010-01-28 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* quake/forward/nonlinear.c:
+
+	- Added global variables for mapping the stations that fall in nonlinear
+	  elements with the complete list of stations. The variables are the
+	  integer myNumberOfNonlinStations and the vector 
+	  myNonlinStationsMapping.
+
+	(compute_addforce_nl):
+	
+	- Moved the changed of the sign in the forces to the final passing to
+	  the nodalForce vector and keep original commented out until this is
+	  well understood.
+	
+	(compute_nonlinear_entities):
+	
+	- Deleted the old code for printing that was commented out. The new
+	  methods for printing are well tested now.
+
+	(nonlinear_stations_init):
+
+	- Added a first pass loop over the stations to determine how many fall
+	  in nonlinear elements.
+
+	- Added allocation for the mapping vector and changed the allocations
+	  to be the number of nonlinear stations and not the number of stations.
+
+	- Modified loops and assignation indices accordingly, and added sanity
+	  checks for the number of stations. 
+
+	(print_nonlinear_entities):
+	
+	- Changed loop limit to the number of nonlinear stations.
+
+	- Erased old average methods that were commented out.
+
+	- Changed stations indices where necessary to map to the correct 
+	  stations.
+
+********************************************************************************
+
+2010-01-26 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* quake/forward/nonlinear.c:
+
+	(compute_addforce_nl):
+	
+	- Changed the sign in the forces. This apparently was the error we have
+	  been carrying for too long now.
+	
+	(compute_nonlinear_entities):
+	
+	- Improved the section that checks if an element is failing to meet
+	  nonlinear rules.
+
+	(print_nonlinear_entities):
+	
+	- Added printing invariant for bulk deformations and stresses.
+
+********************************************************************************
+
+2010-01-20 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* quake/forward/nonlinear.c:
+
+	(compute_addforce_nl):
+	
+	- The vs cut is now correctly checked with the input parameter
+	
+	(compute_nonlinear_entities):
+	
+	- Added a provision to detect if the nonlinear run needs a smaller delta t.
+	  It stops the simulation and prints out the location of the critical
+	  element.
+	  
+	- Added a provision for the impossed LINEAR case and corrected the hard-
+	  coded check on the vs cut to be the one provided in the input parameters.
+	  
+	(print_nonlinear_entities):
+	
+	- Override the localcoords of the station to print the average/middle point
+	  of the element. Inter- extra-polation outside the quadrature points is
+	  causing erroneous data. We need a better method here.
+
+********************************************************************************
+
+2010-01-20 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/timers.c
+
+	(Timers_PrintAll)
+
+	- Reformatted output to make grep friendly
+
+	* quake/forward/psolve.c
+
+	(main)
+	
+	- Added in timer for source initialization
+
+	(print_timing_stats)
+
+	- Reformatted output for above timer
+
+	(source_init)
+
+	- Removed obsolete timer
+		
+********************************************************************************
+
+2010-01-19 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* quake/forward/psolve.c:
+
+	(solver_run):
+
+	- Added call to print_nonlinear_entities.
+
+	(setup_stations_data):
+
+	- Wrapped the printing of nodes in a DEBUG ifdef block. Printing this
+	  is irrelevant unless one is doing some debugging.
+
+	- Changed the headings in the stations file to be aligned with the
+	  data and added a header for when nonlinear flag is ON.
+
+	(interpolate_station_displacements)
+
+	- Changed back the format for printing displacements to how it was
+	  originally done by Leo.  Julio had changed this a while ago. It turns
+	  out that the original way is advantageous for how the nonlinear
+	  module adds data to be printed out. Added a very visible warning
+	  to avoid someone changes it again in the future.
+
+	(main):
+
+	- Added call to nonlinear_stations_init.
+	
+	* quake/forward/nonlinear.c: 
+
+	- Added global variable myStationsElementIndices to handle the element 
+	  indices for printing nonlinear data to stations.
+
+	(nonlinear_solver_init):
+
+	- Commented out global variables and code for getting global maxima
+	  parameters. This will be refactored later in a more clever way.
+
+	- Eliminated some old and commented out code.
+
+	(compute_addforce_nl):
+
+	- Added a provision to return without changes to the force vector for
+	  the LINEAR case.
+
+	- Cleaned up and did cosmetic changes.
+
+	(compute_nonlinear_entities):
+
+	- Added loop to store the sqrtJ2 values in the nonlinear element's 
+	  data structure (enlcons).
+
+	- Commented out all code related to printing and maxima and averages
+	  calculation.  Will be later removed.
+
+	(nonlinear_stations_init):
+
+	- New method for setting up the element indices of stations.
+
+	(interextrapolate):
+
+	- New method to inter- and extra-polate nonlinear related quantities 
+	  from the quadrature points to any other point in the element.
+
+	(print_nonlinear_entities):
+
+	- New method to handle printing nonlinear data to stations. There is
+	  pending work to identify if the station has indeed an element with
+	  nonlinear data or not.
+
+	* quake/forward/nonlinear.h:
+
+	- Added sqrtJ2 to the enlconstants_t struct. Needed it for printing.
+
+	- Added declaration of methods for printing and interpolation.
+	
+********************************************************************************
+
+2010-01-11 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/timers.c
+
+	- Added function Timers_Exists() to query if timer is instantiated
+
+	* quake/forward/timers.h
+
+	- changed to reflect above
+
+	* quake/forward/psolve.c
+
+	- Changed all old timer types to use timers.c lib
+
+	- Eliminated all old timer variables and various timer routines and headers
+
+	(print_timing_stat)
+
+	- Reformatted for updated timer info
+
+	(solver_run)
+
+	-simplified monitor/progress output
+
+********************************************************************************
+
+2010-01-06 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* quake/forward/io_planes.c: 
+	
+	- Added inlcude quake_util.h to conform with parsedarray
+	  having been moved there. This eliminates a warning.
+	  
+	* quake/forward/quakesource.c:
+	
+	- Added inlcude quake_util.h to conform with parsedarray
+	  having been moved there. Also rearrange inlcudes in alphabetical order.
+	  
+	- Eliminated two unnecessary definitions (LINESIZE and ERROR)
+
+	(parsedarray):
+		
+	- Erased the parsedarray method and moved it to quake_util.c.
+
+	* quake/forward/quakesource.h:
+	
+	- Eliminated unnecesary definition of LINESIZE
+	
+	- Eliminated the declaration of method parsedarray.
+	
+	* quake/forward/quake_util.c:
+	
+	- Added and rearrange includes.
+	
+	(parsedarray):
+	
+	- Added parsedarray method. Was originally in quakesource. It is now also
+	  used by nonlinear.c.  Having it at a higher level sourcecode makes it
+	  vissible to necessary parties.
+	
+	* quake/forward/quake_util.h:
+	
+	- Added definition of LINESIZE.  This is defined at several places in the
+	  code. We should try to unify this and others (e.g., PI).
+	
+	- Added declaration of method parsedarray.
+	
+	* quake/forward/nonlinear.c:
+	
+	- Added include quake_util.h
+	
+	- Change the global matrix theMaterialProperties to three vectors that are
+	  easier to broadcast and their names are more meaningful.
+	  
+	(interpolate_property_value):
+	(get_alpha):
+	(get_kay):
+	
+	- Added these three new methods and place them in a utilities block.  They
+	  help to read information from numerical.in that was initially hard-coded.
+	  
+	(nonlinear_local_init):
+	
+	- Change and corrected the memory allocation of the new vectors and their
+	  broadcasrting to all processors after being read by PE0.
+	  
+	(nonlinear_initparameters):
+	
+	- Corrected typo in string comparison for DruckerPrager material model.
+	
+	- Added returns to the sanity checks so they do stop the program.
+	
+	- Change and corrected the memory allocation of the new vectors for PE0.
+	  Before I was using a matrix.
+	  
+	(nonlinear_solver_init):
+	
+	- Changed from hard-coded assignment of nonlinear material properties to
+	  the new user-friendly methods to read this information from numerical.in.
+	
+	* quake/forward/nonlinear.h:
+	
+	- Eliminated unnecessary definitions that had been commented out.
+	
+	- Added new declarations for methods: interpolate_property_value, get_alpha,
+	  and get_kay. 
+	
+********************************************************************************
+
+2010-01-05 Ricardo Taborda <rtaborda@cmu.edu>
+
+	  Added new feature to the program. Now we can soften the material
+	  properties according to the mesh final structure. Elements with 
+	  stiff soil or rock-like properties in small elements (due to the
+	  2-to-1 rule) are softened. By lowering Vs and Vp values down to 
+	  a certain factor times the 'ideal' values, the cirtical delta t
+	  may double, bringing simulation time down.
+
+	* numerical.in:
+	
+	  A new line needed.
+	  
+	  softening_factor = <double>
+	  
+	  <double> must be 0 if you wan't no changes, or >= 1 for mesh
+	  softening to take place. Read more below.
+
+	* quake/forward/psolve.c: 
+
+	- Added global variable theSofteningFactor. This variable can take
+	  0 for no softening, and values greater or equal to 1. A value of
+	  1 results in maximum softening. We need more testing on the 
+	  consecuences of this factor, for now farctors > 4 or 5
+	  are suggested.
+
+	(local_init):
+
+	- increased double_message size to 17
+
+	- added theSofteningFactor to the passing message array for the
+	  way forward and back and changed the corresponding number of
+	  doubles passed in the MPI_Bcast.
+
+	(initparameters):
+
+	- added local variable for reading the softening_factor and a
+	  line in the onvocation of the parsing.
+
+	- added sanity check for the softening factor and instruction to
+	  feed the global variable of PE0.
+
+	- Did other cosmetic changes.
+
+	(setrec):
+
+	- correct an error in the definiton of points array.
+
+	(etree_correct_properties):
+
+	- Added local variable RhoVpRatio for correction of material
+	  properties. I have pending discussion with Jacobo about it.
+
+	- Re-arrange the adjustment of properties and added the new 
+	  section that actually does the softening of the mesh 
+	  transitions.
+
+********************************************************************************
+
+2010-01-05 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/timers.c
+
+	- changed declarations to elimate bogus gcc error
+
+	- added in stdlib.h to surpress error
+
+	- reformatted for 4 space indents
+
+	* quake/forward/io_planes.c
+
+	- eliminated unused variables
+
+	- reformatted for 4 space indents
+
+********************************************************************************
+
+2010-01-04 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/timers.c
+
+	- Made timer default to cumulative timers.
+
+	* quake/forward/timers.h
+
+	- changed to reflect above
+
+	* quake/forward/psolve.c
+
+	- added in "timers.h"
+
+	* quake/forward/Makefile
+
+	- added timers.c/h to project
+	
+********************************************************************************
+
+2009-12-30 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/timers.c
+
+	- Added in new timer library.  Initial routines are Timer_Start(),
+	  Timer_Stop(), Timer_Reset(), Timer_Config(), Timer_Value(),
+	  Timer_PrintAll(), and Timer_Reduce().
+
+	* quake/forward/timers.h
+
+	- added to support timers.c
+
+********************************************************************************
+
+2009-12-17 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/io_planes.c
+
+	- Finished all "New" routines.  IO server mode is now implemented.
+	  This checkin involved New_Planes_setup() and planes_IO_PES_main().
+
+	- Eliminated new_print_plane_displacements(). Rolled into _main()
+	
+	- Fixed unstable structure bcasts is Old_planes_setup()
+
+	* quake/forward/psolve.c
+
+	- Eliminated one more global from Globals section.
+
+********************************************************************************
+
+2009-12-16 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/io_planes.c
+
+	- Finished New_planes_print(), New_Planes_setup(), 
+	  New_planes_close() and New_output_planes_construct_strips()
+
+********************************************************************************
+
+2009-12-15 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/psolve.c
+
+	- updated call to io_planes_close() to eliminate need for global myID
+
+
+	* quake/forward/io_planes.h
+
+	- updated call to io_planes_close()
+
+
+	* quake/forward/io_planes.c
+
+	- updated planes_IO_PES_main(), New_planes_close(), New_planes_print()
+
+********************************************************************************
+
+2009-12-14 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/psolve.c
+
+	- eliminated a few unused globals
+
+	- added in a new communicator, comm_io, so that we do not need to
+	  use comm_world for anything
+
+	* quake/forward/io_planes.h
+
+	- fixed def for planes_IO_PES_main
+
+	* quake/forward/io_planes.c
+
+	- updated planes_t struct for additional IO server variables
+
+	- added in new server versions of New_planes_setup(),
+	  planes_IO_PES_main() and New_output_planes_construct_strips()
+	
+********************************************************************************
+	
+2009-12-11 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* quake/forward/nonlinear.h
+	
+	- Commented out some definitions soon to disapear (SENSITIVITY and 
+	  LAMBDAZERO)
+	
+	- Change dononlinear_type_t for dononlinear_t.  This has implications in 
+	  psolve.c and at other nonlinear places.
+	  
+	- Added new structures: materialmodel_t and material_properties_t
+	
+	- Refactor some internal names and did other cosmetic changes.
+	
+	* quake/forward/nonlinear.c
+	
+	- Included quakesource.h.  This will later be repared by moving some
+	  methods from there to quake_util
+	  
+	- Refactored the way everything is about reading data from input files.
+	  The nonlinear_init is now done in two methods nonlinear_local_init,
+	  nonlinear_initparameters and nonlinear_solver_init, emulating the way
+	  we do it for regular linear solver. 
+	
+	- (nonlinear_solver_init): Old hard coded decisions about material model
+	  are now in user control through parameters given in .in file.
+	  
+	- (nonlinear_solver_init): nonlinear Vs cut is now user controlled. 
+	
+	* quake/forward/psolve.c
+	
+	- Change the donolinear_t global variable
+	
+	- Erased commented lines that were no longer necessary for the nonlinear 
+	  module.
+	
+	- (initiparameters) Change the dononlinear_t and made cosmetic changes 
+	  for the damping and nonlinear sanity checks.
+	  
+	- (main) Added call to nonlinear_local_init and change the call to
+	  nonlinear_init for the new nonlinear_solver_init
+
+********************************************************************************
+
+2009-12-10 Haydar Karaoglu <hkaraogl@andrew.cmu.edu>
+
+	* quake/forward/stiffness.c
+	
+	- Input arguments to compute_addforce_effective are changed (Some are 
+	  not needed anymore).
+	
+	* quake/forward/psolve.c
+	
+	- Changes in compute_addforce_effective is repeated.
+	
+********************************************************************************
+
+2009-12-10 Haydar Karaoglu <hkaraogl@andrew.cmu.edu>
+
+	* quake/forward/damping.c
+	
+	- This is a new file including the method used for the calculation of 
+	  damping contribution to the force.
+	
+	* quake/forward/damping.h
+	
+	- This is a new file including the declarations and definitions used in 
+	  damping.c
+	
+	* quake/forward/quake_util.c
+	
+	- This is a new file including the methods common to damping.c and 
+	  stiffness.c.
+	
+	* quake/forward/quake_util.h
+	
+	- This is a new file including the declarations and definitions used in 
+	  quake_util.c.
+	
+	* quake/forward/psolve.c
+	
+	- compute_addforce_e method which is related to the calculation of stiffness 
+	  matrix contibution is taken into stiffness.c and renamed as 
+	  compute_addforce_conventional.
+	
+	- vector_is_all_zero method is taken into quake_util.c.
+	
+	* quake/forward/psolve.h
+	
+	- damping_type_t definition is taken into damping.h 
+
+********************************************************************************
+
+2009-12-09 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/psolve.c
+
+	- Added IO_pool_count as global to determine size of IO server pool
+
+	- In main() added in code to read IO_PES environment variable.  Based 
+	  upon this the flow through main will activate the IO server or not.  
+	  This will allow us to	maintain backwards compatibility with non-
+	  server 1 core IO code.
+
+	* quake/forward/io_planes.c 
+
+	- Duplicated all routines with Old_/New_ versions and added a wrapper 
+	  to redirect calls based upon server activation.  Fixed Old_ calls for 
+	  internal consistancy (Old_ only call Old_).  Need to do that with 
+	  New_ and put code into server main loop.
+
+********************************************************************************
+
+2009-12-09 Haydar Karaoglu <hkaraogl@andrew.cmu.edu>
+
+	* numerical.in
+	
+	- Added a new paramter to define the method that will be used for the 
+	  calculation of stiffness matrix contribution. The corresponding line in
+	  numerical.in file should be one of the two following options: 
+
+	      stiffness_calculation_method = effective
+	      
+	  or
+	      
+	      stiffness_calculation_method = conventional
+
+	* quake/forward/Makefile:
+     
+        - Added stiffness.o in the PSOLVE_OBJECTS and added stiffness.h for 
+	  psolve.o target.
+
+	* quake/forward/stiffness.c:
+
+	- This is a new file. It has the methods used for the effective 
+	  calculation of the stiffness matrix contribution. 
+	  compute_addforce_effective(..) method is in this file.
+	
+	* quake/forward/stiffness.h:
+
+	- This is a new file. It contains the definitions and declarations 
+	  used in stiffness.c.
+	
+	* quake/forward/psolve.c:
+	
+	- Added include stiffness.h
+	
+	- Added "stiffness_type_t stiffness" global variable to keep the method 
+	  used for the calculation of stiffness matrix contribution. Struct is 
+	  defined in stiffness.h. 
+	
+	(init_parameters)
+	
+	- Added char stiffness_calculation_method to be read from numerical.in 
+	  and stiffness_method flag.
+	
+	- Added the line (parsetext call) that reads the stiffness flag from 
+	  numerical.in.
+
+********************************************************************************
+
+2009-12-09 John Urbanic <urbanic@psc.edu>
+
+	* quake/forward/psolve.c:
+
+	- Removed two unused globals, added IO_POOL_PE_COUNT and
+	  IO_POOL_PES[] as statics to track IO PEs.
+
+	- Added final main loop logic for IO PEs.  They call planes_IO_
+	  PES_main() and then return via an evil goto to the end of main().
+	  This whole routine should be a case statement to avoid the goto.
+
+	* quake/forward/io_planes.c:
+
+	- Added planes_IO_PES_main() for IO Pool PEs.  Deleted two
+	  unused globals.
+
+	* quake/forward/io_planes.h:
+
+	- Added planes_IO_PES_main()
+
+********************************************************************************
+
+2009-12-08 John Urbanic <urbanic@psc.edu>
+
+	* created quake/forward/io_planes.c:
+
+	- Moved all planes related functions from psolve.c to here: 
+
+	- print_planeinfo(),print_plane_displacements(),
+	  output_planes_construct_strips() are now static/private.
+
+	- planes_interpolate_communicate_and_print(), output_planes_setup();
+	  extern void output_planes_finalize() and now renamed to 
+	  planes_print(),planes_setup(),planes_close() and added some
+	  new arguments to pass previous globals in psolve.
+
+	* created quake/forward/io_planes.h:
+
+	- planes_print(),planes_setup(),planes_close() defined.
+
+	* quake/forward/psolve.c:
+
+	- added io_planes.h and deleted code that was moved to io_planes.c
+
+	- updated planes_ calls to conform to new names and args
+
+	- changed compute_csi_eta_dzeta() to extern so that it could be
+	called from io_planes.c as well as here.  This should be moved to
+	a utility file.
+
+	- Made these variables global as they are used by io_planes and
+	  stations code at least.  They should be collected into into two
+	  structures (DomainDescription and InputParams for ex.) along with
+	  related globals and passed as structures.  I will do this when I
+	  redo the input parsing:
+
+	  theRegionLong, theRegionLat, theRegionDepth, theNumberOfPlanes,
+	  thePlaneDirOut[256], theSurfaceCornersLong[4], theSurfaceCornersLat[4],
+	  thePlanePrintRate, theNumberOfPlanes, thePrintPlaneTime = 0,
+	  theCollectPlaneTime = 0, theDomainX, theDomainY, theDomainZ
+	
+	* quake/forward/Makefile:
+
+	- Added io_planes.c and io_planes.h
+	
+********************************************************************************
+
+2009-11-25 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* quake/forward/Makefile:
+
+	- Included nonlinear.o in the PSOLVE_OBJECTS and added nonlinear.h
+	  for the psolve.o target.
+
+	* quake/forward/quakesource.c:
+
+	- Commented out the definition of ERROR. This definition is now at
+	  psolve.h and instead of -100, its value is set to HERC_ERROR.
+
+	- Typedef struct edata_t was erased. This structure is now at
+	  psolve.h and is visible from there to the nonlinear module.
+
+	- Commented out the search_point method because this code already
+	  existed in psolve.c.
+
+	* quake/forward/geometrics.h:
+
+	- Added include "psolve.h" to allow visibility to some common
+	  definitions.
+
+	- Commented out typedef struct vector3D_t that is now in psolve.h
+
+	* quake/forward/geometrics.c:
+
+	- Moved the inlcude "geometrics.h" statement to after the system
+	  libraries.
+
+	* quake/forward/nonlinear.h:
+
+	- This file is all new. It contains the definitions and
+	  declarations used in nonlinear.c.
+
+	* quake/forward/nonlinear.c:
+
+	- All new. This file has the methods relative to the incorporation
+	  of nonlinear soil conditions.
+
+	* quake/forward/psolve.h:
+
+	- Added include "octor.h" and the definition of ERROR as
+	  HERC_ERROR.
+
+	- Added the typedef struct edata_t, messenger_t, schedule_t,
+	  my_solver_t, and station_t.  All these structs were in psolve.c
+	  but needed to be visible to the nonlinear module---thus the
+	  decision to move them here.
+
+	- Brought the struct vector3D_t from geometrics.h to here to make
+	  it available to the nonlinear module. In the future it would be
+	  good if we can unify this structure with fvector_t. They are
+	  almost identical and used in very similar conditions all over the
+	  code.
+
+	- Added declaration of search_point method (no longer a static
+	  method).
+
+	- Added declaration of method mu_and_lambda.
+
+	* quake/forward/psolve.c:
+
+	- Added include "nonlinear.h" statement.
+
+	- Eliminated the definion of ERROR, now at psolve.h.
+
+	- Added timers variables for the nonlinear module (NL,NL2).
+
+	- Eliminated edata_t struct, now at psolve.h.
+
+	- Commented out (for later elimination): messenger_t, schedule_t,
+	  and mysolver_t. These typedefs are now at psolve.h---so they may
+	  be totally eliminated from psolve.c later on once we agree
+	  psolve.h is the right place for them to be.
+
+	- Included some declarations for the nonlinear module. Most remain
+	  commented out and will be erased later.
+
+	- Commented out three global variables related to planes writint
+	  that were not being used and they were triggering unnecessary
+	  compilation warnings.
+
+	- Erased typedef struct station_t, now at psolve.h. This structure
+	  is also being used by the nonlinear module---thus the need for
+	  moving it.
+
+	(local_init):
+	
+	- Made int_message larger for including the nonlinear flag.
+
+	- Added the doNonlinear message passing ints.
+
+	(initparameters):
+
+	- Added char inlcude_nonlinear_analysis for be read from
+	  numerical.in and the inlcudeNonlinear flag.
+
+	- Reformat the parsetext calls for easier reading. Added the line
+	  that reads the nonlinear flag from numerical.in
+
+	- Added a sanity check for the nonlinear flag read from
+	  numerical.in.
+
+	- Corrected an undetectable bug with missing check in the
+	  parsetext call for reading the region_azimuth.
+
+	- Added a sequence of monitor_print calls for printing very basic
+	  data about the run at the top of the monitor file.
+
+	(replicateDB): 
+
+	  moved the declaration of char curdir[256] into the
+	  compilation-controlled section CVM_DESTDIR that does use it. This
+	  eliminates a compilation warning.
+
+	(solver_init): 
+
+	  eliminated the section that was calculating the
+	  Lame constants mu and lambda, now done in an independent method.
+
+	(planes_interpolate_communicate_and_print): 
+
+	  Commented out several variables that were not being used and were 
+	  causing unnecessary warnings during compilation.
+
+	(solver_run):
+
+	- Changed the progress monitor_print to include the NL and NL2
+	  timers and to avoid the single star printed for the startingstep.
+
+	- Added statements to go into compute_nonlinear_entities and
+	  compute_addforce_nl.
+
+	- Reformat indentation.
+
+	(print_timing_stat):
+
+	- Added timers NL and NL2 to the final report.
+
+	- Changed search_point to be a non-static method so that it can be
+	  shared with the nonlinear module.
+
+	(output_planes_construct_strips): 
+
+	  Commented unused variables.
+
+	(main): 
+
+	  Added the statement to call nonlinear_init.
+
+********************************************************************************
+
+2009-11-24 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* ChangeLog: 
+
+	  Changed the format of this file so that we keep
+	  adding the changes at the top and not at the bottom.  This makes
+	  it easier to read/write the latest changes.
+
+********************************************************************************
+
+2009-11-19 Ricardo Taborda <rtaborda@cmu.edu>
+
+	* systemdef.mk: 
+
+	  Added a new system configuration for running
+	  locally at hooke.cml.cs.cmu.edu.  It is basically a copy of the
+	  linux-mpich configuration but it is being used regularly enough to
+	  make it to the repository.
+
+********************************************************************************
+
+2009-10-28 John Urbanic <urbanic@psc.edu>
+
+	- All changes this checkin were to enable creation of non-solver
+	  pools of PEs.  The overall theme was to eliminate references to
+	  MPI_COMM_WORLD.  The numerous exceptions are for Abort calls.
+
+	* octor/octor.h: 
+
+	  Include <mpi.h>.  New function declaration for
+	  octor_newtree() to pass in communicator.  New member of octree
+	  type to hold it.
+
+	* octor/octor.c: 
+
+	  New communicator member added in tree type to
+	  compensate for overlay on octree type. Added MPI_Comm argument to
+	  com_OrchestrateExchange() to pass in communicator. Replaced all
+	  MPI_COMM_WORLDs with tree comm member except for Aborts.
+
+	* quake/forward/psolve.c: 
+
+	  Changed Octor_newtree() call as per above. Added in comm_solver as 
+	  global to replace MPI_COMM_WORLD, and did so everywhere except Abort 
+	  calls and communicator creation.  Added communicator creation in 
+	  main().  This uses IO_POOL_SIZE now, but will be superceded by a 
+	  user input parameter.
+
+	* quake/forward/psolve.h: 
+
+	  Added in comm_solver global to replace MPI_COMM_WORLD. 
+	  Included <mpi.h>.
+
+	* quake/forward/output.c: 
+
+	  Replaced all MPI_WORLD_COMMs except for Aborts.
+
+	* quake/forward/util.h: 
+
+	  Replaced MPI_WORLD_COMMs in HU_COND_EXEC macro.
+
+	* quake/forward/quakesource.c: 
+
+	  Replaced all MPI_WORLD_COMMs except for Aborts.
+
+	* quake/forward/qmesh.c: 
+
+	  Updated call to octor_newtree() with additional parameter as per 
+	  above.
+
+********************************************************************************
+
+2009-09-07 John Urbanic <urbanic@psc.edu>
+
+	General changes:
+
+	- Added copyright header to all .c and .h files
+	- Added XT5 system type to systemdef.mk
+	- Added in sample user.mk for reference
+
+********************************************************************************
+
+2009-09-03 Julio Lopez <jclopez@ece.cmu.edu>
+
+	* examples/simple:
+
+	  Added new simple test scenario for aiding regression testing and 
+	  debugging.
+
+	* quake/forward/psolve.c:
+
+	(setup_stations_data):
+
+	  Change in the format for the stations output.
+
+	(interpolate_station_displacements): 
+
+	  Change in the format for the stations output.
+
+	* version:
+
+	  Increased version number.
+
+	* octor/octor.c:
+
+	- In tree_getmaxleaflevel, tree_getminleaflevel, octor_getmaxleaflevel,
+	  and octor_getminleaflevel: Made parameter 'const'.
+
+	- In octor_getmaxleaflevel and octor_getminleaflevel: Made parameter 
+	  'const'.
+
+	* quake/forward/util.h:
+
+	- In DEF_XFREE_TYPE: Added new macro to define functions following the 
+	  pattern 'xfree_type( type** v )'.  Used the macro to create xfree 
+	  functios for int32_t* and char*.
+
+	(hu_fclosep): 
+
+	  New function declaration, see description below in util.c.
+
+	* quake/forward/util.c (hu_fclosep): 
+
+	  New function with parameter checks to close a file and then make 
+	  the FILE pointer NULL to prevent future operations on the stream 
+	  descriptor.
+
+	* quake/forward/psolve.h:
+
+	  Added new data types for global and local node ids.  However, these 
+	  types are not widely used throughout the code yet.
+
+	* quake/forward/psolve.c (mesh_print_stat): 
+
+	  New implementation to print the mesh statistics that completely 
+	  replaces the old implementation. The new features include:
+
+	- Saving the stats to a file with a user chooseable file name.
+
+	- Use of simpler MPI collective functions instead of the idiotic 
+	  complex implementation using single message point-to-point 
+	  primitives.
+
+	  The purpose of saving the mesh stats to a separate file is two-fold:
+
+	  1. It'll make it easier to go through the solver output.  The mesh 
+	     stats become large when running on thousands of processors.
+	  2. Having this stats in a separate file should make it easier to write 
+	     scripts to process or plot the mesh data if needed.
+
+********************************************************************************
+
+2009-07-30 Julio Lopez <jclopez@ece.cmu.edu>
+
+	* quake/forward/psolve.c (initparameters): 
+
+	  Bug fix.  Corrected the parameter name and default value for the file 
+	  name for mesh statistics.
+
+********************************************************************************
+
+2009-07-29 Julio Lopez <jclopez@ece.cmu.edu>
+
+	* version:
+
+	* newfile:
+
+	  New file to keep track of a global version number ala svn.
+
+	* tag-version.sh:
+
+	  Helper script to manage the version file and create the appropriate 
+	  tags in the repository.
+
+	* quake/forward/quakesorce.c (filter_myForce): 
+
+	  Bug fix.  An incorrectly place curly brace was causing the signal to 
+	  be filtered multiple times, thus attenuating the signal.  After 
+	  testing, the solver produces the same output as the version from
+	  January 2009.
+
+********************************************************************************
+
+2009-05-13  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  quake/cvm/cvm.h:
+
+    * In cvm_query: Changed signature, removed "field" parameter and added type 
+      for the payload parameter (was void*).
+
+  quake/cvm/cvm.c:
+
+    * In cvm_query: Changed function to match signature in the cvm.h 
+      declaration.
+
+  quake/forward/psolve.c:
+
+    * In setrec: Modified call to cvm_query to match new signature.
+
+    * In etree_correct_properties: Modified call to cvm_query to match new 
+      signature.
+
+    * In setrec: Added check for the return value of the cvm_query call.
+      Additional test to handle corner case where all the point queries fail 
+      (no point is found).
+
+  quake/forward/qmesh.c:
+
+    * In setrec: Modified call to cvm_query to match new signature.
+
+  quake/forward/quakesource.c:
+
+    * In parsedarray: Fixed bug with an incorrectly placed curly brace. Argh!
+
+********************************************************************************
+
+2009-05-10  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  quake/forward/psolve.c:
+
+    * In solver_printstat: Changed function signature to take as parameter the
+      solver structure. Changed implementation to print the scheduler stats to
+      a file instead of stdout. Added configuration parameters in the config 
+      file to change the default name for the file to where the schedule is
+      saved.
+
+    * In solver_printstat_to_stream: New function to support the changes 
+      mentioned in solver_printstat().
+
+    * In setup_stations_data: Changed informational message print statement 
+      (printf) so only PEs that have stations print the message. Also, the 
+      format of the message was changed slightly, for instance to have the new 
+      line at the end of the message, not at the beginning.
+
+  quake/forward/quakesource.c
+
+    * In source_broadcast_parameters: Bug fix. The value of 
+      theThresholdFrequency was not being set after the broadcast. Instead 
+      theSourceFunctionType value was incorrectly overwritten.
+
+********************************************************************************
+
+2009-04-20  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  quake/forward/quakesource.c:
+  
+    * In broadcast_info: Refactored as follows:
+      - renamed as broadcast_source_parameters.
+      - split into separate functions according to function type:
+        broadcast_point_source_parameters, broadcast_plane_source_parameters 
+        and broadcast_srfh_parameters.
+      In the process, cleaned up the way some parameters were passed and group 
+      them in as few arrays as possible based on the data type (double, int,
+      etc).
+
+    * In isforceinprocessor: Removed global variable and replaced with local 
+      variables respectively.
+
+    * In load_myForces_with_point_source: Changed signature. The function now 
+      takes as parameters the bitmap indicating whether or not a fault force 
+      falls in this processor. The name of the bitmap parameter is: 
+      is_force_in_processor. The function does not reference the 
+      isforceinprocessor global variable.
+
+    * In open_filescomputemyForces: Removed function.
+
+    * In source_get_local_forces_filename: New function, see documentation in 
+      source file.
+
+    * In compute_myForces_planes: Removed reference to isforceinprocessor global
+      variable.  Replaced with local var.
+
+    * In compute_myForces_srfh: Removed reference to isforceinprocessor global 
+      variable.  Replaced with local var.
+
+    * In compute_myForces_point: Removed reference to isforceinprocessor global 
+      variable.  Replaced with local var. Modified to fix bug. The PEs that did 
+      not contain the source were closing the file with the source data without 
+      writing a header to it. Then, psolve.c:source_init was trying to read the 
+      header from the file, but the file did not contain any data, so it was 
+      aborting.  The change is to make PE that contains the source write the 
+      file as before.  The ones that don't contain the source do nothing, i.e., 
+      they do not create a file, which in turn reduces the stress on the file 
+      system (FS).  Then, in psolve.c: source_init, the PEs that don't have 
+      nodes loaded by the source do not even try to open the file, this further 
+      avoids innecesary stress to the FS.  This oughta be the approach for the
+      other source types, but not now, will implement at a later time.
+
+  octor/octor.c:
+
+    * In struct hdr_t: This is a stuct used to represent a chunk in the memory 
+      pool manager. Added a pointer to the next memory chunk, and moved a 
+      pointer to the next available object from the tlr_t struct to the hdr_t 
+      struct. Modified the appropriate functions for the memory pool to match 
+      the change in the structs.
+
+    * In com_OrchestrateExchange: Removed reference to an object pointer in the 
+      tlr_t struct, since (a) the field was not used and (b) the field was moved
+      to the hdr_t struct. Note: Perhaps it should be initialized to NULL in 
+      hdr_t as well.
+
+  quake/forward/commutil.*: 
+  
+    * New files with utility helper functions for communication.
+
+  quake/forward/Makefile:
+
+    * Modified to include new 'commutil' module as appropriate.
+
+  quake/forward/util.c:
+
+    * In hu_fopen: Changed the message in the call to solver abort to include 
+    the name of the file that the caller requested to open. Before it was 
+    printing "fopen(...)".
+
+  quake/forward/util.h:
+
+    * XMALLOC_STRING: New macro to allocate character strings.
+
+  quake/forward/psolve.c:
+
+    * broadcast_string: Moved to commutil.c
+
+    * broadcast_char_array: Moved to commutil.c
+
+    * setrec: Modified to return early when a cvm query returns a secondary 
+      wave velocity (Vs) under the minimum velocity considered for the 
+      simulation (theVsCut).
+
+    * source_init: Changed behavior. The file with the sources is now ONLY 
+      opened if the number of loaded sources for the local PE != 0.  This is to 
+      prevent thousands of processes storming the file system with requests to 
+      open a file, just to perform useless work, i.e., read a header to obtain 
+      information the PE already had (the number of loaded nodes).  This is also 
+      part of a bug fix for the forces generation for sources of type 'point'.
+
+    * theSchedulePrintToFile: Changed default value to 0.
+
+    * Other cosmetic-only miscellaneous changes, i.e., fixing line breaks and 
+      indentation, etc.
+
+  examples/test1:
+
+    * Updated configuration files to include currently required parameters.
+      Also, this example is for the LA basin.
+
+  examples/terashake:
+
+    * Created sample configuration for the terashake scenario.  Not tested yet.
+
+********************************************************************************
+
+2009-01-17  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  octor/octor.c:
+  
+    * Replaced the name of a structure and corresponding typedef to avoid name 
+      clash conflict on Darwin / Mac OS X.
+
+  systemdef.mk:
+
+    * Minor cleanup.  Removed unneeded statements, etc.
+
+  common.mk:
+  
+    * Cleanup.  Moved declaration of flags that are only used in the solver to 
+      quake/forward/Makefile.
+
+  Makefile:
+  
+    * Added support for including / excluding the compilation of the 
+      visualization module via the ENABLE_VIZ flag, which can be overriden 
+      in user.mk.
+
+  quake/forward/funcname.h:
+  
+    * Added definition for _GNUC_PREREQ macro for cases where the compilation 
+      is not done with gcc nor against glibc.
+
+  quake/forward/util.h:
+  
+    * Added macro for fdatasync() for system that do not have this function.
+
+  quake/forward/util.c:
+
+    * Added getline replacement implementation for systems that do not have it.
+
+  visualize/Makefile:
+  
+    * Minor cleanup.
+
+  quake/forward/Makefile:
+  
+    * Cleanup and added support for including / excluding the visualization 
+      module at compilation time. Moved variable declaration from common.mk to 
+      here, for variables that are only related to the solver, e.g., 
+      SOLVE_CPPFLAGS, etc.
+
+********************************************************************************
+
+2007-11-05  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  visualize/a3dmatrix.h: 
+  
+    * Changes in compiler version (to gcc 4.1.2) prompted a change.  Added a 
+      declaration for ZeroMatrix().
+
+  visualize/Makefile: 
+  
+    * modified the setting for the CXX variable in the LINUX-MPICH system 
+      type -- C++ compiler specification.  It is now set to 'mpicxx' instead 
+      of 'g++' directly.
+
+  systemdef.mk: 
+  
+    * Added variables for the MPI_INCLUDE variable
+
+********************************************************************************
+
+2007-07-10  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  quake/forward/psolve.c:
+
+    * Changes in various functions to coalesce freads and fwrites, eliminating 
+      some of the inner loops and replacing the appropriate count parameter in 
+      the call to fread/fwrite.
+
+    * Changes in the checkpointing routines to achieve the following:
+
+      - BUG FIX: compute the appropriate offset for files larger than 2GB.
+      - The two displacement vectors for a PE are now contiguous in the 
+        checkpointing file.  Before, they were spaced far apart.
+      - replaced fopen/fclose/fread/fwrite with corresponding hu_fopen,...  
+        utility routines from util.c.  These functions perform error checking 
+        and abort on error by calling hu_solver_abort with a hopefully 
+        meaningful message.
+
+  quake/forward/util.c:
+
+    * New file with utility routines. Corresponding utility functions for 
+      fopen/fclose/fread/fwrite named hu_fopen, hu_fclose, etc. These functions 
+      perform error checking and abort on error by calling hu_solver_abort with 
+      a hopefully meaningful message.  Other miscellanous functions have been 
+      moved to util.c In addition, there are a new set of functions for reading 
+      variables from the configuration files.  The new functions are type safe, 
+      more flexible and perform appropriate error checking.
+
+********************************************************************************
+
+2007-01-26  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  quake/forward/psolve.c:
+
+    * In load_output_parameters: Added new flags "output_debug" and 
+      "output_debug_file" to the configuration file in order to enable debug 
+      statements at runtime.  Notice that in order to use these statements, the 
+      DEBUG compilation flag must be defined.
+
+    * In output_init_parameters: Fixed the following bug, theNTotal value is 
+      not known in processors other than PE 0.  This affected the computation 
+      of params->output_size.  Also, as a side-effect added code to update 
+      theNTotal.
+
+  quake/forward/output.c:
+
+    * generate_local_string: New function used in the generation of per-PE 
+      filenames.
+
+    * po_init_debug: New function, it initializes per-PE debugging output files.
+
+    * po_fini_debug: New function, it finalizes per-PE debuggin output, i.e., 
+      it closes debuggin output files.
+
+    * po_debug_msg: New support function to conditionally print out debug 
+      messages.  Debug messages are enabled through a config file option 
+      "output_debug".
+
+    * po_print: New funtion to print the contents of a par_output_t structure.  
+      Quite useful for debugging.
+
+    * po_print_debug: Convenience wrapper function to print the contents of a 
+      par_output_t structure to the debbuging output file when debugging is 
+      enabled.
+
+    * po_check_file_size: New function, it checks whether the size of a file 
+      matches an expected size.
+
+    * po_check_file_sizes: New function, it checks whether the displacement 
+      and velocity output files have the expected file size.
+
+    * compute_current_offset: New function, consolidated the offset computation 
+      for the output in a single function.  This function is called from 
+      write_displacement(), write_velocity() and po_do_output().
+
+    * In po_gather_base_offset, po_init, write_displacement, and po_do_output: 
+      Added DEBUG_MSG statements.
+
+    * In po_create_file: Fixed bug in metadata header creation.  An incorrect 
+      pointer was being passed to fwrite.
+
+  quake/forward/q4showmeta.c:
+
+    * q4_print_output_header: Cosmetic fix, output format aligment.
+
+********************************************************************************
+
+2006-08-14  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  quake/forward/psolve.c
+
+    * In initparameters: New flag "output_mesh" added to the configuration file 
+      to select whether or not the mesh should be stored to disk.
+
+********************************************************************************
+
+2006-08-11  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  quake/forward/psolve.c
+
+    * compute_addforce_s_old: Removed this function, it was inside a #if 0 
+      preprocessor macro.  The routine did not compile anymore.
+
+    * In main: Moved the output stats collection further down towards the end 
+      of the execution to obtain a better estimate of the end-to-end time.
+
+  quake/forward/output.c
+
+    * In po_collect_stats and po_collect_detailed_stats: Added IOPS stats.
+
+********************************************************************************
+
+2006-08-09  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  quake/forward/output.c:
+
+    * Created code to collect aggregate I/O statisctics when performing 
+      parallel I/O.
+
+  quake/forward/psolve.c:
+
+    * Changes to call the new routine that collects the parallel I/O stats (in 
+      output.c).  Other minor changes, like deletion of old (commented out) 
+      code.  Moved Ricardo's comments to the ChangeLog file.
+
+********************************************************************************
+
+2006-07-31  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  quake/forward/quakesource.c
+  
+    * In broadcast_info: There was an assumption about the layout of static 
+      data that would not hold for other platform / compiler combinations. The 
+      problem and fix is similar to the one applied in revision 1.3 of this 
+      file, but for different static variables. Now data is copied to a 
+      temporary (contiguous) buffer in the stack, and the MPI calls use that 
+      buffer instead.  The specific part for this fix is in 
+      broadcast_plane_info.
+
+********************************************************************************
+
+2006-07-29  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  quake/forward/psolve.h:
+
+    * Added #ifdef __cplusplus to allow inclusion of this header file from C++ 
+      code.  Also added #include <stdio.h>.
+
+********************************************************************************
+
+2006-07-24  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  quake/forward/psolve.c:
+
+    * In parsetext: Declared parsetext() as extern (instead of static) in both 
+      in psolve.c and psolve.h.
+
+  quake/forward/quakesource.c
+
+    * In parsetext: deleted the duplicated parsetext() code from quakesource.c.
+
+********************************************************************************
+
+2006-07-23  Julio Lopez  <jclopez at ece dot cmu dot edu>
+
+  quake/forward/*:
+  
+    * All the files previous to this change were tagged with the following 
+      label in the CVS repository: BEFORE_PARALLEL_OUTPUT_MOD.  All the files 
+      after this change were tagged with the label: NEW_PARALLEL_IO.
+
+  quake/forward/output.c:
+  
+    * This is the major change in this revision.  This file contains a new 
+      version of the parallel output code.  The sequential code is still in 
+      psolve.c Note: No new warning messages were introduced by this change 
+      (on Linux with MPICH2).  Various warning messages related to the 
+      previous output code were removed.
+
+  quake/forward/output.h:
+
+    * Created this file with relevant definitions for the parallel output.
+
+  quake/forward/psolve.h:
+
+    * Modified out_hdr_t structure to contain other relevant (and not relevant) 
+    metadata for the 4D output files.
+
+  quake/forward/psolve.c:
+
+    * Added new configuration parameters for numerical.in.  These parameters 
+      are read from the config file:
+
+      - output_displacement
+      - output_velocity
+      - output_parallel
+      - output_displacement_file = "filename"
+      - output_velocity_file = "velocity"
+
+      These parameters are backwards compatible in the following sense:
+
+      1. If any of: simulation_displacement_out, simulation_velocity_out, 
+         output_parallel, are not found in the configuration file they are 
+         assumed to be zero (false / disabled) and it is not an error.  This 
+         might change in the future.
+
+      2. The respective file name parameters (output_displacement_file,
+         output_velocity_file) are read only if output_parallel is 1 and 
+         simulation_displacement_out and/or simulation_velocity_out are 
+         respectively set.
+
+      3. These variables are only read if output is not disabled at compile 
+         time i.e., -DNO_OUTPUT.  Similarly, the output function is not called 
+         if NO_OUTPUT is defined at compile time.
+
+    * Modified parsetext(), so the TAB character is considered as a token 
+      separator.
+
+    * BTW, while I was at it, I fixed the following bug: A static vector 
+      (theK3) was being freed in compute_K(), removed call to free().
+
+********************************************************************************
+
+2006-06-20  Ricardo Taborda  <rtaborda at cmu dot edu>
+
+  quake/forward/psolve.c:
+
+    * In the calculation of the stiffness matrix, submatrices K1 and K3 have 
+      been merged into only K1.  This changes has reduced solving time in about 
+      30%.  Old code is still around but commented out.
+
+    * The offdiagonal stiffness matrices are no longer included in the solution 
+      of the next step displacement after the changes in the algorithm to 
+      backwards differences.  Julio removed comments and commented out variable 
+      definition on 2006-08-09.
+
+    * Two new global variables have been introduced.  These thresehold values 
+      are read from the numerical file and define the top values the target 
+      damping and the Vp over Vs ratio can have.  The former affects only the 
+      damping terms but the later affects in general the stiffnesses matrices 
+      and its influence in the damping terms.  This as shown improvements in 
+      the delta_t of up to double to what was needed before without 
+      compromising the solution.
+
+    * In solver_init: Old code for damping on calculating lambda: 
+      lambda = edata->rho * edata->Vp * edata->Vp - 2 * mu.
+
+    * Changes in the n_t structure due to changes on the solving algorithm 
+      because of the damping problems.
+
+********************************************************************************
+
+2006-06-01  Ricardo Taborda  <rtaborda at cmu dot edu>
+	* quake/forward/psolve.c:
+
+	- A new algorithm for the solution of the next time step
+	displacement has been implemented in order to have control over
+	the damping influence in the solution.  Old computations are still
+	in the code but commented out.  We will keep old code segments
+	until we're done with the Terashake runs.
+
+	- After reviewing different things regarding the damping and
+	delta_t problems, two new input parameter have been included in
+	the numericals file theThresholdDamping and theThresholdVpVs.
+
+	- In local_init: double_message has been changed to 16 to include
+	the two new threshold values.
+
+********************************************************************************
+
+2006-05-31  Ricardo Taborda  <rtaborda at cmu dot edu>
+
+	* quake/forward/psolve.c (solver_init):
+
+	- Old code for damping since the np structure has changed:
+	np->mass2x += M * 2;
+
+	- Old code for damping K_diag is no longer needed. The C matrix is
+	no longer constructed as one by itself and the np structure has
+	changed as well as the way its components are calculated:
+
+	double K_diag;
+
+	K_diag = (edata->edgesize / 9) * (mu * theK1[j][j].f[axis][axis]
+	+ lambda * theK2[j][j].f[axis][axis]
+	+ mu * theK3[j][j].f[axis][axis]);
+
+	C = a * M + b * K_diag;
+
+	np->mplus[axis] += (theDeltaT / 2 * C);
+	np->mminus[axis] -= (theDeltaT / 2 * C);
+
+**************************************************************************
+
+	S T O P ! ! !
+
+	Please add the entries describing your changes at the TOP of this
+	file after the instructions and before the last entry.
+
+**************************************************************************
