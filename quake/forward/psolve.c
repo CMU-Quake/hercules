@@ -7158,7 +7158,9 @@ mesh_correct_properties( etree_t* cvm )
 
         	Qk = (1. - L) / (1. / Qp - L / Qs);
 
-//        	Qk = 1000;
+        	// Enforce large Qk.
+        	Qk = 1000.0;
+
         	index_Qs = Search_Quality_Table(Qs, &(Global.theQTABLE[0][0]), QTable_Size);
 
 //        	printf("Quality Factor Table\n Qs : %lf \n Vs : %lf\n",Qs,edata->Vs);
