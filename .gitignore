@@ -1,2 +1,6 @@
+user.mk
+.settings
+.cproject
+.project
 *.[oa]
 *~
