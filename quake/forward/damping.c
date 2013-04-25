@@ -117,93 +117,104 @@ void calc_conv(mesh_t *myMesh, mysolver_t *mySolver, double theFreq, double theD
     {
     	elem_t *elemp;
     	edata_t *edata;
-		double c0_shear, c1_shear, c0_kappa, c1_kappa;
 
     	elemp = &myMesh->elemTable[eindex];
     	edata = (edata_t *)elemp->data;
 
-		c0_shear = edata->g0_shear;
-		c1_shear = edata->g1_shear;
+        // SHEAR RELATED CONVOLUTION
 
-		c0_kappa = edata->g0_kappa;
-		c1_kappa = edata->g1_kappa;
+    	if ( (edata->g0_shear != 0) && (edata->g1_shear != 0) ) {
 
-	    double g0_shear = c0_shear * rmax;
-	    double g1_shear = c1_shear * rmax;
+            double c0_shear = edata->g0_shear;
+            double c1_shear = edata->g1_shear;
 
-	    double coef_shear_1 = g0_shear / 2.;
-	    double coef_shear_2 = coef_shear_1 * ( 1. - g0_shear );
+            double g0_shear = c0_shear * rmax;
+            double g1_shear = c1_shear * rmax;
 
-	    double coef_shear_3 = g1_shear / 2.;
-	    double coef_shear_4 = coef_shear_3 * ( 1. - g1_shear );
+            double coef_shear_1 = g0_shear / 2.;
+            double coef_shear_2 = coef_shear_1 * ( 1. - g0_shear );
 
-	    double g0_kappa = c0_kappa * rmax;
-	    double g1_kappa = c1_kappa * rmax;
+            double coef_shear_3 = g1_shear / 2.;
+            double coef_shear_4 = coef_shear_3 * ( 1. - g1_shear );
 
-	    double coef_kappa_1 = g0_kappa / 2.;
-	    double coef_kappa_2 = coef_kappa_1 * ( 1. - g0_kappa );
+            double exp_coef_shear_0 = exp( -g0_shear );
+            double exp_coef_shear_1 = exp( -g1_shear );
 
-	    double coef_kappa_3 = g1_kappa / 2.;
-	    double coef_kappa_4 = coef_kappa_3 * ( 1. - g1_kappa );
+            for(i = 0; i < 8; i++)
+            {
+                int32_t     lnid, cindex;
+                fvector_t   *f0_tm1, *f1_tm1, *tm1Disp, *tm2Disp;
 
-	    double exp_coef_shear_0 = exp( -g0_shear );
-	    double exp_coef_shear_1 = exp( -g1_shear );
+                lnid = elemp->lnid[i];
 
-	    double exp_coef_kappa_0 = exp( -g0_kappa );
-	    double exp_coef_kappa_1 = exp( -g1_kappa );
+                /* cindex is the index of the node in the convolution vector */
+                cindex = eindex * 8 + i;
 
-    	for(i = 0; i < 8; i++)
-    	{
-    		int32_t 	lnid, cindex;
-    		fvector_t   *f0_tm1, *f1_tm1, *tm1Disp, *tm2Disp;
+                tm1Disp = mySolver->tm1 + lnid;
+                tm2Disp = mySolver->tm2 + lnid;
 
-    		lnid = elemp->lnid[i];
+                f0_tm1 = mySolver->conv_shear_1 + cindex;
+                f1_tm1 = mySolver->conv_shear_2 + cindex;
 
-    		/* cindex is the index of the node in the convolution vector */
-    		cindex = eindex * 8 + i;
+                f0_tm1->f[0] = coef_shear_2 * tm1Disp->f[0] + coef_shear_1 * tm2Disp->f[0] + exp_coef_shear_0 * f0_tm1->f[0];
+                f0_tm1->f[1] = coef_shear_2 * tm1Disp->f[1] + coef_shear_1 * tm2Disp->f[1] + exp_coef_shear_0 * f0_tm1->f[1];
+                f0_tm1->f[2] = coef_shear_2 * tm1Disp->f[2] + coef_shear_1 * tm2Disp->f[2] + exp_coef_shear_0 * f0_tm1->f[2];
 
-    		tm1Disp = mySolver->tm1 + lnid;
-    		tm2Disp = mySolver->tm2 + lnid;
+                f1_tm1->f[0] = coef_shear_4 * tm1Disp->f[0] + coef_shear_3 * tm2Disp->f[0] + exp_coef_shear_1 * f1_tm1->f[0];
+                f1_tm1->f[1] = coef_shear_4 * tm1Disp->f[1] + coef_shear_3 * tm2Disp->f[1] + exp_coef_shear_1 * f1_tm1->f[1];
+                f1_tm1->f[2] = coef_shear_4 * tm1Disp->f[2] + coef_shear_3 * tm2Disp->f[2] + exp_coef_shear_1 * f1_tm1->f[2];
 
-    		// SHEAR RELATED CONVOLUTION
+            } // For local nodes (0:7)
 
-    		f0_tm1 = mySolver->conv_shear_1 + cindex;
-    		f1_tm1 = mySolver->conv_shear_2 + cindex;
+    	} // end if null coefficients
 
-    		f0_tm1->f[0] = coef_shear_2 * tm1Disp->f[0] + coef_shear_1 * tm2Disp->f[0]
-    		                                                           + exp_coef_shear_0 * f0_tm1->f[0];
-    		f0_tm1->f[1] = coef_shear_2 * tm1Disp->f[1] + coef_shear_1 * tm2Disp->f[1]
-    		                                                           + exp_coef_shear_0 * f0_tm1->f[1];
-    		f0_tm1->f[2] = coef_shear_2 * tm1Disp->f[2] + coef_shear_1 * tm2Disp->f[2]
-    		                                                           + exp_coef_shear_0 * f0_tm1->f[2];
+        // DILATATION RELATED CONVOLUTION
 
-    		f1_tm1->f[0] = coef_shear_4 * tm1Disp->f[0] + coef_shear_3 * tm2Disp->f[0]
-    		                                                           + exp_coef_shear_1 * f1_tm1->f[0];
-    		f1_tm1->f[1] = coef_shear_4 * tm1Disp->f[1] + coef_shear_3 * tm2Disp->f[1]
-    		                                                           + exp_coef_shear_1 * f1_tm1->f[1];
-    		f1_tm1->f[2] = coef_shear_4 * tm1Disp->f[2] + coef_shear_3 * tm2Disp->f[2]
-    		                                                           + exp_coef_shear_1 * f1_tm1->f[2];
-    		// DILATATION RELATED CONVOLUTION
+        if ( (edata->g0_kappa != 0) && (edata->g1_kappa != 0) ) {
 
-    		f0_tm1 = mySolver->conv_kappa_1 + cindex;
-    		f1_tm1 = mySolver->conv_kappa_2 + cindex;
+            double c0_kappa = edata->g0_kappa;
+            double c1_kappa = edata->g1_kappa;
 
-    		f0_tm1->f[0] = coef_kappa_2 * tm1Disp->f[0] + coef_kappa_1 * tm2Disp->f[0]
-    		                                                          + exp_coef_kappa_0 * f0_tm1->f[0];
-    		f0_tm1->f[1] = coef_kappa_2 * tm1Disp->f[1] + coef_kappa_1 * tm2Disp->f[1]
-    		                                                          + exp_coef_kappa_0 * f0_tm1->f[1];
-    		f0_tm1->f[2] = coef_kappa_2 * tm1Disp->f[2] + coef_kappa_1 * tm2Disp->f[2]
-    		                                                          + exp_coef_kappa_0 * f0_tm1->f[2];
+            double g0_kappa = c0_kappa * rmax;
+            double g1_kappa = c1_kappa * rmax;
 
-    		f1_tm1->f[0] = coef_kappa_4 * tm1Disp->f[0] + coef_kappa_3 * tm2Disp->f[0]
-    		                                                          + exp_coef_kappa_1 * f1_tm1->f[0];
-    		f1_tm1->f[1] = coef_kappa_4 * tm1Disp->f[1] + coef_kappa_3 * tm2Disp->f[1]
-    		                                                          + exp_coef_kappa_1 * f1_tm1->f[1];
-    		f1_tm1->f[2] = coef_kappa_4 * tm1Disp->f[2] + coef_kappa_3 * tm2Disp->f[2]
-    		                                                          + exp_coef_kappa_1 * f1_tm1->f[2];
+            double coef_kappa_1 = g0_kappa / 2.;
+            double coef_kappa_2 = coef_kappa_1 * ( 1. - g0_kappa );
 
+            double coef_kappa_3 = g1_kappa / 2.;
+            double coef_kappa_4 = coef_kappa_3 * ( 1. - g1_kappa );
 
-    	} // For local nodes (0:7)
+            double exp_coef_kappa_0 = exp( -g0_kappa );
+            double exp_coef_kappa_1 = exp( -g1_kappa );
+
+            for(i = 0; i < 8; i++)
+            {
+                int32_t     lnid, cindex;
+                fvector_t   *f0_tm1, *f1_tm1, *tm1Disp, *tm2Disp;
+
+                lnid = elemp->lnid[i];
+
+                /* cindex is the index of the node in the convolution vector */
+                cindex = eindex * 8 + i;
+
+                tm1Disp = mySolver->tm1 + lnid;
+                tm2Disp = mySolver->tm2 + lnid;
+
+                f0_tm1 = mySolver->conv_kappa_1 + cindex;
+                f1_tm1 = mySolver->conv_kappa_2 + cindex;
+
+                f0_tm1->f[0] = coef_kappa_2 * tm1Disp->f[0] + coef_kappa_1 * tm2Disp->f[0] + exp_coef_kappa_0 * f0_tm1->f[0];
+                f0_tm1->f[1] = coef_kappa_2 * tm1Disp->f[1] + coef_kappa_1 * tm2Disp->f[1] + exp_coef_kappa_0 * f0_tm1->f[1];
+                f0_tm1->f[2] = coef_kappa_2 * tm1Disp->f[2] + coef_kappa_1 * tm2Disp->f[2] + exp_coef_kappa_0 * f0_tm1->f[2];
+
+                f1_tm1->f[0] = coef_kappa_4 * tm1Disp->f[0] + coef_kappa_3 * tm2Disp->f[0] + exp_coef_kappa_1 * f1_tm1->f[0];
+                f1_tm1->f[1] = coef_kappa_4 * tm1Disp->f[1] + coef_kappa_3 * tm2Disp->f[1] + exp_coef_kappa_1 * f1_tm1->f[1];
+                f1_tm1->f[2] = coef_kappa_4 * tm1Disp->f[2] + coef_kappa_3 * tm2Disp->f[2] + exp_coef_kappa_1 * f1_tm1->f[2];
+
+            } // For local nodes (0:7)
+
+        } // end if null coefficients
+
     } // For all elements
 
     return;
@@ -234,75 +245,130 @@ void constant_Q_addforce(mesh_t *myMesh, mysolver_t *mySolver, double theFreq, d
 		e_t    *ep;
 		edata_t *edata;
 
-		double a0_shear, a1_shear, b_shear, a0_kappa, a1_kappa, b_kappa, coef_shear, coef_kappa;
+		double a0_shear, a1_shear, b_shear, a0_kappa, a1_kappa, b_kappa, csum;
 
 		elemp = &myMesh->elemTable[eindex];
 		edata = (edata_t *)elemp->data;
 		ep = &mySolver->eTable[eindex];
 
-		edata = (edata_t *)elemp->data;
-		ep = &mySolver->eTable[eindex];
+		// SHEAR CONTRIBUTION
 
-		a0_shear = edata->a0_shear;
-		a1_shear = edata->a1_shear;
-		b_shear = edata->b_shear;
+        a0_shear = edata->a0_shear;
+        a1_shear = edata->a1_shear;
+        b_shear  = edata->b_shear;
 
-		a0_kappa = edata->a0_kappa;
-		a1_kappa = edata->a1_kappa;
-		b_kappa = edata->b_kappa;
+        csum = a0_shear + a1_shear + b_shear;
 
-//		printf("%f %f %f %f %f %f\n",a0_shear,a1_shear,b_shear,a0_kappa,a1_kappa,b_kappa);
+		if ( csum != 0 ) {
 
-		coef_shear = b_shear / rmax;
-		coef_kappa = b_kappa / rmax;
+	        double coef_shear = b_shear / rmax;
 
-		/* the_E1_timer -= MPI_Wtime();*/
-		for (i = 0; i < 8; i++) {
-			fvector_t *tm1Disp, *tm2Disp, *f0_tm1, *f1_tm1;
-			int32_t    lnid, cindex;
+            for (i = 0; i < 8; i++) {
 
-			cindex = eindex * 8 + i;
+                fvector_t *tm1Disp, *tm2Disp, *f0_tm1, *f1_tm1;
+                int32_t    lnid, cindex;
 
-			lnid = elemp->lnid[i];
+                cindex = eindex * 8 + i;
 
-//			printf("%d\n",lnid);
+                lnid = elemp->lnid[i];
 
-			tm1Disp = mySolver->tm1 + lnid;
-			tm2Disp = mySolver->tm2 + lnid;
-			f0_tm1  = mySolver->conv_shear_1 + cindex;
-			f1_tm1  = mySolver->conv_shear_2 + cindex;
+                tm1Disp = mySolver->tm1 + lnid;
+                tm2Disp = mySolver->tm2 + lnid;
+                f0_tm1  = mySolver->conv_shear_1 + cindex;
+                f1_tm1  = mySolver->conv_shear_2 + cindex;
 
-			damping_vector_shear[i].f[0] = coef_shear * (tm1Disp->f[0] - tm2Disp->f[0])
-                                         - (a0_shear * f0_tm1->f[0] + a1_shear * f1_tm1->f[0])
-                                         + tm1Disp->f[0];
+                damping_vector_shear[i].f[0] = coef_shear * (tm1Disp->f[0] - tm2Disp->f[0])
+                                             - (a0_shear * f0_tm1->f[0] + a1_shear * f1_tm1->f[0])
+                                             + tm1Disp->f[0];
 
-			damping_vector_shear[i].f[1] = coef_shear * (tm1Disp->f[1] - tm2Disp->f[1])
-					                     - (a0_shear * f0_tm1->f[1] + a1_shear * f1_tm1->f[1])
-        		                         + tm1Disp->f[1];
+                damping_vector_shear[i].f[1] = coef_shear * (tm1Disp->f[1] - tm2Disp->f[1])
+                                             - (a0_shear * f0_tm1->f[1] + a1_shear * f1_tm1->f[1])
+                                             + tm1Disp->f[1];
 
-			damping_vector_shear[i].f[2] = coef_shear * (tm1Disp->f[2] - tm2Disp->f[2])
-                                         - (a0_shear * f0_tm1->f[2] + a1_shear * f1_tm1->f[2])
-                                         + tm1Disp->f[2];
+                damping_vector_shear[i].f[2] = coef_shear * (tm1Disp->f[2] - tm2Disp->f[2])
+                                             - (a0_shear * f0_tm1->f[2] + a1_shear * f1_tm1->f[2])
+                                             + tm1Disp->f[2];
 
-			/////////////////////////////////////////////////////////////////////////////
+            } // end for nodes in the element
 
-			f0_tm1  = mySolver->conv_kappa_1 + cindex;
-			f1_tm1  = mySolver->conv_kappa_2 + cindex;
+		} else {
 
+		    for (i = 0; i < 8; i++) {
 
-			damping_vector_kappa[i].f[0] = coef_kappa * (tm1Disp->f[0] - tm2Disp->f[0])
-                                         - (a0_kappa * f0_tm1->f[0] + a1_kappa * f1_tm1->f[0])
-                                         + tm1Disp->f[0];
+                fvector_t *tm1Disp, *tm2Disp;
+                int32_t    lnid;
 
-			damping_vector_kappa[i].f[1] = coef_kappa * (tm1Disp->f[1] - tm2Disp->f[1])
-					                     - (a0_kappa * f0_tm1->f[1] + a1_kappa * f1_tm1->f[1])
-        		                         + tm1Disp->f[1];
+                lnid = elemp->lnid[i];
+                tm1Disp = mySolver->tm1 + lnid;
+                tm2Disp = mySolver->tm2 + lnid;
 
-			damping_vector_kappa[i].f[2] = coef_kappa * (tm1Disp->f[2] - tm2Disp->f[2])
-                                         - (a0_kappa * f0_tm1->f[2] + a1_kappa * f1_tm1->f[2])
-                                         + tm1Disp->f[2];
+                damping_vector_shear[i].f[0] = tm1Disp->f[0];
+                damping_vector_shear[i].f[1] = tm1Disp->f[1];
+                damping_vector_shear[i].f[2] = tm1Disp->f[2];
 
-		}
+            } // end for nodes in the element
+
+		} // end if for coefficients
+
+		// DILATATION CONTRIBUTION
+
+        a0_kappa   = edata->a0_kappa;
+        a1_kappa   = edata->a1_kappa;
+        b_kappa    = edata->b_kappa;
+
+        csum = a0_kappa + a1_kappa + b_kappa;
+
+        if ( csum != 0 ) {
+
+            double coef_kappa = b_kappa / rmax;
+
+            for (i = 0; i < 8; i++) {
+
+                fvector_t *tm1Disp, *tm2Disp, *f0_tm1, *f1_tm1;
+                int32_t    lnid, cindex;
+
+                cindex = eindex * 8 + i;
+
+                lnid = elemp->lnid[i];
+
+                tm1Disp = mySolver->tm1 + lnid;
+                tm2Disp = mySolver->tm2 + lnid;
+
+                f0_tm1  = mySolver->conv_kappa_1 + cindex;
+                f1_tm1  = mySolver->conv_kappa_2 + cindex;
+
+                damping_vector_kappa[i].f[0] = coef_kappa * (tm1Disp->f[0] - tm2Disp->f[0])
+                                             - (a0_kappa * f0_tm1->f[0] + a1_kappa * f1_tm1->f[0])
+                                             + tm1Disp->f[0];
+
+                damping_vector_kappa[i].f[1] = coef_kappa * (tm1Disp->f[1] - tm2Disp->f[1])
+                                             - (a0_kappa * f0_tm1->f[1] + a1_kappa * f1_tm1->f[1])
+                                             + tm1Disp->f[1];
+
+                damping_vector_kappa[i].f[2] = coef_kappa * (tm1Disp->f[2] - tm2Disp->f[2])
+                                             - (a0_kappa * f0_tm1->f[2] + a1_kappa * f1_tm1->f[2])
+                                             + tm1Disp->f[2];
+
+            } // end for nodes in the element
+
+        } else {
+
+            for (i = 0; i < 8; i++) {
+
+                fvector_t *tm1Disp, *tm2Disp;
+                int32_t    lnid;
+
+                lnid = elemp->lnid[i];
+                tm1Disp = mySolver->tm1 + lnid;
+                tm2Disp = mySolver->tm2 + lnid;
+
+                damping_vector_kappa[i].f[0] = tm1Disp->f[0];
+                damping_vector_kappa[i].f[1] = tm1Disp->f[1];
+                damping_vector_kappa[i].f[2] = tm1Disp->f[2];
+
+            } // end for nodes in the element
+
+        } // end if for coefficients
 
 		double kappa = -0.5625 * (ep->c2 + 2. / 3. * ep->c1);
 		double mu = -0.5625 * ep->c1;
@@ -315,17 +381,17 @@ void constant_Q_addforce(mesh_t *myMesh, mysolver_t *mySolver, double theFreq, d
 
 		memset(localForce, 0, 8 * sizeof(fvector_t));
 
+        if(vector_is_zero( damping_vector_shear ) != 0) {
+
+            aTransposeU( damping_vector_shear, atu );
+            firstVector_mu( atu, firstVec, mu);
+
+        }
+
 		if(vector_is_zero( damping_vector_kappa ) != 0) {
 
 			aTransposeU( damping_vector_kappa, atu );
 			firstVector_kappa( atu, firstVec, kappa);
-
-		}
-
-		if(vector_is_zero( damping_vector_shear ) != 0) {
-
-			aTransposeU( damping_vector_shear, atu );
-			firstVector_mu( atu, firstVec, mu);
 
 		}
 
@@ -344,8 +410,6 @@ void constant_Q_addforce(mesh_t *myMesh, mysolver_t *mySolver, double theFreq, d
 		}
 
 	} /* for all the elements */
-
-	/* theAddForceETime += MPI_Wtime(); */
 
 	return;
 

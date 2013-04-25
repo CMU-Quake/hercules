@@ -227,6 +227,7 @@ static struct Param_t {
     noyesflag_t  printStationAccelerations;
     noyesflag_t  includeBuildings;
     noyesflag_t  includeNonlinearAnalysis;
+    noyesflag_t  useInfQk;
     int  theTimingBarriersFlag;
     stiffness_type_t   theStiffness;
     int      theStationsPrintRate;
@@ -364,7 +365,7 @@ monitor_print( const char* format, ... )
 static void read_parameters( int argc, char** argv ){
 
 #define LOCAL_INIT_DOUBLE_MESSAGE_LENGTH 18  /* Must adjust this if adding double params */
-#define LOCAL_INIT_INT_MESSAGE_LENGTH 18     /* Must adjust this if adding int params */
+#define LOCAL_INIT_INT_MESSAGE_LENGTH 19     /* Must adjust this if adding int params */
 
     double  double_message[LOCAL_INIT_DOUBLE_MESSAGE_LENGTH];
     int     int_message[LOCAL_INIT_INT_MESSAGE_LENGTH];
@@ -373,11 +374,11 @@ static void read_parameters( int argc, char** argv ){
 
     /* PE 0 reads all params from disk */
     if (Global.myID == 0) {
-	if (parse_parameters(Param.parameters_input_file) != 0) {
-	    fprintf(stderr, "Thread 0: Problem reading parameters!\n");
-	    MPI_Abort(MPI_COMM_WORLD, ERROR);
-	    exit(1);
-	}
+        if (parse_parameters(Param.parameters_input_file) != 0) {
+            fprintf(stderr, "Thread 0: Problem reading parameters!\n");
+            MPI_Abort(MPI_COMM_WORLD, ERROR);
+            exit(1);
+        }
     }
 
     /*Broadcast all double params*/
@@ -441,6 +442,7 @@ static void read_parameters( int argc, char** argv ){
     int_message[15] = (int)Param.includeBuildings;
     int_message[16] = (int)Param.storeMeshCoordinatesForMatlab;
     int_message[17] = (int)Param.drmImplement;
+    int_message[18] = (int)Param.useInfQk;
 
 
     MPI_Bcast(int_message, LOCAL_INIT_INT_MESSAGE_LENGTH, MPI_INT, 0, comm_solver);
@@ -463,7 +465,7 @@ static void read_parameters( int argc, char** argv ){
     Param.includeBuildings               = int_message[15];
     Param.storeMeshCoordinatesForMatlab  = int_message[16];
     Param.drmImplement                   = int_message[17];
-
+    Param.useInfQk                       = int_message[18];
 
     /*Broadcast all string params*/
     MPI_Bcast (Param.parameters_input_file,  256, MPI_CHAR, 0, comm_solver);
@@ -661,7 +663,8 @@ static int32_t parse_parameters( const char* numericalin )
               print_station_velocities[64],
               print_station_accelerations[64],
 	      	  mesh_coordinates_for_matlab[64],
-    		  implement_drm[64];
+    		  implement_drm[64],
+    		  use_infinite_qk[64];
 
     damping_type_t   typeOfDamping     = -1;
     stiffness_type_t stiffness_method  = -1;
@@ -670,6 +673,7 @@ static int32_t parse_parameters( const char* numericalin )
     noyesflag_t      printMatrixK      = -1;
     noyesflag_t      printStationVels  = -1;
     noyesflag_t      printStationAccs  = -1;
+    noyesflag_t      useInfQk          = -1;
 
     noyesflag_t      meshCoordinatesForMatlab  = -1;
     noyesflag_t      implementdrm  = -1;
@@ -764,7 +768,8 @@ static int32_t parse_parameters( const char* numericalin )
         (parsetext(fp, "include_buildings",              's', &include_buildings           ) != 0) ||
         (parsetext(fp, "mesh_coordinates_for_matlab",    's', &mesh_coordinates_for_matlab ) != 0) ||
         (parsetext(fp, "implement_drm",    				 's', &implement_drm               ) != 0) ||
-        (parsetext(fp, "simulation_velocity_profile_freq_hz",    'd', &freq_vel                        ) != 0))
+        (parsetext(fp, "simulation_velocity_profile_freq_hz",'d', &freq_vel                ) != 0) ||
+        (parsetext(fp, "use_infinite_qk",                's', &use_infinite_qk             ) != 0) )
     {
         fprintf( stderr, "Error parsing simulation parameters from %s\n",
                 numericalin );
@@ -958,6 +963,16 @@ static int32_t parse_parameters( const char* numericalin )
                 implement_drm );
     }
 
+    if ( strcasecmp(use_infinite_qk, "yes") == 0 ) {
+        useInfQk = YES;
+    } else if ( strcasecmp(use_infinite_qk, "no") == 0 ) {
+        useInfQk = NO;
+    } else {
+        solver_abort( __FUNCTION_NAME, NULL,
+            "Unknown response using infinite Qk (yes or no): %s\n",
+                use_infinite_qk);
+    }
+
     /* Init the static global variables */
 
     Param.theRegionLat      = region_origin_latitude_deg;
@@ -980,6 +995,7 @@ static int32_t parse_parameters( const char* numericalin )
     Param.theDomainZ	      = region_depth_deep_m - region_depth_shallow_m;
     Param.theDomainAzimuth  = region_azimuth_leftface_deg;
     Param.theTypeOfDamping  = typeOfDamping;
+    Param.useInfQk          = useInfQk;
 
     Param.theRate           = rate;
 
@@ -7018,7 +7034,7 @@ mesh_correct_properties( etree_t* cvm )
 
     // INTRODUCE BKT MODEL
 
-    double Qs, Qp, Qk, L, vs_vp_Ratio, vksquared, w, shear_vel_corr_factor, kappa_vel_corr_factor;
+    double Qs, Qp, Qk, L, vs_vp_Ratio, vksquared, w;
     int index_Qs, index_Qk;
     int QTable_Size = (int)(sizeof(Global.theQTABLE)/( 6 * sizeof(double)));
 
@@ -7156,10 +7172,11 @@ mesh_correct_properties( etree_t* cvm )
         	Qs = 10.5 + vs * (-16. + vs * (153. + vs * (-103. + vs * (34.7 + vs * (-5.29 + vs * 0.31)))));
         	Qp = 2. * Qs;
 
-        	Qk = (1. - L) / (1. / Qp - L / Qs);
-
-        	// Enforce large Qk.
-        	Qk = 1000.0;
+        	if (Param.useInfQk == YES) {
+        	    Qk = 1000;
+        	} else {
+                Qk = (1. - L) / (1. / Qp - L / Qs);
+        	}
 
         	index_Qs = Search_Quality_Table(Qs, &(Global.theQTABLE[0][0]), QTable_Size);
 
@@ -7172,11 +7189,11 @@ mesh_correct_properties( etree_t* cvm )
         	}
         	else if(index_Qs == -1)
         	{
-        		edata->a0_shear = 0.;
-        		edata->a1_shear = 0.;
-        		edata->g0_shear = 0.;
-        		edata->g1_shear = 0.;
-        		edata->b_shear  = 0.;
+        		edata->a0_shear = 0;
+        		edata->a1_shear = 0;
+        		edata->g0_shear = 0;
+        		edata->g1_shear = 0;
+        		edata->b_shear  = 0;
         	}
         	else
         	{
@@ -7198,11 +7215,11 @@ mesh_correct_properties( etree_t* cvm )
         	}
         	else if(index_Qk == -1)
         	{
-        		edata->a0_kappa = 0.;
-        		edata->a1_kappa = 0.;
-        		edata->g0_kappa = 0.;
-        		edata->g1_kappa = 0.;
-        		edata->b_kappa  = 0.;
+        		edata->a0_kappa = 0;
+        		edata->a1_kappa = 0;
+        		edata->g0_kappa = 0;
+        		edata->g1_kappa = 0;
+        		edata->b_kappa  = 0;
         	}
         	else
         	{
@@ -7217,12 +7234,18 @@ mesh_correct_properties( etree_t* cvm )
         	{
         		w = Param.theFreq_Vel / Param.theFreq;
 
-        		shear_vel_corr_factor = sqrt(1. - (edata->a0_shear * edata->g0_shear * edata->g0_shear / (edata->g0_shear * edata->g0_shear + w * w) + edata->a1_shear * edata->g1_shear * edata->g1_shear / (edata->g1_shear * edata->g1_shear + w * w)));
+        		if ( (edata->a0_shear != 0) && (edata->a1_shear != 0) ) {
+        		    double shear_vel_corr_factor;
+        		    shear_vel_corr_factor = sqrt(1. - (edata->a0_shear * edata->g0_shear * edata->g0_shear / (edata->g0_shear * edata->g0_shear + w * w) + edata->a1_shear * edata->g1_shear * edata->g1_shear / (edata->g1_shear * edata->g1_shear + w * w)));
+                    edata->Vs = shear_vel_corr_factor * edata->Vs;
+        		}
 
-        		kappa_vel_corr_factor = sqrt(1. - (edata->a0_kappa * edata->g0_kappa * edata->g0_kappa / (edata->g0_kappa * edata->g0_kappa + w * w) + edata->a1_kappa * edata->g1_kappa * edata->g1_kappa / (edata->g1_kappa * edata->g1_kappa + w * w)));
+        		if ( (edata->a0_kappa != 0) && (edata->a0_kappa != 0) ) {
+        		    double kappa_vel_corr_factor;
+        		    kappa_vel_corr_factor = sqrt(1. - (edata->a0_kappa * edata->g0_kappa * edata->g0_kappa / (edata->g0_kappa * edata->g0_kappa + w * w) + edata->a1_kappa * edata->g1_kappa * edata->g1_kappa / (edata->g1_kappa * edata->g1_kappa + w * w)));
+                    edata->Vp = sqrt(kappa_vel_corr_factor * kappa_vel_corr_factor * vksquared + 4. / 3. * edata->Vs * edata->Vs);
+        		}
 
-        		edata->Vs = shear_vel_corr_factor * edata->Vs;
-        		edata->Vp = sqrt(kappa_vel_corr_factor * kappa_vel_corr_factor * vksquared + 4. / 3. * edata->Vs * edata->Vs);
         	}
 
         }
