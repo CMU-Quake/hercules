@@ -4412,7 +4412,11 @@ octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
                         continue;
                     }
 
-                } else if (nbr->where == REMOTE) {
+                } else if (nbr->where != LOCAL) {
+					/* Note by Yigit+Ricardo: 
+					 * This condition used to be == REMOTE 
+					 * The change was made in the search for fixing 
+					 * progressive meshing issues */
 
                     /* This only happens if groupsize > 1. We have
                        maintained the validity of tree->com throughout. */
