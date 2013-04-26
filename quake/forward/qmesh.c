@@ -995,7 +995,7 @@ int main(int argc, char **argv)
     if (myID == 0) {
 	fprintf(stdout, "octor_balancetree ... ");
     }
-    if (octor_balancetree(myOctree, setrec) != 0) {
+    if (octor_balancetree(myOctree, setrec, 0) != 0) { /* no progressive meshing (ricardo) */
 	fprintf(stderr, "Thread %d: fail to balance octree\n", myID);
 	MPI_Abort(MPI_COMM_WORLD, ERROR);
 	exit(1);

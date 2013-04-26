@@ -286,6 +286,13 @@ octor_getmaxleaflevel(const octree_t* octree, int where);
 extern int32_t
 octor_getminleaflevel(const octree_t* octree, int where);
 
+extern int64_t
+octor_getleavescount(const octree_t* octree, int where);
+extern int64_t
+octor_getminleavescount(const octree_t* octree, int where);
+extern int64_t
+octor_getmaxleavescount(const octree_t* octree, int where);
+
 /*************************/
 /* Tree-level operations */
 /*************************/
@@ -305,7 +312,7 @@ extern int32_t
 octor_coarsentree(octree_t *octree, toshrink_t *toshrink, setrec_t *setrec);
 
 extern int32_t 
-octor_balancetree(octree_t *octree, setrec_t *setrec);
+octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor);
 
 extern void
 octor_carvebuildings(octree_t *octree, int flag,

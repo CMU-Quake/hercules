@@ -210,6 +210,7 @@ static struct Param_t {
     double  theDomainAzimuth;
     int    monitor_stats_rate;
     double  theSofteningFactor;
+    int     theStepMeshingFactor;
     int32_t  theTotalSteps;
     int32_t  theRate;
     damping_type_t  theTypeOfDamping;
@@ -267,13 +268,14 @@ static struct Param_t {
     .theMonitorFileName = NULL,
     .theFreq_Vel = 0,
     .monitor_stats_rate = 50,
-    .theSofteningFactor = 0,
     .theSchedulePrintErrorCheckFlag = 0,
     .theSchedulePrintToStdout = 0,
     .theSchedulePrintToFile = 0,
     .theSchedulePrintFilename = "schedule_info.txt",
     .theScheduleStatFilename = NULL,
     .theMeshStatFilename = NULL,
+    .theSofteningFactor = 0,
+    .theStepMeshingFactor = 0,
     .myNumberOfStations = 0,
     .theUseCheckPoint =0,
     .theTimingBarriersFlag = 0,
@@ -365,7 +367,7 @@ monitor_print( const char* format, ... )
 static void read_parameters( int argc, char** argv ){
 
 #define LOCAL_INIT_DOUBLE_MESSAGE_LENGTH 18  /* Must adjust this if adding double params */
-#define LOCAL_INIT_INT_MESSAGE_LENGTH 19     /* Must adjust this if adding int params */
+#define LOCAL_INIT_INT_MESSAGE_LENGTH 20     /* Must adjust this if adding int params */
 
     double  double_message[LOCAL_INIT_DOUBLE_MESSAGE_LENGTH];
     int     int_message[LOCAL_INIT_INT_MESSAGE_LENGTH];
@@ -443,6 +445,7 @@ static void read_parameters( int argc, char** argv ){
     int_message[16] = (int)Param.storeMeshCoordinatesForMatlab;
     int_message[17] = (int)Param.drmImplement;
     int_message[18] = (int)Param.useInfQk;
+    int_message[19] = Param.theStepMeshingFactor;
 
 
     MPI_Bcast(int_message, LOCAL_INIT_INT_MESSAGE_LENGTH, MPI_INT, 0, comm_solver);
@@ -466,6 +469,7 @@ static void read_parameters( int argc, char** argv ){
     Param.storeMeshCoordinatesForMatlab  = int_message[16];
     Param.drmImplement                   = int_message[17];
     Param.useInfQk                       = int_message[18];
+    Param.theStepMeshingFactor           = int_message[19];
 
     /*Broadcast all string params*/
     MPI_Bcast (Param.parameters_input_file,  256, MPI_CHAR, 0, comm_solver);
@@ -645,7 +649,8 @@ static int32_t parse_parameters( const char* numericalin )
 
     int32_t   samples, rate;
     int       number_output_planes, number_output_stations,
-              damping_statistics, use_checkpoint, checkpointing_rate;
+              damping_statistics, use_checkpoint, checkpointing_rate,
+              step_meshing;
 
     double    freq, vscut,
               region_origin_latitude_deg, region_origin_longitude_deg,
@@ -747,6 +752,7 @@ static int32_t parse_parameters( const char* numericalin )
         (parsetext(fp, "simulation_end_time_sec",        'd', &endT                        ) != 0) ||
         (parsetext(fp, "simulation_delta_time_sec",      'd', &deltaT                      ) != 0) ||
         (parsetext(fp, "softening_factor",               'd', &softening_factor            ) != 0) ||
+        (parsetext(fp, "use_progressive_meshing",        'i', &step_meshing                ) != 0) ||
         (parsetext(fp, "simulation_output_rate",         'i', &rate                        ) != 0) ||
         (parsetext(fp, "number_output_planes",           'i', &number_output_planes        ) != 0) ||
         (parsetext(fp, "number_output_stations",         'i', &number_output_stations      ) != 0) ||
@@ -829,6 +835,11 @@ static int32_t parse_parameters( const char* numericalin )
 
     if ( (softening_factor <= 1) && (softening_factor != 0) ) {
         fprintf(stderr, "Illegal softening factor %f\n", softening_factor);
+        return -1;
+    }
+
+    if (step_meshing < 0) {
+        fprintf(stderr, "Illegal progressive meshing factor %d\n", step_meshing);
         return -1;
     }
 
@@ -1003,6 +1014,7 @@ static int32_t parse_parameters( const char* numericalin )
     Param.theNumberOfStations	      = number_output_stations;
 
     Param.theSofteningFactor        = softening_factor;
+    Param.theStepMeshingFactor     = step_meshing;
     Param.theThresholdDamping	      = threshold_damping;
     Param.theThresholdVpVs	      = threshold_VpVs;
     Param.theDampingStatisticsFlag  = damping_statistics;
@@ -1965,14 +1977,87 @@ mesh_generate()
 #endif
 
     Timer_Start("Octor Refinetree");
+    if (Param.theStepMeshingFactor == 0) {
+
+    	/* Entered regular meshing sequence */
+        if (Global.myID == 0) {
+            fprintf(stdout, "octor_refinetree         ... ");
+        }
+        if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
+            fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",
+                    Global.myID);
+            MPI_Abort(MPI_COMM_WORLD, ERROR);
+            exit(1);
+        }
+
+    } else {
+
+    	/* Entered progressive meshing sequence */
+
+    	int mstep, step = 1;
+        double originalFactor = Param.theFactor;
+        double ppwl = Param.theFactor / Param.theFreq;
+        if (Global.myID == 0) {
+            fprintf(stdout, "progressive meshing active        :\n\n");
+            fprintf(stdout, "Step  f(Hz)  Stage            Min            Max          Total\n");
+        }
+
+        /* loop over meshing steps as defined by a power of 2 factor */
+        for ( mstep = Param.theStepMeshingFactor; mstep >= 0; mstep-- ) {
+
+            int totale, mine, maxe;
+            double myFactor = (double)(1 << mstep); // 2^mstep
+            Param.theFactor = originalFactor / myFactor;
+            if (Global.myID == 0) {
+            	fprintf(stdout, "%4d %6.2f", step, Param.theFactor/ppwl);
+            }
+            /* Stage A: refine */
+            if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
+                fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
+                MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
+            }
+            MPI_Barrier(comm_solver);
+            totale = (int)octor_getleavescount(Global.myOctree, GLOBAL);
+            mine = (int)octor_getminleavescount(Global.myOctree, GLOBAL);
+            maxe = (int)octor_getmaxleavescount(Global.myOctree, GLOBAL);
+            if (Global.myID == 0) {
+                fprintf(stdout, "      A %14d %14d %14d\n", mine, maxe, totale);
+            }
+            /* Stage B: balance */
+            if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
+                fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
+                MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
+            }
+            MPI_Barrier(comm_solver);
+            totale = (int)octor_getleavescount(Global.myOctree, GLOBAL);
+            mine = (int)octor_getminleavescount(Global.myOctree, GLOBAL);
+            maxe = (int)octor_getmaxleavescount(Global.myOctree, GLOBAL);
+            if (Global.myID == 0) {
+                fprintf(stdout, "                 B %14d %14d %14d\n", mine, maxe, totale);
+            }
+
+            /* Stage C: partition */
+            if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
+                fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",Global.myID);
+                MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
+            }
+            MPI_Barrier(comm_solver);
+            totale = (int)octor_getleavescount(Global.myOctree, GLOBAL);
+            mine = (int)octor_getminleavescount(Global.myOctree, GLOBAL);
+            maxe = (int)octor_getmaxleavescount(Global.myOctree, GLOBAL);
+            if (Global.myID == 0) {
+                fprintf(stdout, "                 C %14d %14d %14d\n", mine, maxe, totale);
+            }
+
+            step++;
+            fflush(stdout);
+            MPI_Barrier(comm_solver);
+        }
+        Param.theFactor = originalFactor;
     if (Global.myID == 0) {
-	fprintf(stdout, "octor_refinetree         ... ");
+            fprintf(stdout, "\n");
+            fprintf(stdout, "octor_refinetree total   ... ");
     }
-    if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
-	fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",
-		Global.myID);
-	MPI_Abort(MPI_COMM_WORLD, ERROR);
-	exit(1);
     }
     MPI_Barrier(comm_solver);
     Timer_Stop("Octor Refinetree");
@@ -1987,7 +2072,7 @@ mesh_generate()
 #ifdef USECVMDB
     Global.theCVMQueryStage = 1; /* Query CVM database for balance operation */
 #endif
-    if (octor_balancetree(Global.myOctree, setrec) != 0) {
+    if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
 	fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",
 		Global.myID);
 	MPI_Abort(MPI_COMM_WORLD, ERROR);

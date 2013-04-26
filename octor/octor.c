@@ -1913,6 +1913,63 @@ octor_getmaxleaflevel(const octree_t* octree, int where)
     }
 }
 
+extern int64_t
+octor_getleavescount(const octree_t* octree, int where)
+{
+    tree_t *tree = (tree_t*)octree;
+    int64_t lcount, gcount;
+
+	lcount = tree_countleaves(tree);
+	if (where == LOCAL) {
+		return lcount;
+	} else {
+		if (tree->groupsize > 1) {
+			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT, MPI_SUM, tree->comm_tree);
+			return gcount;
+		} else {
+			return lcount;
+		}
+	}
+}
+
+extern int64_t
+octor_getminleavescount(const octree_t* octree, int where)
+{
+    tree_t *tree = (tree_t*)octree;
+    int64_t lcount, gcount;
+
+	lcount = tree_countleaves(tree);
+	if (where == LOCAL) {
+		return lcount;
+	} else {
+		if (tree->groupsize > 1) {
+			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT, MPI_MIN, tree->comm_tree);
+			return gcount;
+		} else {
+			return lcount;
+		}
+	}
+}
+
+extern int64_t
+octor_getmaxleavescount(const octree_t* octree, int where)
+{
+    tree_t *tree = (tree_t*)octree;
+    int64_t lcount, gcount;
+
+	lcount = tree_countleaves(tree);
+	if (where == LOCAL) {
+		return lcount;
+	} else {
+		if (tree->groupsize > 1) {
+			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT, MPI_MAX, tree->comm_tree);
+			return gcount;
+		} else {
+			return lcount;
+		}
+	}
+}
+
 
 /*************************/
 /* Tree-level operations */
@@ -4316,6 +4373,29 @@ octor_balancetree(octree_t *octree, setrec_t *setrec)
                 stack.top = 0;
                 nbr = oct_findneighbor(oct, dir, &stack);
 
+                /* Discard out of bounds */ //yigit
+
+                if ( nbr != NULL ) {
+                	if ( ( nbr->lz < tree->nearendp[2] ) ||
+                			( nbr->lz >= tree->farendp[2] ) ) {
+                		continue;
+                	}
+
+                	/* Discard out of bounds */
+                	if ( ( nbr->ly < tree->nearendp[1] ) ||
+                			( nbr->ly >= tree->farendp[1] ) ) {
+                		continue;
+                	}
+
+
+                	/* Discard out of bounds */
+                	if ( ( nbr->lx < tree->nearendp[0] ) ||
+                			( nbr->lx >= tree->farendp[0] ) ) {
+                		continue;
+                	}
+                }
+
+                /* Should never return NULL */
                 if ((nbr == NULL) || (nbr->level > oct->level - 2)) {
                     /* Ignore a non-existent neighbor or a neighbor
                        that is small enough already */
