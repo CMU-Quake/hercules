@@ -1482,6 +1482,44 @@ oct_installleaf(tick_t lx, tick_t ly, tick_t lz, int8_t level, void *data,
             }
         } /* if childoct == NULL */
 
+        /* Note by: Yigit+Ricardo
+         * This was one of the key change needed to be introduced for
+         * progressive meshing to work. With this change and other
+         * minor details regarding the set_comm delete_comm pair, most
+         * issues with progressive meshing were solved.  But there is
+         * still a little bit of mistery about very large meshes */
+		else {
+			if (childlevel == level) {
+                
+				/* Initialize the fields common to LEAF and INTERIOR*/
+				if( childoct->which != which ||
+                   childoct->level != childlevel ||
+                   (childoct->lx) != (parentoct->lx | (xbit << offset)) ||
+                   (childoct->ly) != (parentoct->ly | (ybit << offset)) ||
+                   (childoct->lz) != (parentoct->lz | (zbit << offset)) ||
+                   childoct->parent != parentoct ||
+                   childoct->where != REMOTE ||
+                   childoct->type != LEAF ) {
+					fprintf(stderr, "Thread %d: haha haha lol lol lo lo\n",
+							tree->procid);
+					MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+					exit(1);
+                    
+				}
+                
+				childoct->appdata = NULL;
+				childoct->where = LOCAL;   /* Applicable to LEAF only */
+                
+				childoct->payload.leaf->next = childoct->payload.leaf->prev
+                = NULL;
+                
+				memcpy(childoct->payload.leaf->data, data, tree->recsize);
+                
+				//childoct->where = LOCAL;
+			}
+            
+		} /* if childoct != NULL && childoct->type == REMOTE  && if (childlevel == level)  */
+
         parentoct = childoct;
 
     } /* for parentlevel < level */
@@ -1913,6 +1951,63 @@ octor_getmaxleaflevel(const octree_t* octree, int where)
     }
 }
 
+extern int64_t
+octor_getleavescount(const octree_t* octree, int where)
+{
+    tree_t *tree = (tree_t*)octree;
+    int64_t lcount, gcount;
+
+	lcount = tree_countleaves(tree);
+	if (where == LOCAL) {
+		return lcount;
+	} else {
+		if (tree->groupsize > 1) {
+			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT, MPI_SUM, tree->comm_tree);
+			return gcount;
+		} else {
+			return lcount;
+		}
+	}
+}
+
+extern int64_t
+octor_getminleavescount(const octree_t* octree, int where)
+{
+    tree_t *tree = (tree_t*)octree;
+    int64_t lcount, gcount;
+
+	lcount = tree_countleaves(tree);
+	if (where == LOCAL) {
+		return lcount;
+	} else {
+		if (tree->groupsize > 1) {
+			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT, MPI_MIN, tree->comm_tree);
+			return gcount;
+		} else {
+			return lcount;
+		}
+	}
+}
+
+extern int64_t
+octor_getmaxleavescount(const octree_t* octree, int where)
+{
+    tree_t *tree = (tree_t*)octree;
+    int64_t lcount, gcount;
+
+	lcount = tree_countleaves(tree);
+	if (where == LOCAL) {
+		return lcount;
+	} else {
+		if (tree->groupsize > 1) {
+			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT, MPI_MAX, tree->comm_tree);
+			return gcount;
+		} else {
+			return lcount;
+		}
+	}
+}
+
 
 /*************************/
 /* Tree-level operations */
@@ -2213,20 +2308,52 @@ tree_ascend(oct_t *oct, dir_t I, oct_stack_t *stackp)
 static oct_t *
 tree_descend(oct_t *oct, oct_stack_t *stackp)
 {
-    while (stackp->top > 0) {
-        if ((oct == NULL) || (oct->type == LEAF)) {
-            break;
-        } else {
-            dir_t dir;
 
-            stackp->top--;
-            dir = (dir_t)stackp->dir[(int32_t)stackp->top];
+	/* Original code was...
+	 * 
+     * while (stackp->top > 0) {
+     *     if ((oct == NULL) || (oct->type == LEAF)) {
+     *         break;
+     *     } else {
+     *         dir_t dir;
+     *
+     *         stackp->top--;
+     *         dir = (dir_t)stackp->dir[(int32_t)stackp->top];
+     *
+     *         oct = oct->payload.interior->child[dir];
+     *     }
+     * } // descend until we cannot go further down
+     *
+     * return oct;
+     */
+    
+    /* Note by: Yigit+Ricardo
+     * This was one of the key change needed to be introduced for
+     * progressive meshing to work. With this change and other
+     * minor details regarding the set_comm delete_comm pair, most
+     * issues with progressive meshing were solved.  But there is
+     * still a little bit of mistery about very large meshes */
 
-            oct = oct->payload.interior->child[dir];
-        }
-    } /* descend until we cannot go further down */
+	while (stackp->top > 0) {
+		if ( oct->type == LEAF) {
+			break;
+		} else {
+			dir_t dir;
 
-    return oct;
+			dir = (dir_t)stackp->dir[(int32_t)(stackp->top-1)];
+
+			if (oct->payload.interior->child[dir] == NULL) {
+				return oct;
+			}
+
+			oct = oct->payload.interior->child[dir];
+			stackp->top--;
+
+		}
+	} /* descend until we cannot go further down */
+
+	return oct;
+    
 }
 
 
@@ -4259,7 +4386,7 @@ octor_coarsentree(octree_t *octree, toshrink_t *toshrink, setrec_t *setrec)
  *
  */
 extern int32_t
-octor_balancetree(octree_t *octree, setrec_t *setrec)
+octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
 {
     int32_t lmax, gmax, lmin, gmin, level, threshold;
     oct_t *oct, *nbr;
@@ -4316,6 +4443,29 @@ octor_balancetree(octree_t *octree, setrec_t *setrec)
                 stack.top = 0;
                 nbr = oct_findneighbor(oct, dir, &stack);
 
+                /* Discard out of bounds */ //yigit
+
+                if ( nbr != NULL ) {
+                	if ( ( nbr->lz < tree->nearendp[2] ) ||
+                			( nbr->lz >= tree->farendp[2] ) ) {
+                		continue;
+                	}
+
+                	/* Discard out of bounds */
+                	if ( ( nbr->ly < tree->nearendp[1] ) ||
+                			( nbr->ly >= tree->farendp[1] ) ) {
+                		continue;
+                	}
+
+
+                	/* Discard out of bounds */
+                	if ( ( nbr->lx < tree->nearendp[0] ) ||
+                			( nbr->lx >= tree->farendp[0] ) ) {
+                		continue;
+                	}
+                }
+
+                /* Should never return NULL */
                 if ((nbr == NULL) || (nbr->level > oct->level - 2)) {
                     /* Ignore a non-existent neighbor or a neighbor
                        that is small enough already */
@@ -4332,7 +4482,11 @@ octor_balancetree(octree_t *octree, setrec_t *setrec)
                         continue;
                     }
 
-                } else if (nbr->where == REMOTE) {
+                } else if (nbr->where != LOCAL) {
+					/* Note by Yigit+Ricardo: 
+					 * This condition used to be == REMOTE 
+					 * The change was made in the search for fixing 
+					 * progressive meshing issues */
 
                     /* This only happens if groupsize > 1. We have
                        maintained the validity of tree->com throughout. */
