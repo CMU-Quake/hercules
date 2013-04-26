@@ -4403,6 +4403,68 @@ octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
             localcount);
 #endif /* TREE_VERBOSE */
 
+    /* 
+     * Note by Yigit and Ricardo:
+     * This block solved a misterious issue with progressive meshing.
+     * We, however, don't know exactly all the implications it may have.
+     * 
+     * START: Block by Yigit and Ricardo related to progressive meshing
+     */
+    
+    /* The neighboring relationship should be updated if  theStepMeshingFactor > 0*/
+    if (tree->groupsize > 1) {
+
+    	if( theStepMeshingFactor > 0 ) {
+
+    		int32_t nbrprocid, msgsize;
+
+    		tree_deletecom(tree);
+
+    		/* Allocate a communication manager */
+    		/* Note we do not use the interval array for allcom */
+
+    		tree->com = com_new(tree->procid, tree->groupsize);
+    		if (tree->com == NULL) {
+    			fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+    					tree->procid, __FILE__, __LINE__);
+    			MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+    			exit(1);
+    		}
+
+    		/* Global communication */
+    		MPI_Allgather(&tree->firstleaf->lx, sizeof(point_t), MPI_CHAR,
+    				tree->com->interval, sizeof(point_t), MPI_CHAR,
+    				tree->comm_tree);
+
+    		/* Initialize tree->com manually. Every processor is adjacent
+    	           with every other processors */
+
+    		msgsize = sizeof(descent_t);
+    		for (nbrprocid = tree->groupsize - 1; nbrprocid >= 0; nbrprocid--) {
+    			if (nbrprocid == tree->procid)
+    				continue;
+
+    			if ((tree->com->pctltab[nbrprocid] = pctl_new(nbrprocid, msgsize))
+    					== NULL) {
+    				fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+    						tree->procid, __FILE__, __LINE__);
+    				MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+    				exit(1);
+    			}
+
+    			/* link into the pctl list */
+    			tree->com->pctltab[nbrprocid]->next = tree->com->firstpctl;
+    			tree->com->firstpctl = tree->com->pctltab[nbrprocid];
+    			tree->com->nbrcnt++;
+    		}
+    	}
+
+    }/* if groupsize > 1 */
+
+	/* See note above.
+	 * END: Block by Yigit and Ricardo related to progressive meshing
+	 */
+
     /* Link LOCAL leaf octs at the same level together */
     memset(tree->toleaf, 0, sizeof(oct_t *) * TOTALLEVEL);
     oct = tree->firstleaf;
