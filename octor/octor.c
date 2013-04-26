@@ -5112,17 +5112,22 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
     free(counttable);
     free(starttable);
 
-    /* The neighboring relationship should be updated */
-
-    tree_deletecom(tree);
-
-    if (tree_setcom(tree, 0, bldgs_nodesearch) != 0) {
-        fprintf(stderr,
-                "Thread %d: %s %d: fail to create new communication manager\n",
-                tree->procid, __FILE__, __LINE__);
-        MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
-        exit(1);
-    }
+    /* Note by Ricardo:
+     * This block has been moved from here (at the end of octor_partitiontree)
+     * to the beginning of octor_extractmesh.
+     *
+     * // The neighboring relationship should be updated
+     *
+     * tree_deletecom(tree);
+     *
+     * if (tree_setcom(tree, 0, bldgs_nodesearch) != 0) {
+     *     fprintf(stderr,
+     *             "Thread %d: %s %d: fail to create new communication manager\n",
+     *             tree->procid, __FILE__, __LINE__);
+     *     MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
+     *     exit(1);
+     * }
+     */
 
 #ifdef TREE_VERBOSE
     /* tree_showstat(tree, BRIEF, "octor_partitiontree"); */
@@ -5179,7 +5184,26 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
         theAllocatedMemSum += sizeof(mess_t);
     }
 
+    /* Note by Ricardo:
+     * This block has been moved from the end of octor_partitiontree
+     * to here (at the beginning of octor_extractmesh).
+     */
 
+    /* The neighboring relationship should be updated */
+
+    if (tree->groupsize > 1) {
+
+    	tree_deletecom(tree);
+
+    	if (tree_setcom(tree, 0, bldgs_nodesearch) != 0) {
+    		fprintf(stderr,
+    				"Thread %d: %s %d: fail to create new communication manager\n",
+    				tree->procid, __FILE__, __LINE__);
+    		MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
+    		exit(1);
+    	}
+    }
+    
     /* How many elements I have */
     ecount = tree_countleaves(tree);
 
