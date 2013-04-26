@@ -2088,17 +2088,17 @@ mesh_generate()
      * Carve buildings:
      * First pass may leave the first-leaf as an air element */
     if ( Param.includeBuildings == YES ) {
-        Timer_Start("First Carve Buildings");
+        Timer_Start("Carve Buildings");
         if (Global.myID == 0) {
             fprintf(stdout, "octor_carvebuildings 1   ... ");
         }
         /* NOTE: If you want to see the carving process, comment next line */
         octor_carvebuildings(Global.myOctree, 1, bldgs_nodesearch);
         MPI_Barrier(comm_solver);
-        Timer_Stop("First Carve Buildings");
+        Timer_Stop("Carve Buildings");
         if (Global.myID == 0) {
             fprintf( stdout, "done : %9.2f seconds\n",
-                     Timer_Value("First Carve Buildings", 0) );
+                     Timer_Value("Carve Buildings", 0) );
         }
     }
 
@@ -2117,27 +2117,6 @@ mesh_generate()
     if (Global.myID == 0) {
 	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Octor Partitiontree", 0));
     }
-
-    /**
-     * Carve buildings:
-     * Second pass to eliminate elements left behind in the first pass */
-    if ( Param.includeBuildings == YES ) {
-    	Timer_Start("Second Carve Buildings");
-    	if (Global.myID == 0) {
-    		fprintf(stdout, "octor_carvebuildings 2   ... ");
-    	}
-    	
-    	/*NOTE:no second carving needed anymore yigit */
-    	
-    	//octor_carvebuildings(Global.myOctree, 0, bldgs_nodesearch);
-    	MPI_Barrier(comm_solver);
-    	Timer_Stop("Second Carve Buildings");
-    	if (Global.myID == 0) {
-    		fprintf( stdout, "done : %9.2f seconds\n",
-    				Timer_Value("Second Carve Buildings", 0) );
-    	}
-    }
-
 
     Timer_Start("Octor Extractmesh");
     if (Global.myID == 0) {
@@ -6053,8 +6032,7 @@ static void print_timing_stat()
                      + Timer_Value("Mesh Stats Print"       , 0);
 
     if ( Param.includeBuildings == YES ) {
-        TotalMeshingTime += Timer_Value("First Carve Buildings", 0)
-                          + Timer_Value("Second Carve Buildings", 0);
+        TotalMeshingTime += Timer_Value("Carve Buildings", 0);
     }
 
     printf("\n\n__________________________Raw Timers__________________________\n\n");
@@ -6090,11 +6068,9 @@ static void print_timing_stat()
     printf("    Octor Newtree                   : %.2f seconds\n", Timer_Value("Octor Newtree",0) );
     printf("    Octor Refinetree                : %.2f seconds\n", Timer_Value("Octor Refinetree",0));
     printf("    Octor Balancetree               : %.2f seconds\n", Timer_Value("Octor Balancetree",0));
-    if ( Timer_Exists("First Carve Buildings") )
-        printf("    Octor First Carve Buildings     : %.2f seconds\n", Timer_Value("First Carve Buildings",0));
+    if ( Timer_Exists("Carve Buildings") )
+        printf("    Octor Carve Buildings           : %.2f seconds\n", Timer_Value("Carve Buildings",0));
     printf("    Octor Partitiontree             : %.2f seconds\n", Timer_Value("Octor Partitiontree",0));
-    if ( Timer_Exists("Second Carve Buildings") )
-        printf("    Octor Second Carve Buildings    : %.2f seconds\n", Timer_Value("Second Carve Buildings",0));
     printf("    Octor Extractmesh               : %.2f seconds\n", Timer_Value("Octor Extractmesh",0));
     printf("    Mesh correct properties         : %.2f seconds\n", Timer_Value("Mesh correct properties",0));
     printf("    Mesh Stats Print                : %.2f seconds\n", Timer_Value("Mesh Stats Print",0));
