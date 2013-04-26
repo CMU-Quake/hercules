@@ -1482,6 +1482,44 @@ oct_installleaf(tick_t lx, tick_t ly, tick_t lz, int8_t level, void *data,
             }
         } /* if childoct == NULL */
 
+        /* Note by: Yigit+Ricardo
+         * This was one of the key change needed to be introduced for
+         * progressive meshing to work. With this change and other
+         * minor details regarding the set_comm delete_comm pair, most
+         * issues with progressive meshing were solved.  But there is
+         * still a little bit of mistery about very large meshes */
+		else {
+			if (childlevel == level) {
+                
+				/* Initialize the fields common to LEAF and INTERIOR*/
+				if( childoct->which != which ||
+                   childoct->level != childlevel ||
+                   (childoct->lx) != (parentoct->lx | (xbit << offset)) ||
+                   (childoct->ly) != (parentoct->ly | (ybit << offset)) ||
+                   (childoct->lz) != (parentoct->lz | (zbit << offset)) ||
+                   childoct->parent != parentoct ||
+                   childoct->where != REMOTE ||
+                   childoct->type != LEAF ) {
+					fprintf(stderr, "Thread %d: haha haha lol lol lo lo\n",
+							tree->procid);
+					MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+					exit(1);
+                    
+				}
+                
+				childoct->appdata = NULL;
+				childoct->where = LOCAL;   /* Applicable to LEAF only */
+                
+				childoct->payload.leaf->next = childoct->payload.leaf->prev
+                = NULL;
+                
+				memcpy(childoct->payload.leaf->data, data, tree->recsize);
+                
+				//childoct->where = LOCAL;
+			}
+            
+		} /* if childoct != NULL && childoct->type == REMOTE  && if (childlevel == level)  */
+
         parentoct = childoct;
 
     } /* for parentlevel < level */
@@ -2270,20 +2308,52 @@ tree_ascend(oct_t *oct, dir_t I, oct_stack_t *stackp)
 static oct_t *
 tree_descend(oct_t *oct, oct_stack_t *stackp)
 {
-    while (stackp->top > 0) {
-        if ((oct == NULL) || (oct->type == LEAF)) {
-            break;
-        } else {
-            dir_t dir;
 
-            stackp->top--;
-            dir = (dir_t)stackp->dir[(int32_t)stackp->top];
+	/* Original code was...
+	 * 
+     * while (stackp->top > 0) {
+     *     if ((oct == NULL) || (oct->type == LEAF)) {
+     *         break;
+     *     } else {
+     *         dir_t dir;
+     *
+     *         stackp->top--;
+     *         dir = (dir_t)stackp->dir[(int32_t)stackp->top];
+     *
+     *         oct = oct->payload.interior->child[dir];
+     *     }
+     * } // descend until we cannot go further down
+     *
+     * return oct;
+     */
+    
+    /* Note by: Yigit+Ricardo
+     * This was one of the key change needed to be introduced for
+     * progressive meshing to work. With this change and other
+     * minor details regarding the set_comm delete_comm pair, most
+     * issues with progressive meshing were solved.  But there is
+     * still a little bit of mistery about very large meshes */
 
-            oct = oct->payload.interior->child[dir];
-        }
-    } /* descend until we cannot go further down */
+	while (stackp->top > 0) {
+		if ( oct->type == LEAF) {
+			break;
+		} else {
+			dir_t dir;
 
-    return oct;
+			dir = (dir_t)stackp->dir[(int32_t)(stackp->top-1)];
+
+			if (oct->payload.interior->child[dir] == NULL) {
+				return oct;
+			}
+
+			oct = oct->payload.interior->child[dir];
+			stackp->top--;
+
+		}
+	} /* descend until we cannot go further down */
+
+	return oct;
+    
 }
 
 
