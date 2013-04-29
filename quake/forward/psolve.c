@@ -2042,11 +2042,11 @@ mesh_generate()
                 MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
             }
             MPI_Barrier(comm_solver);
-            totale = (int)octor_getleavescount(Global.myOctree, GLOBAL);
-            mine = (int)octor_getminleavescount(Global.myOctree, GLOBAL);
-            maxe = (int)octor_getmaxleavescount(Global.myOctree, GLOBAL);
+            totale = octor_getleavescount(Global.myOctree, GLOBAL);
+            mine = octor_getminleavescount(Global.myOctree, GLOBAL);
+            maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
             if (Global.myID == 0) {
-                fprintf(stdout, "                 C %14d %14d %14d\n", mine, maxe, totale);
+                fprintf(stdout, "                 C %14"INT64_FMT" %14"INT64_FMT" %14"INT64_FMT"\n", mine, maxe, totale);
             }
 
             step++;
