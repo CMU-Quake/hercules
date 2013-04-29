@@ -2005,7 +2005,7 @@ mesh_generate()
         /* loop over meshing steps as defined by a power of 2 factor */
         for ( mstep = Param.theStepMeshingFactor; mstep >= 0; mstep-- ) {
 
-            int totale, mine, maxe;
+            int64_t totale, mine, maxe;
             double myFactor = (double)(1 << mstep); // 2^mstep
             Param.theFactor = originalFactor / myFactor;
             if (Global.myID == 0) {
@@ -2017,11 +2017,11 @@ mesh_generate()
                 MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
             }
             MPI_Barrier(comm_solver);
-            totale = (int)octor_getleavescount(Global.myOctree, GLOBAL);
-            mine = (int)octor_getminleavescount(Global.myOctree, GLOBAL);
-            maxe = (int)octor_getmaxleavescount(Global.myOctree, GLOBAL);
+            totale = octor_getleavescount(Global.myOctree, GLOBAL);
+            mine = octor_getminleavescount(Global.myOctree, GLOBAL);
+            maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
             if (Global.myID == 0) {
-                fprintf(stdout, "      A %14d %14d %14d\n", mine, maxe, totale);
+                fprintf(stdout, "      A %14"INT64_FMT" %14"INT64_FMT" %14"INT64_FMT"\n", mine, maxe, totale);
             }
             /* Stage B: balance */
             if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
@@ -2029,11 +2029,11 @@ mesh_generate()
                 MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
             }
             MPI_Barrier(comm_solver);
-            totale = (int)octor_getleavescount(Global.myOctree, GLOBAL);
-            mine = (int)octor_getminleavescount(Global.myOctree, GLOBAL);
-            maxe = (int)octor_getmaxleavescount(Global.myOctree, GLOBAL);
+            totale = octor_getleavescount(Global.myOctree, GLOBAL);
+            mine = octor_getminleavescount(Global.myOctree, GLOBAL);
+            maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
             if (Global.myID == 0) {
-                fprintf(stdout, "                 B %14d %14d %14d\n", mine, maxe, totale);
+                fprintf(stdout, "                 B %14"INT64_FMT" %14"INT64_FMT" %14"INT64_FMT"\n", mine, maxe, totale);
             }
 
             /* Stage C: partition */
