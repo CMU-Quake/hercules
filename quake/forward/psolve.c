@@ -2006,6 +2006,10 @@ mesh_generate()
 
         /* Refinement */
         Timer_Start("Octor Refinetree");
+        if (Global.myID == 0) {
+            fprintf(stdout, "Refining     ");
+            fflush(stdout);
+        }
         if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
             fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
             MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
@@ -2015,7 +2019,8 @@ mesh_generate()
         mine = octor_getminleavescount(Global.myOctree, GLOBAL);
         maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
         if (Global.myID == 0) {
-            fprintf(stdout, "Refining     %11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
+            fprintf(stdout, "%11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
+            fflush(stdout);
         }
         Timer_Stop("Octor Refinetree");
         if (Global.myID == 0) {
@@ -2026,10 +2031,15 @@ mesh_generate()
                 fprintf(stdout, "   %4d %6.2f\n", step, Param.theFactor/ppwl);
             }
             prevtref = Timer_Value("Octor Refinetree", 0);
+            fflush(stdout);
         }
 
         /* Balancing */
         Timer_Start("Octor Balancetree");
+        if (Global.myID == 0) {
+            fprintf(stdout, "Balancing    ");
+            fflush(stdout);
+        }
         if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
             fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
             MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
@@ -2039,16 +2049,22 @@ mesh_generate()
         mine = octor_getminleavescount(Global.myOctree, GLOBAL);
         maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
         if (Global.myID == 0) {
-            fprintf(stdout, "Balancing    %11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
+            fprintf(stdout, "%11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
+            fflush(stdout);
         }
         Timer_Stop("Octor Balancetree");
         if (Global.myID == 0) {
             fprintf(stdout, "%11.2f\n", Timer_Value("Octor Balancetree", 0) - prevtbal);
             prevtbal = Timer_Value("Octor Balancetree", 0);
+            fflush(stdout);
         }
 
         /* Partitioning */
         Timer_Start("Octor Partitiontree");
+        if (Global.myID == 0) {
+            fprintf(stdout, "Partitioning ");
+            fflush(stdout);
+        }
         if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
             fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",Global.myID);
             MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
@@ -2058,12 +2074,14 @@ mesh_generate()
         mine = octor_getminleavescount(Global.myOctree, GLOBAL);
         maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
         if (Global.myID == 0) {
-            fprintf(stdout, "Partitioning %11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
+            fprintf(stdout, "%11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
+            fflush(stdout);
         }
         Timer_Stop("Octor Partitiontree");
         if (Global.myID == 0) {
             fprintf(stdout, "%11.2f\n\n", Timer_Value("Octor Partitiontree", 0) - prevtpar);
             prevtpar = Timer_Value("Octor Partitiontree", 0);
+            fflush(stdout);
         }
 
         step++;
@@ -2077,7 +2095,7 @@ mesh_generate()
         Timer_Start("Carve Buildings");
         if (Global.myID == 0) {
             fprintf(stdout, "Carving buildings");
-            fflush( stdout );
+            fflush(stdout);
         }
 
         /* NOTE: If you want to see the carving process, comment next line */
@@ -2085,14 +2103,14 @@ mesh_generate()
         MPI_Barrier(comm_solver);
         Timer_Stop("Carve Buildings");
         if (Global.myID == 0) {
-            fprintf( stdout, ":%9.2f\n",
-                    Timer_Value("Carve Buildings", 0) );
+            fprintf(stdout, "%9.2f\n", Timer_Value("Carve Buildings", 0) );
+            fflush(stdout);
         }
 
         Timer_Start("Octor Partitiontree");
         if (Global.myID == 0) {
             fprintf(stdout, "Repartitioning");
-            fflush( stdout );
+            fflush(stdout);
         }
         if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
             fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",
@@ -2103,7 +2121,8 @@ mesh_generate()
         MPI_Barrier(comm_solver);
         Timer_Stop("Octor Partitiontree");
         if (Global.myID == 0) {
-            fprintf(stdout, ":%9.2f\n", Timer_Value("Octor Partitiontree", 0));
+            fprintf(stdout, "%9.2f\n", Timer_Value("Octor Partitiontree", 0));
+            fflush(stdout);
         }
     }
 
@@ -2111,12 +2130,13 @@ mesh_generate()
         fprintf(stdout, "Total refine    %33s %9.2f\n", "", Timer_Value("Octor Refinetree", 0));
         fprintf(stdout, "Total balance   %33s %9.2f\n", "", Timer_Value("Octor Balancetree", 0));
         fprintf(stdout, "Total partition %33s %9.2f\n\n", "", Timer_Value("Octor Partitiontree", 0));
+        fflush(stdout);
     }
 
     Timer_Start("Octor Extractmesh");
     if (Global.myID == 0) {
         fprintf(stdout, "Extracting the mesh %30s","");
-        fflush( stdout );
+        fflush(stdout);
     }
     Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch);
     if (Global.myMesh == NULL) {
@@ -2134,8 +2154,8 @@ mesh_generate()
     Timer_Start( "Mesh correct properties" );
     /* Re-populates the mesh with actual values from the CVM-etree */
     if (Global.myID == 0) {
-        fprintf( stdout,"Correcting mesh properties %23s","");
-        fflush( stdout );
+        fprintf(stdout,"Correcting mesh properties %23s","");
+        fflush(stdout);
     }
 
     mesh_correct_properties( Global.theCVMEp );
@@ -2143,9 +2163,9 @@ mesh_generate()
     MPI_Barrier( comm_solver );
     Timer_Stop( "Mesh correct properties" );
     if (Global.myID == 0) {
-        fprintf( stdout, "%9.2f\n\n",Timer_Value( "Mesh correct properties", 0 ) );
+        fprintf(stdout, "%9.2f\n\n",Timer_Value( "Mesh correct properties", 0 ) );
+        fflush(stdout);
     }
-
 
 #ifdef USECVMDB
     /* Close the material database */
