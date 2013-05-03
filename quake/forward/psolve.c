@@ -1925,7 +1925,7 @@ mesh_generate()
     double originalFactor = Param.theFactor;
     double ppwl = Param.theFactor / Param.theFreq;
     double prevtref = 0, prevtbal = 0, prevtpar = 0;
-    global_id_t tote, mine, maxe;
+    int64_t tote, mine, maxe;
 
     if (Global.myID == 0) {
         fprintf(stdout, "Meshing: ");
