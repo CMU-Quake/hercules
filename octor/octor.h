@@ -31,6 +31,8 @@
 #include <inttypes.h> 
 #include <mpi.h>
 
+#include "ocutil.h"
+
 #define TOTALLEVEL       31
 #define PIXELLEVEL       30
 
