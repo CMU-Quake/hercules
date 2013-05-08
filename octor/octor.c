@@ -1962,7 +1962,7 @@ octor_getleavescount(const octree_t* octree, int where)
 		return lcount;
 	} else {
 		if (tree->groupsize > 1) {
-			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT, MPI_SUM, tree->comm_tree);
+			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT64, MPI_SUM, tree->comm_tree);
 			return gcount;
 		} else {
 			return lcount;
@@ -1981,7 +1981,7 @@ octor_getminleavescount(const octree_t* octree, int where)
 		return lcount;
 	} else {
 		if (tree->groupsize > 1) {
-			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT, MPI_MIN, tree->comm_tree);
+			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT64, MPI_MIN, tree->comm_tree);
 			return gcount;
 		} else {
 			return lcount;
@@ -2000,7 +2000,7 @@ octor_getmaxleavescount(const octree_t* octree, int where)
 		return lcount;
 	} else {
 		if (tree->groupsize > 1) {
-			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT, MPI_MAX, tree->comm_tree);
+			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT64, MPI_MAX, tree->comm_tree);
 			return gcount;
 		} else {
 			return lcount;
@@ -2062,7 +2062,7 @@ static int64_t tree_countleaves(tree_t *tree)
     localtotal = 0;
 
     for (level = 0; level < TOTALLEVEL; level++) {
-        localtotal += tree->leafcount[(int32_t)level];
+        localtotal += (int64_t)tree->leafcount[(int32_t)level];
     }
 
     return localtotal;

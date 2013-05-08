@@ -1921,37 +1921,60 @@ static void
 mesh_generate()
 {
 
+    int mstep, step = 1;
+    double originalFactor = Param.theFactor;
+    double ppwl = Param.theFactor / Param.theFreq;
+    double prevtref = 0, prevtbal = 0, prevtpar = 0;
+    int64_t tote, mine, maxe;
+
+    if (Global.myID == 0) {
+        fprintf(stdout, "Meshing: ");
+        if (Param.theStepMeshingFactor == 0) {
+            fprintf(stdout, "Conventional\n\n");
+        } else {
+            fprintf(stdout, "Progressive\n\n");
+        }
+        fprintf(stdout, "Stage %14s Min %7s Max %5s Total    Time(s)","","","");
+        if (Param.theStepMeshingFactor == 0) {
+            fprintf(stdout, "\n\n");
+        } else {
+            fprintf(stdout, "   Step  f(Hz)\n\n");
+        }
+    }
+
     /*----  Generate and partition an unstructured octree mesh ----*/
     MPI_Barrier(comm_solver);
     Timer_Start("Octor Newtree");
     if (Global.myID == 0) {
-	fprintf(stdout, "octor_newtree            ... ");
+        fprintf(stdout, "New tree %41s","");
     }
     Global.myOctree = octor_newtree( Param.theDomainX, Param.theDomainY, Param.theDomainZ,
-			      sizeof(edata_t), Global.myID, Global.theGroupSize,
-			      comm_solver, get_surface_shift());
+            sizeof(edata_t), Global.myID, Global.theGroupSize,
+            comm_solver, get_surface_shift());
 
-    /* NOTE: If you want to see the carving process, replace by:
-        Global.myOctree = octor_newtree( Param.theDomainX, Param.theDomainY, Param.theDomainZ,
-                                  sizeof(edata_t), Global.myID, Global.theGroupSize,
-                                  comm_solver, 0);
+    /* NOTE:
+     * If you want to see the carving process, replace by:
+     *     Global.myOctree = octor_newtree(
+     *             Param.theDomainX, Param.theDomainY, Param.theDomainZ,
+     *             sizeof(edata_t), Global.myID, Global.theGroupSize,
+     *             comm_solver, 0);
      */
 
     if (Global.myOctree == NULL) {
-	fprintf(stderr, "Thread %d: mesh_generate: fail to create octree\n",
-		Global.myID);
-	MPI_Abort(MPI_COMM_WORLD, ERROR);
-	exit(1);
+        fprintf(stderr, "Thread %d: mesh_generate: fail to create octree\n",
+                Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
     }
     MPI_Barrier(comm_solver);
     Timer_Stop("Octor Newtree");
     if (Global.myID == 0) {
-	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Octor Newtree", 0) );
+        fprintf(stdout, "%9.2f\n\n", Timer_Value("Octor Newtree", 0) );
     }
 
     /* Essential for DRM implementation */
     if (Param.drmImplement == YES) {
-    	drm_fix_coordinates(Global.myOctree->ticksize);
+        drm_fix_coordinates(Global.myOctree->ticksize);
     }
 
 #ifdef USECVMDB
@@ -1976,177 +1999,173 @@ mesh_generate()
     }
 #endif
 
-    Timer_Start("Octor Refinetree");
-    if (Param.theStepMeshingFactor == 0) {
+    for ( mstep = Param.theStepMeshingFactor; mstep >= 0; mstep-- ) {
 
-    	/* Entered regular meshing sequence */
+        double myFactor = (double)(1 << mstep); // 2^mstep
+        Param.theFactor = originalFactor / myFactor;
+
+        /* Refinement */
+        Timer_Start("Octor Refinetree");
         if (Global.myID == 0) {
-            fprintf(stdout, "octor_refinetree         ... ");
+            fprintf(stdout, "Refining     ");
+            fflush(stdout);
         }
         if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
-            fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",
-                    Global.myID);
-            MPI_Abort(MPI_COMM_WORLD, ERROR);
-            exit(1);
+            fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
+            MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
         }
-
-    } else {
-
-    	/* Entered progressive meshing sequence */
-
-    	int mstep, step = 1;
-        double originalFactor = Param.theFactor;
-        double ppwl = Param.theFactor / Param.theFreq;
+        MPI_Barrier(comm_solver);
+        tote = octor_getleavescount(Global.myOctree, GLOBAL);
+        mine = octor_getminleavescount(Global.myOctree, GLOBAL);
+        maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
         if (Global.myID == 0) {
-            fprintf(stdout, "progressive meshing active        :\n\n");
-            fprintf(stdout, "Step  f(Hz)  Stage            Min            Max          Total\n");
-        }
-
-        /* loop over meshing steps as defined by a power of 2 factor */
-        for ( mstep = Param.theStepMeshingFactor; mstep >= 0; mstep-- ) {
-
-            int64_t totale, mine, maxe;
-            double myFactor = (double)(1 << mstep); // 2^mstep
-            Param.theFactor = originalFactor / myFactor;
-            if (Global.myID == 0) {
-            	fprintf(stdout, "%4d %6.2f", step, Param.theFactor/ppwl);
-            }
-            /* Stage A: refine */
-            if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
-                fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
-                MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
-            }
-            MPI_Barrier(comm_solver);
-            totale = octor_getleavescount(Global.myOctree, GLOBAL);
-            mine = octor_getminleavescount(Global.myOctree, GLOBAL);
-            maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
-            if (Global.myID == 0) {
-                fprintf(stdout, "      A %14"INT64_FMT" %14"INT64_FMT" %14"INT64_FMT"\n", mine, maxe, totale);
-            }
-            /* Stage B: balance */
-            if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
-                fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
-                MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
-            }
-            MPI_Barrier(comm_solver);
-            totale = octor_getleavescount(Global.myOctree, GLOBAL);
-            mine = octor_getminleavescount(Global.myOctree, GLOBAL);
-            maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
-            if (Global.myID == 0) {
-                fprintf(stdout, "                 B %14"INT64_FMT" %14"INT64_FMT" %14"INT64_FMT"\n", mine, maxe, totale);
-            }
-
-            /* Stage C: partition */
-            if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
-                fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",Global.myID);
-                MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
-            }
-            MPI_Barrier(comm_solver);
-            totale = octor_getleavescount(Global.myOctree, GLOBAL);
-            mine = octor_getminleavescount(Global.myOctree, GLOBAL);
-            maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
-            if (Global.myID == 0) {
-                fprintf(stdout, "                 C %14"INT64_FMT" %14"INT64_FMT" %14"INT64_FMT"\n", mine, maxe, totale);
-            }
-
-            step++;
+            fprintf(stdout, "%11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
             fflush(stdout);
-            MPI_Barrier(comm_solver);
         }
-        Param.theFactor = originalFactor;
-    if (Global.myID == 0) {
-            fprintf(stdout, "\n");
-            fprintf(stdout, "octor_refinetree total   ... ");
-    }
-    }
-    MPI_Barrier(comm_solver);
-    Timer_Stop("Octor Refinetree");
-    if (Global.myID == 0) {
-	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Octor Refinetree", 0));
+        Timer_Stop("Octor Refinetree");
+        if (Global.myID == 0) {
+            fprintf(stdout, "%11.2f", Timer_Value("Octor Refinetree", 0) - prevtref);
+            if (Param.theStepMeshingFactor == 0 ) {
+                fprintf(stdout, "\n");
+            } else {
+                fprintf(stdout, "   %4d %6.2f\n", step, Param.theFactor/ppwl);
+            }
+            prevtref = Timer_Value("Octor Refinetree", 0);
+            fflush(stdout);
+        }
+
+        /* Balancing */
+        Timer_Start("Octor Balancetree");
+        if (Global.myID == 0) {
+            fprintf(stdout, "Balancing    ");
+            fflush(stdout);
+        }
+        if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
+            fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
+            MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
+        }
+        MPI_Barrier(comm_solver);
+        tote = octor_getleavescount(Global.myOctree, GLOBAL);
+        mine = octor_getminleavescount(Global.myOctree, GLOBAL);
+        maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
+        if (Global.myID == 0) {
+            fprintf(stdout, "%11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
+            fflush(stdout);
+        }
+        Timer_Stop("Octor Balancetree");
+        if (Global.myID == 0) {
+            fprintf(stdout, "%11.2f\n", Timer_Value("Octor Balancetree", 0) - prevtbal);
+            prevtbal = Timer_Value("Octor Balancetree", 0);
+            fflush(stdout);
+        }
+
+        /* Partitioning */
+        Timer_Start("Octor Partitiontree");
+        if (Global.myID == 0) {
+            fprintf(stdout, "Partitioning ");
+            fflush(stdout);
+        }
+        if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
+            fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",Global.myID);
+            MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
+        }
+        MPI_Barrier(comm_solver);
+        tote = octor_getleavescount(Global.myOctree, GLOBAL);
+        mine = octor_getminleavescount(Global.myOctree, GLOBAL);
+        maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
+        if (Global.myID == 0) {
+            fprintf(stdout, "%11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
+            fflush(stdout);
+        }
+        Timer_Stop("Octor Partitiontree");
+        if (Global.myID == 0) {
+            fprintf(stdout, "%11.2f\n\n", Timer_Value("Octor Partitiontree", 0) - prevtpar);
+            prevtpar = Timer_Value("Octor Partitiontree", 0);
+            fflush(stdout);
+        }
+
+        step++;
+        fflush(stdout);
+        MPI_Barrier(comm_solver);
     }
 
-    Timer_Start("Octor Balancetree");
-    if (Global.myID == 0) {
-	fprintf(stdout, "octor_balancetree        ... ");
-    }
-#ifdef USECVMDB
-    Global.theCVMQueryStage = 1; /* Query CVM database for balance operation */
-#endif
-    if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
-	fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",
-		Global.myID);
-	MPI_Abort(MPI_COMM_WORLD, ERROR);
-	exit(1);
-    }
-    MPI_Barrier(comm_solver);
-    Timer_Stop("Octor Balancetree");
-    if (Global.myID == 0) {
-	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Octor Balancetree", 0));
-    }
-
-    /**
-     * Carve buildings:
-     * First pass may leave the first-leaf as an air element */
+    /* Buildings Carving */
     if ( Param.includeBuildings == YES ) {
+
         Timer_Start("Carve Buildings");
         if (Global.myID == 0) {
-            fprintf(stdout, "octor_carvebuildings 1   ... ");
+            fprintf(stdout, "Carving buildings");
+            fflush(stdout);
         }
+
         /* NOTE: If you want to see the carving process, comment next line */
         octor_carvebuildings(Global.myOctree, 1, bldgs_nodesearch);
         MPI_Barrier(comm_solver);
         Timer_Stop("Carve Buildings");
         if (Global.myID == 0) {
-            fprintf( stdout, "done : %9.2f seconds\n",
-                     Timer_Value("Carve Buildings", 0) );
+            fprintf(stdout, "%9.2f\n", Timer_Value("Carve Buildings", 0) );
+            fflush(stdout);
+        }
+
+        Timer_Start("Octor Partitiontree");
+        if (Global.myID == 0) {
+            fprintf(stdout, "Repartitioning");
+            fflush(stdout);
+        }
+        if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
+            fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",
+                    Global.myID);
+            MPI_Abort(MPI_COMM_WORLD, ERROR);
+            exit(1);
+        }
+        MPI_Barrier(comm_solver);
+        Timer_Stop("Octor Partitiontree");
+        if (Global.myID == 0) {
+            fprintf(stdout, "%9.2f\n", Timer_Value("Octor Partitiontree", 0));
+            fflush(stdout);
         }
     }
 
-    Timer_Start("Octor Partitiontree");
-    if (Global.myID == 0) {
-	fprintf(stdout, "octor_partitiontree      ... ");
-    }
-    if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
-	fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",
-		Global.myID);
-	MPI_Abort(MPI_COMM_WORLD, ERROR);
-	exit(1);
-    }
-    MPI_Barrier(comm_solver);
-    Timer_Stop("Octor Partitiontree");
-    if (Global.myID == 0) {
-	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Octor Partitiontree", 0));
+    if ( Global.myID == 0 && Param.theStepMeshingFactor !=0 ) {
+        fprintf(stdout, "Total refine    %33s %9.2f\n", "", Timer_Value("Octor Refinetree", 0));
+        fprintf(stdout, "Total balance   %33s %9.2f\n", "", Timer_Value("Octor Balancetree", 0));
+        fprintf(stdout, "Total partition %33s %9.2f\n\n", "", Timer_Value("Octor Partitiontree", 0));
+        fflush(stdout);
     }
 
     Timer_Start("Octor Extractmesh");
     if (Global.myID == 0) {
-	fprintf(stdout, "octor_extractmesh        ... ");
+        fprintf(stdout, "Extracting the mesh %30s","");
+        fflush(stdout);
     }
     Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch);
     if (Global.myMesh == NULL) {
-	fprintf(stderr, "Thread %d: mesh_generate: fail to extract mesh\n",
-		Global.myID);
-	MPI_Abort(MPI_COMM_WORLD, ERROR);
-	exit(1);
+        fprintf(stderr, "Thread %d: mesh_generate: fail to extract mesh\n",
+                Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
     }
     MPI_Barrier(comm_solver);
     Timer_Stop("Octor Extractmesh");
     if (Global.myID == 0) {
-	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Octor Partitiontree", 0));
+        fprintf(stdout, "%9.2f\n", Timer_Value("Octor Partitiontree", 0));
     }
 
     Timer_Start( "Mesh correct properties" );
     /* Re-populates the mesh with actual values from the CVM-etree */
+    if (Global.myID == 0) {
+        fprintf(stdout,"Correcting mesh properties %23s","");
+        fflush(stdout);
+    }
 
     mesh_correct_properties( Global.theCVMEp );
 
     MPI_Barrier( comm_solver );
     Timer_Stop( "Mesh correct properties" );
     if (Global.myID == 0) {
-	fprintf( stdout, " : %9.2f seconds\n",
-		 Timer_Value( "Mesh correct properties", 0 ) );
+        fprintf(stdout, "%9.2f\n\n",Timer_Value( "Mesh correct properties", 0 ) );
+        fflush(stdout);
     }
-
 
 #ifdef USECVMDB
     /* Close the material database */
@@ -2263,10 +2282,10 @@ mesh_print_stat_imp( int32_t* st, int group_size, FILE* out )
 
 
     /* output aggregate information to the monitor file / stdout */
-    monitor_print( "\nMesh information\n"
-		   "Total number of elements:       %11"INT64_FMT"\n"
-		   "Total number of nodes:          %11"INT64_FMT"\n"
-		   "Total number of dangling nodes: %11"INT64_FMT"\n",
+    monitor_print(
+		   "Total elements:                      %11"INT64_FMT"\n"
+		   "Total nodes:                         %11"INT64_FMT"\n"
+		   "Total dangling nodes:                %11"INT64_FMT"\n\n",
 		   total_count[ELEMENT_COUNT], total_count[NODE_COUNT],
 		   total_count[DANGLING_COUNT] );
 }
@@ -7103,10 +7122,10 @@ mesh_correct_properties( etree_t* cvm )
     points[1] = 0.5;
     points[2] = 0.995;
 
-    if (Global.myID == 0) {
-        fprintf( stdout,"mesh_correct_properties  ... " );
-        fflush( stdout );
-    }
+//    if (Global.myID == 0) {
+//        fprintf( stdout,"mesh_correct_properties  ... " );
+//        fflush( stdout );
+//    }
 
     /* iterate over mesh elements */
     for (eindex = 0; eindex < Global.myMesh->lenum; eindex++) {
@@ -7306,19 +7325,9 @@ mesh_correct_properties( etree_t* cvm )
         		    kappa_vel_corr_factor = sqrt(1. - (edata->a0_kappa * edata->g0_kappa * edata->g0_kappa / (edata->g0_kappa * edata->g0_kappa + w * w) + edata->a1_kappa * edata->g1_kappa * edata->g1_kappa / (edata->g1_kappa * edata->g1_kappa + w * w)));
                     edata->Vp = sqrt(kappa_vel_corr_factor * kappa_vel_corr_factor * vksquared + 4. / 3. * edata->Vs * edata->Vs);
         		}
-
         	}
-
         }
-
-
     }
-
-    if (Global.myID == 0) {
-        fputs( "done", stdout );
-        fflush( stdout );
-    }
-
 }
 
 
