@@ -227,6 +227,7 @@ static struct Param_t {
     noyesflag_t  printK;
     noyesflag_t  printStationAccelerations;
     noyesflag_t  includeBuildings;
+    noyesflag_t  includeTopography;
     noyesflag_t  includeNonlinearAnalysis;
     noyesflag_t  useInfQk;
     int  theTimingBarriersFlag;
@@ -367,7 +368,7 @@ monitor_print( const char* format, ... )
 static void read_parameters( int argc, char** argv ){
 
 #define LOCAL_INIT_DOUBLE_MESSAGE_LENGTH 18  /* Must adjust this if adding double params */
-#define LOCAL_INIT_INT_MESSAGE_LENGTH 20     /* Must adjust this if adding int params */
+#define LOCAL_INIT_INT_MESSAGE_LENGTH 21     /* Must adjust this if adding int params */
 
     double  double_message[LOCAL_INIT_DOUBLE_MESSAGE_LENGTH];
     int     int_message[LOCAL_INIT_INT_MESSAGE_LENGTH];
@@ -446,7 +447,7 @@ static void read_parameters( int argc, char** argv ){
     int_message[17] = (int)Param.drmImplement;
     int_message[18] = (int)Param.useInfQk;
     int_message[19] = Param.theStepMeshingFactor;
-
+    int_message[20] = (int)Param.includeTopography;
 
     MPI_Bcast(int_message, LOCAL_INIT_INT_MESSAGE_LENGTH, MPI_INT, 0, comm_solver);
 
@@ -470,6 +471,7 @@ static void read_parameters( int argc, char** argv ){
     Param.drmImplement                   = int_message[17];
     Param.useInfQk                       = int_message[18];
     Param.theStepMeshingFactor           = int_message[19];
+    Param.includeTopography              = int_message[20];
 
     /*Broadcast all string params*/
     MPI_Bcast (Param.parameters_input_file,  256, MPI_CHAR, 0, comm_solver);
@@ -669,7 +671,8 @@ static int32_t parse_parameters( const char* numericalin )
               print_station_accelerations[64],
 	      	  mesh_coordinates_for_matlab[64],
     		  implement_drm[64],
-    		  use_infinite_qk[64];
+    		  use_infinite_qk[64],
+    		  include_topography[64];
 
     damping_type_t   typeOfDamping     = -1;
     stiffness_type_t stiffness_method  = -1;
@@ -681,8 +684,8 @@ static int32_t parse_parameters( const char* numericalin )
     noyesflag_t      useInfQk          = -1;
 
     noyesflag_t      meshCoordinatesForMatlab  = -1;
-    noyesflag_t      implementdrm  = -1;
-
+    noyesflag_t      implementdrm              = -1;
+    noyesflag_t		 haveTopography            = -1;
 
     /* Obtain the specification of the simulation */
     if ((fp = fopen(physicsin, "r")) == NULL)
@@ -774,6 +777,7 @@ static int32_t parse_parameters( const char* numericalin )
         (parsetext(fp, "include_buildings",              's', &include_buildings           ) != 0) ||
         (parsetext(fp, "mesh_coordinates_for_matlab",    's', &mesh_coordinates_for_matlab ) != 0) ||
         (parsetext(fp, "implement_drm",    				 's', &implement_drm               ) != 0) ||
+        (parsetext(fp, "include_topography",    		 's', &include_topography          ) != 0) ||       
         (parsetext(fp, "simulation_velocity_profile_freq_hz",'d', &freq_vel                ) != 0) ||
         (parsetext(fp, "use_infinite_qk",                's', &use_infinite_qk             ) != 0) )
     {
@@ -983,6 +987,16 @@ static int32_t parse_parameters( const char* numericalin )
             "Unknown response using infinite Qk (yes or no): %s\n",
                 use_infinite_qk);
     }
+    
+    if ( strcasecmp(include_topography, "yes") == 0 ) {
+        haveTopography = YES;
+    } else if ( strcasecmp(include_topography, "no") == 0 ) {
+        haveTopography = NO;
+    } else {
+        solver_abort( __FUNCTION_NAME, NULL,
+                "Unknown response for include_topography (yes or no): %s\n",
+                include_topography );
+    }
 
     /* Init the static global variables */
 
@@ -1035,6 +1049,8 @@ static int32_t parse_parameters( const char* numericalin )
 
     Param.drmImplement              = implementdrm;
 
+    Param.includeTopography         = haveTopography;
+
     strcpy( Param.theCheckPointingDirOut, checkpoint_path );
 
     monitor_print("\n\n---------------- Some Input Data ----------------\n\n");
@@ -1050,6 +1066,7 @@ static int32_t parse_parameters( const char* numericalin )
     monitor_print("Mesh Coordinates For Matlab:        %s\n", mesh_coordinates_for_matlab);
     monitor_print("cvmdb_input_file:                   %s\n", Param.cvmdb_input_file);
     monitor_print("Implement drm:      	               %s\n", implement_drm);
+    monitor_print("Include Topography:                 %s\n", include_topography);
     monitor_print("\n-------------------------------------------------\n\n");
 
     fflush(Param.theMonitorFileFp);
@@ -2088,6 +2105,8 @@ mesh_generate()
         fflush(stdout);
         MPI_Barrier(comm_solver);
     }
+
+    /* gggg */
 
     /* Buildings Carving */
     if ( Param.includeBuildings == YES ) {
@@ -7414,6 +7433,10 @@ int main( int argc, char** argv )
     	Param.theDrmPart = drm_init(Global.myID, Param.parameters_input_file , Param.includeBuildings);
     	Timer_Stop("Init Drm Parameters");
     	Timer_Reduce("Init Drm Parameters", MAX | MIN | AVERAGE , comm_solver);
+    }
+
+    if ( Param.includeTopography == YES ){
+        topo_init( Global.myID, Param.parameters_input_file );
     }
 
     // INTRODUCE BKT MODEL
