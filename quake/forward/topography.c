@@ -798,19 +798,22 @@ void get_airprops_topo( octant_t *leaf, double ticksize,
                        "No properties at east = %f, north = %f", y, x);
     }
 
-    if ( ( leaf->lz * ticksize + edgesize ) == thebase_zcoord )
-    	edata->Vs  = props.Vs;
-    else
-    	edata->Vs  = 1e10;
+    edata->Vs  =  props.Vs * 4;
+    edata->Vp  = -1.0;
+    edata->rho  = 0.0;
+//    if ( ( leaf->lz * ticksize + edgesize ) == thebase_zcoord )
+//    	edata->Vs  = props.Vs;
+//    else
+//    	edata->Vs  = 1e10;
 
 
     /* Assign negative Vp to identify air octants */
-    edata->Vp  = -1;
+//    edata->Vp  = -1;
 
     /* Assign zero density */
-    edata->rho = 0;
+//    edata->rho = 0;
 
-    return;
+//    return;
 }
 
 
