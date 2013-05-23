@@ -57,7 +57,7 @@
 #include "buildings.h"
 #include "drm.h"
 #include "meshformatlab.h"
-
+#include "topography.h"
 
 /* ONLY GLOBAL VARIABLES ALLOWED OUTSIDE OF PARAM. and GLOBAL. IN ALL OF PSOLVE!! */
 MPI_Comm comm_solver;
@@ -1345,6 +1345,12 @@ setrec( octant_t* leaf, double ticksize, void* data )
     /* Check for buildings and proceed according to the buildings setrec */
     if ( Param.includeBuildings == YES ) {
 		if ( bldgs_setrec( leaf, ticksize, edata, Global.theCVMEp,Global.theXForMeshOrigin,Global.theYForMeshOrigin,Global.theZForMeshOrigin ) ) {
+            return;
+        }
+    }
+
+    if ( Param.includeTopography == YES ) {
+        if ( topo_setrec( leaf, ticksize, edata, Global.theCVMEp ) ) {
             return;
         }
     }
