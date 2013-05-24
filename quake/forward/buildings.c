@@ -127,7 +127,9 @@ int bldg_exclusivesearch ( tick_t   x,
 int bldg_meshingsearch ( octant_t *leaf,
                          double    ticksize,
                          edata_t  *edata,
-                         int       bldg );
+                         int       bldg,
+                 		 bounds_t  bounds);
+
 
 int bldgs_search ( octant_t *leaf, double ticksize, edata_t *edata );
 
@@ -135,7 +137,8 @@ int bldgs_refine ( octant_t *leaf,
                    double    ticksize,
                    edata_t  *edata,
                    int       bldg,
-                   double    theFactor );
+                   double    theFactor,
+           		   bounds_t  bounds);
 
 int32_t buildings_initparameters ( const char *parametersin );
 
@@ -389,29 +392,26 @@ int bldg_exclusivesearch ( tick_t   x,
 int bldg_meshingsearch ( octant_t *leaf,
                          double    ticksize,
                          edata_t  *edata,
-                         int       bldg )
+                         int       bldg,
+                         bounds_t bounds)
 {
-    double   x_m, y_m, z_m;
-    double   esize;
-    bounds_t bounds;
+	double   x_m, y_m, z_m;
+	double   esize;
 
-    x_m = leaf->lx * ticksize;
-    y_m = leaf->ly * ticksize;
-    z_m = leaf->lz * ticksize;
+	x_m = leaf->lx * ticksize;
+	y_m = leaf->ly * ticksize;
+	z_m = leaf->lz * ticksize;
 
-    esize  = (double)edata->edgesize;
+	esize  = (double)edata->edgesize;
 
-    bounds = get_bldgbounds(bldg);
+	bounds.xmin -= FENCELIMIT * esize;
+	bounds.ymin -= FENCELIMIT * esize;
+	bounds.zmin -= FENCELIMIT * esize;
+	if ( exclusivesearch(x_m, y_m, z_m, bounds) ) {
+		return 1;
+	}
 
-    bounds.xmin -= FENCELIMIT * esize;
-    bounds.ymin -= FENCELIMIT * esize;
-    bounds.zmin -= FENCELIMIT * esize;
-
-    if ( exclusivesearch(x_m, y_m, z_m, bounds) ) {
-        return 1;
-    }
-
-    return 0;
+	return 0;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -454,9 +454,12 @@ int basenode_search ( tick_t x, tick_t y, tick_t z, double ticksize ) {
 int bldgs_search ( octant_t *leaf, double ticksize, edata_t *edata ) {
 
     int i;
+	bounds_t bounds;
 
     for ( i = 0; i < theNumberOfBuildings; i++ ) {
-        if ( bldg_meshingsearch( leaf, ticksize, edata, i ) == 1 ) {
+		 bounds = get_bldgbounds(i);
+
+        if ( bldg_meshingsearch( leaf, ticksize, edata, i, bounds ) == 1 ) {
             /* the i-th building has index i-1 */
             return i+1;
         }
@@ -498,6 +501,39 @@ int bldgs_nodesearch ( tick_t x, tick_t y, tick_t z, double ticksize ) {
     return 0;
 }
 
+/* Yigit says-- this function is introduced instead of bldgs_nodesearch
+ * TODO : building_nodesearch will be deleted because node_set_property function
+ * is now in a "clean" format.
+ * */
+
+/**
+  * Depending on the position of a node wrt to a building it returns:
+  *  0: out of building bounds,
+  * -1: in the interior of a building,
+  *  1: on a face of a building.
+  */
+ int bldgs_nodesearch_com ( tick_t x, tick_t y, tick_t z, double ticksize ) {
+
+	 int    i;
+	 double x_m, y_m, z_m;
+
+	 x_m = x * ticksize;
+	 y_m = y * ticksize;
+	 z_m = z * ticksize;
+
+	 for ( i = 0; i < theNumberOfBuildings; i++ ) {
+		 bounds_t bounds = get_bldgbounds(i);
+		 if ( inclusivesearch(x_m, y_m, z_m, bounds) ) {
+			 if ( ininteriorsearch(x_m, y_m, z_m, bounds) ) {
+				 return -1;
+			 }
+			 /* on a face */
+			 return 1;
+		 }
+	 }
+	 return 0;
+ }
+
 /* -------------------------------------------------------------------------- */
 /*                              Setrec Packet                                 */
 /* -------------------------------------------------------------------------- */
@@ -505,10 +541,6 @@ int bldgs_nodesearch ( tick_t x, tick_t y, tick_t z, double ticksize ) {
 /**
  * Complement for the setrec function in psolve.
  * Return 1 if data is assigned to the octant, 0 otherwise.
- *
- * TODO: This function assumes the domain origin is 0,0,0. If this is not true
- *       as it will be for DRM implementation, one will need to consider
- *       theXForMeshOrigin, theYForMeshOrigin, (and theXForMeshOrigin ?)
  */
 
 int bldgs_setrec ( octant_t *leaf, double ticksize,
@@ -544,19 +576,19 @@ int bldgs_setrec ( octant_t *leaf, double ticksize,
 /* -------------------------------------------------------------------------- */
 
 /**
- * Return 1 if an element in foundation need to be refined , 0 otherwise.
+ * Return 1 if an element in building+foundation need to be refined , 0 otherwise.
  */
 int bldgs_refine ( octant_t *leaf,
                      double    ticksize,
                      edata_t  *edata,
                      int       bldg,
-                     double    theFactor )
+                     double    theFactor,
+                     bounds_t bounds)
 {
-    bounds_t bounds;
-    double   edgesize;
+
+	double   edgesize;
     double   z_m;
 
-    bounds   = get_bldgbounds(bldg);
     edgesize = edata->edgesize;
     z_m      = leaf->lz * ticksize;
 
@@ -609,11 +641,15 @@ int bldgs_toexpand ( octant_t *leaf,
                      double    theFactor )
 {
     int i;
+    bounds_t bounds;
 
     for ( i = 0; i < theNumberOfBuildings; i++ ) {
-        if ( bldg_meshingsearch( leaf, ticksize, edata, i ) ) {
-            return bldgs_refine( leaf, ticksize, edata, i, theFactor );
-        }
+
+    	/* bounds_expanded is used here to avoid dangling nodes in the bldg+fdn */
+    	bounds = theBuilding[i].bounds;
+    	if ( bldg_meshingsearch( leaf, ticksize, edata, i,bounds ) ) {
+    		return bldgs_refine( leaf, ticksize, edata, i, theFactor,bounds );
+    	}
     }
 
     if ( crossing_rule( leaf->lz, ticksize, edata, theSurfaceShift ) ) {

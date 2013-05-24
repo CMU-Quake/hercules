@@ -584,7 +584,7 @@ static void    tree_setdistribution(tree_t *tree, int64_t **pCountTable,
 // static void  tree_showstat(tree_t *tree, int32_t mode, const char *comment);
 
 static int32_t tree_setcom(tree_t *tree, int32_t msgsize,
-                           bldgs_nodesearch_t *bldgs_nodesearch);
+		 	 	 	 	   bldgs_nodesearch_com_t *bldgs_nodesearch_com);
 static void    tree_deletecom(tree_t *tree);
 
 static oct_t * tree_ascend(oct_t *oct, dir_t I, oct_stack_t *stackp);
@@ -842,7 +842,7 @@ static void      com_delete(com_t *com);
 static int32_t   com_allocpctl(com_t *com, int32_t msgsize, oct_t *first,
                                tick_t nearendp[3], tick_t farendp[3],
                                tick_t surfacep, double ticksize,
-                               bldgs_nodesearch_t *bldgs_nodesearch);
+                               bldgs_nodesearch_com_t *bldgs_nodesearch_com);
 static int32_t   com_resetpctl(com_t *com, int32_t msgsize);
 
 
@@ -1252,8 +1252,9 @@ oct_getnextleaf(oct_t *oct)
 
     for (which = whoami + 1; which < 8; which++) {
         /* Move to the next one at the same level */
-//yigit
-        if (parent->payload.interior->child[which] != NULL && parent->payload.interior->child[which]->where !=REMOTE) {
+    	/* yigit says --- remote check is added */
+        if (parent->payload.interior->child[which] != NULL &&
+        	parent->payload.interior->child[which]->where !=REMOTE) {
             return oct_getleftmost(parent->payload.interior->child[which]);
         }
     }
@@ -1399,7 +1400,8 @@ oct_installleaf(tick_t lx, tick_t ly, tick_t lz, int8_t level, void *data,
         /* Parent oct may be a LEAF marked as REMOTE */
         if (parentoct->type == LEAF) {
 
-            /* Sanity check */ //yigit
+            /* Sanity check */
+        	/* yigit says --  T_UNDEFINED check is added */
             if (parentoct->where != REMOTE && parentoct->where != T_UNDEFINED) {
             	fprintf(stderr, "oct_installleaf: fatal error\n");
             	return -1;
@@ -2215,7 +2217,7 @@ tree_showstat(tree_t *tree, int32_t mode, const char *comment)
  *
  */
 static int32_t
-tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_t *bldgs_nodesearch)
+tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_com_t *bldgs_nodesearch_com)
 {
     /* Allocate a communication manager */
     tree->com = com_new(tree->procid, tree->groupsize);
@@ -2234,7 +2236,7 @@ tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_t *bldgs_nodesearch)
     */
     if (com_allocpctl(tree->com, msgsize, tree->firstleaf,
                       tree->nearendp, tree->farendp, tree->surfacep,
-                      tree->ticksize, bldgs_nodesearch) != 0)
+                      tree->ticksize, bldgs_nodesearch_com) != 0)
         return -1;
 
     return 0;
@@ -2629,7 +2631,7 @@ com_delete(com_t *com)
 static int32_t
 com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
               tick_t nearendp[3], tick_t farendp[3], tick_t surfacep,
-              double ticksize, bldgs_nodesearch_t *bldgs_nodesearch)
+              double ticksize, bldgs_nodesearch_com_t *bldgs_nodesearch_com)
 {
     oct_t *oct;
     tick_t ox, oy, oz, increment;
@@ -2644,9 +2646,13 @@ com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
         int32_t i, j, k;
         increment = (tick_t)1 << (PIXELLEVEL - (oct->level + 1));
 
-        ox = oct->lx - increment;
-        oy = oct->ly - increment;
-        oz = oct->lz - increment;
+        /* yigit says */
+        /* +1 (ox,oy,oz) is added so that each search point is located inside an element.
+         * This is important to identify the air elements easily.  */
+
+        ox = oct->lx - increment + 1 ;
+        oy = oct->ly - increment + 1 ;
+        oz = oct->lz - increment + 1 ;
 
         for (k = 0; k < 4; k++) {
 
@@ -2682,7 +2688,7 @@ com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
                         if ( pt.z < surfacep ) {
 
                             /* ...and it does not belong to any building... */
-                            int res = bldgs_nodesearch(
+                            int res = bldgs_nodesearch_com(
                                     pt.x, pt.y, pt.z, ticksize);
 
                             if ( res == 0 ) {
@@ -3911,7 +3917,8 @@ dnode_correlate(tree_t *tree, mess_t *mess, link_t **vertexHashTable,
 static void
 node_harboranchored(tree_t *tree, link_t **vertexHashTable,
                     int64_t ecount, mem_t *linkpool, mem_t *vertexpool,
-                    com_t *allcom, point_t pt, int64_t *hbrcount)
+                    com_t *allcom, point_t pt, int64_t *hbrcount,
+                    bldgs_nodesearch_com_t *bldgs_nodesearch_com)
 {
     int32_t hashentry;
     link_t *link;
@@ -3964,6 +3971,58 @@ node_harboranchored(tree_t *tree, link_t **vertexHashTable,
             tree->farbound[1] : pt.y;
         adjustedpt.z = (pt.z == tree->farendp[2]) ?
             tree->farbound[2] : pt.z;
+
+        /* yigit says */
+        /* This block is added for adjusting the coordinates of the nodes
+         * on the face of the buildings above the surface */
+
+        /* If we have pushed the surface down for buildings... */
+        if ( tree->surfacep > 0 ) {
+
+        	/* ...and the point is above the surface... */
+        	if ( pt.z <  tree->surfacep ) {
+
+        		int res = bldgs_nodesearch_com(
+        				pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
+
+        		/* ... and point+1 is out of buildings  */
+        		if ( res == 0 ) {
+
+        			/* ...then, adjust! */
+
+        			int    flag = 0;
+        			tick_t xadjust, yadjust, incrementx, incrementy;
+
+        			/* search for a neighbor point that is inside of a bldg */
+        			for ( xadjust = 0; xadjust < 2; xadjust++ ) {
+        				for ( yadjust = 0; yadjust < 2; yadjust++ ) {
+
+        					incrementx = - 1 + 2*xadjust;
+        					incrementy = - 1 + 2*yadjust;
+
+        					/* If the point is inside the buildings
+        					 */
+        					if (bldgs_nodesearch_com(
+        							pt.x + incrementx,
+        							pt.y + incrementy,
+        							pt.z + 1, tree->ticksize) == -1) {
+
+
+        							adjustedpt.x += incrementx;
+        							adjustedpt.y += incrementy;
+        							adjustedpt.z += 1;
+
+        							flag = 1;
+        							break;
+
+        					}
+        				}
+        				if ( flag == 1 ) break;
+        			}
+        		}
+        	}
+        }
+
 
         vertex->owner = math_zsearch(tree->com->interval, tree->com->groupsize,
                                      &adjustedpt);
@@ -4759,7 +4818,7 @@ void backfire_parent(oct_t *parent) {
 
 extern void
 octor_carvebuildings(octree_t *octree, int flag,
-                     bldgs_nodesearch_t *bldgs_nodesearch)
+		             bldgs_nodesearch_com_t *bldgs_nodesearch_com)
 {
     tree_t  *tree = (tree_t *)octree;
     oct_t   *oct, *nextOct;
@@ -4844,7 +4903,7 @@ octor_carvebuildings(octree_t *octree, int flag,
  *
  */
 extern int32_t
-octor_partitiontree(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
+octor_partitiontree(octree_t *octree, bldgs_nodesearch_com_t *bldgs_nodesearch_com)
 {
     tree_t *tree = (tree_t *)octree;
     int32_t start_procid, end_procid, bin_procid;
@@ -5182,7 +5241,7 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
      *
      * tree_deletecom(tree);
      *
-     * if (tree_setcom(tree, 0, bldgs_nodesearch) != 0) {
+     * if (tree_setcom(tree, 0, bldgs_nodesearch_com) != 0) {
      *     fprintf(stderr,
      *             "Thread %d: %s %d: fail to create new communication manager\n",
      *             tree->procid, __FILE__, __LINE__);
@@ -5207,7 +5266,8 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
  *
  */
 extern mesh_t *
-octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
+octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
+		bldgs_nodesearch_com_t *bldgs_nodesearch_com)
 {
     tree_t *tree = (tree_t *)octree;
     int64_t *octCountTable;
@@ -5257,7 +5317,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
 
     	tree_deletecom(tree);
 
-    	if (tree_setcom(tree, 0, bldgs_nodesearch) != 0) {
+    	if (tree_setcom(tree, 0, bldgs_nodesearch_com) != 0) {
     		fprintf(stderr,
     				"Thread %d: %s %d: fail to create new communication manager\n",
     				tree->procid, __FILE__, __LINE__);
@@ -5412,9 +5472,65 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                         adjustedpt.z = (pt.z == tree->farendp[2]) ?
                             tree->farbound[2] : pt.z;
 
+
+                        /* Yigit says -- This block is added for adjusting the
+                           coordinates of the nodes on the face of the buildings
+						   above the surface.  */
+
+                        /* If we have pushed the surface down for buildings... */
+                        if ( tree->surfacep > 0 ) {
+
+                        	/* ...and the point is above the surface... */
+                        	if ( pt.z <  tree->surfacep ) {
+
+                        		int res = bldgs_nodesearch_com(
+                        				pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
+
+
+
+                        		/* ... and point+1 is out of buildings or in the pushdown  */
+                        		if ( res == 0 ) {
+
+                        			/* ...then, adjust! */
+
+                        			int    flag = 0;
+                        			tick_t xadjust, yadjust, incrementx, incrementy;
+
+                        			/* search for a neighbor point that is inside of a bldg */
+                        			for ( xadjust = 0; xadjust < 2; xadjust++ ) {
+                        				for ( yadjust = 0; yadjust < 2; yadjust++ ) {
+
+                        					incrementx = - 1 + 2*xadjust;
+                        					incrementy = - 1 + 2*yadjust;
+
+                        					/* If the point is inside the buildings
+                        					 *  and outside the pushdown */
+                        					if (bldgs_nodesearch_com(
+                        							pt.x + incrementx,
+                        							pt.y + incrementy,
+                        							pt.z + 1, tree->ticksize) == -1) {
+
+
+                        						adjustedpt.x += incrementx;
+                        						adjustedpt.y += incrementy;
+                        						adjustedpt.z += 1;
+
+                        						flag = 1;
+                        						break;
+
+                        					}
+                        				}
+                        				if ( flag == 1 ) break;
+                        			}
+                        		}
+                        	}
+                        }
+
+
+
                         vertex->owner = (tree->groupsize == 1) ? 0 :
-                            math_zsearch(tree->com->interval,
-                                         tree->com->groupsize, &adjustedpt);
+                        		math_zsearch(tree->com->interval,
+                        				tree->com->groupsize, &adjustedpt);
 
                         vertex->lnid = -1; /* undefined */
                         vertex->touches = 1;
@@ -5487,9 +5603,12 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                     continue;
                 }
 
-                nx = vertex->x;
-                ny = vertex->y;
-                nz = vertex->z;
+                /* Yigit says -- +1 is added so that each search point is
+                 * located inside the elements. This is important to identify
+                 * the air elements easily. */
+                nx = vertex->x + 1 ;
+                ny = vertex->y + 1;
+                nz = vertex->z + 1;
 
                 /* Mark as no neighbors at this moment */
                 nbrs = 0;
@@ -5497,7 +5616,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                 /* Find which neighbor(s) processor share this vertex */
                 for (ztick = 0; ztick < 2; ztick++) {
 
-                    pt.z = nz - ztick;
+                    pt.z = nz - 2*ztick; /* used to be nz - ztick*/
 
                     /* Discard out of bounds */
                     if ( ( pt.z < tree->nearendp[2] ) ||
@@ -5507,7 +5626,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
 
                     for (ytick = 0; ytick < 2; ytick++) {
 
-                        pt.y = ny - ytick;
+                        pt.y = ny - 2*ytick; /* used to be ny - ytick*/
 
                         /* Discard out of bounds */
                         if ( ( pt.y < tree->nearendp[1] ) ||
@@ -5517,7 +5636,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
 
                         for (xtick = 0; xtick < 2; xtick++) {
 
-                            pt.x = nx - xtick;
+                            pt.x = nx - 2*xtick; /* used to be nx - xtick*/
 
                             /* Discard out of bounds */
                             if ( ( pt.x < tree->nearendp[0] ) ||
@@ -5532,7 +5651,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                                 if ( pt.z < tree->surfacep ) {
 
                                     /* ...and does not belong to any bldg... */
-                                    int res = bldgs_nodesearch(
+                                    int res = bldgs_nodesearch_com(
                                             pt.x, pt.y, pt.z, tree->ticksize);
 
                                     if ( res == 0 ) {
@@ -5827,7 +5946,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                     if (tree->groupsize > 1) {
                         node_harboranchored(tree, vertexHashTable, ecount,
                                             linkpool, vertexpool, allcom,
-                                            pt, &harborcount);
+                                            pt, &harborcount,bldgs_nodesearch_com);
                     }
                 }
 
@@ -5846,7 +5965,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                     if (tree->groupsize > 1) {
                         node_harboranchored(tree, vertexHashTable, ecount,
                                             linkpool, vertexpool, allcom,
-                                            pt, &harborcount);
+                                            pt, &harborcount,bldgs_nodesearch_com);
                     }
                 }
                 break;
@@ -5864,7 +5983,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                     if (tree->groupsize > 1) {
                         node_harboranchored(tree, vertexHashTable, ecount,
                                             linkpool, vertexpool, allcom,
-                                            pt, &harborcount);
+                                            pt, &harborcount,bldgs_nodesearch_com);
                     }
                 }
                 break;
@@ -5881,7 +6000,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                     if (tree->groupsize > 1) {
                         node_harboranchored(tree, vertexHashTable, ecount,
                                             linkpool, vertexpool, allcom,
-                                            pt, &harborcount);
+                                            pt, &harborcount,bldgs_nodesearch_com);
                     }
                 }
                 break;
@@ -5898,7 +6017,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                     if (tree->groupsize > 1) {
                         node_harboranchored(tree, vertexHashTable, ecount,
                                             linkpool, vertexpool, allcom,
-                                            pt, &harborcount);
+                                            pt, &harborcount,bldgs_nodesearch_com);
                     }
                 }
                 break;
@@ -5916,7 +6035,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                     if (tree->groupsize > 1) {
                         node_harboranchored(tree, vertexHashTable, ecount,
                                             linkpool, vertexpool, allcom,
-                                            pt, &harborcount);
+                                            pt, &harborcount,bldgs_nodesearch_com);
                     }
                 }
                 break;
@@ -6105,6 +6224,9 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
     } /* for all the hash table entries */
 
     /* Sort all the nodes I've harbored in ascending Z-order */
+    /* Yigit says --  Nodes on the building boundaries are not adjusted.
+     * But not sure if that is necessary */
+
     qsort(nodeTable, harborcount, sizeof(node_t), octor_zcompare);
 
     /* Set up the nodeCountTable and nodeStartTable, in a similar
