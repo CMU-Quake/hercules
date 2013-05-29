@@ -1374,6 +1374,13 @@ setrec( octant_t* leaf, double ticksize, void* data )
 		z_m = Global.theZForMeshOrigin
 		    + (leaf->lz +  points[i_z] * halfticks) * ticksize;
 
+		/* Shift the domain if topography with flat etree is considered */
+		if ( ( Param.includeTopography == YES ) && ( get_theetree_type() == FLAT )  ) {
+                    z_m -=  get_thebase_topo() ;
+                    if ( z_m < 0 )
+                    	z_m = 0;
+		}
+
 		/* Shift the domain if buildings are considered */
 		if ( Param.includeBuildings == YES ) {
                     z_m -= get_surface_shift();
