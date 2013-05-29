@@ -1238,28 +1238,36 @@ oct_getleftmost(oct_t *oct)
 static oct_t *
 oct_getnextleaf(oct_t *oct)
 {
-    oct_t *parent;
-    int8_t whoami;
-    int32_t which;
+	oct_t *parent;
+	int8_t whoami;
+	int32_t which;
 
-    parent = oct->parent;
+	parent = oct->parent;
 
-    if (parent == NULL)
-        /* We are at the root, no next leaf oct exists */
-        return NULL;
+	if (parent == NULL)
+		/* We are at the root, no next leaf oct exists */
+		return NULL;
 
-    whoami = oct->which;;
+	whoami = oct->which;;
 
-    for (which = whoami + 1; which < 8; which++) {
-        /* Move to the next one at the same level */
-//yigit
-        if (parent->payload.interior->child[which] != NULL && parent->payload.interior->child[which]->where !=REMOTE) {
-            return oct_getleftmost(parent->payload.interior->child[which]);
-        }
-    }
+	for (which = whoami + 1; which < 8; which++) {
+		/* Move to the next one at the same level */
+		if (parent->payload.interior->child[which] != NULL) {
+			/* yigit says: do not ever return NULL here since there maybe other local
+			 * octants beyond the NULL.(especially important when carving
+			 * or progressive meshing is on.) */
+			oct_t *noct;
+			noct = oct_getleftmost(parent->payload.interior->child[which]);
+			if (noct == NULL)
+				continue;
+			else
+				return noct;
 
-    /* No more siblings on the same level. Go one level up */
-    return oct_getnextleaf(parent);
+		}
+	}
+
+	/* No more siblings on the same level. Go one level up */
+	return oct_getnextleaf(parent);
 }
 
 
