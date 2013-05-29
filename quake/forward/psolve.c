@@ -2892,7 +2892,10 @@ static void solver_set_critical_T()
 
 	/* Calculate the clue quantities */
 
-	ratio	    = edata->edgesize / edata->Vp;
+	if ( edata->Vp != -1 )
+		ratio	    = edata->edgesize / edata->Vp;
+	else
+		ratio = 1e32;
 
 	/* Old formula for damping */
 	/* zeta	       = (edata->Vs < 1500) ? 25 / edata->Vs : 5 / edata->Vs; */
