@@ -3281,6 +3281,13 @@ void mu_and_lambda(double *theMu, double *theLambda,
 
     double mu, lambda;
 
+// This is added for the treatment of air elements
+    if ( ( edata->Vp == -1 ) && ( edata->rho == 0 ) ) {
+    	*theMu     = 0;
+    	*theLambda = 0;
+    	return;
+    }
+
     mu = edata->rho * edata->Vs * edata->Vs;
 
     if ( edata->Vp > (edata->Vs * Param.theThresholdVpVs) ) {
