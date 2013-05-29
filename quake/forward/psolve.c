@@ -2231,6 +2231,13 @@ toexpand(octant_t *leaf, double ticksize, const void *data) {
 		}
 	}
 
+	if ( Param.includeTopography == YES ) {
+		res = topo_toexpand( leaf, ticksize, edata );
+		if ( res != -1 ) {
+			return res;
+		}
+	}
+
 	return vsrule( edata, Param.theFactor );
 }
 
