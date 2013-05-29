@@ -7166,6 +7166,13 @@ mesh_correct_properties( etree_t* cvm )
         edata = (edata_t*)elemp->data;
         lnid0 = Global.myMesh->elemTable[eindex].lnid[0];
 
+        if ( Param.includeTopography == YES ) {
+            if( topo_correctproperties( edata ) ) {
+                continue;
+            }
+        }
+
+
         if ( Param.includeBuildings == YES ) {
             if( bldgs_correctproperties( Global.myMesh, edata, lnid0) ) {
                 continue;
@@ -7208,13 +7215,21 @@ mesh_correct_properties( etree_t* cvm )
         				//                        }
         			}
 
-        			res = cvm_query( Global.theCVMEp, east_m, north_m,
-        					depth_m, &g_props );
 
-        			if (res != 0) {
-        				fprintf(stderr, "Cannot find the query point\n");
-        				exit(1);
-        			}
+            		if ( ( Param.includeTopography == YES ) && ( get_theetree_type() == FLAT )  ) {
+                                depth_m -=  get_thebase_topo() ;
+                                if ( depth_m < 0 )
+                                	depth_m = 0;
+            		}
+
+
+                    res = cvm_query( Global.theCVMEp, east_m, north_m,
+                                     depth_m, &g_props );
+
+                    if (res != 0) {
+                        fprintf(stderr, "Cannot find the query point\n");
+                        exit(1);
+                    }
 
         			vp  += g_props.Vp;
         			vs  += g_props.Vs;
