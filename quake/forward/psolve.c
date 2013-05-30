@@ -4176,6 +4176,28 @@ solver_compute_displacement( mysolver_t* solver, mesh_t* mesh )
         nodalForce.f[2] += np->mass2_minusaM[2] * tm1Disp->f[2]
                          - np->mass_minusaM[2]  * tm2Disp->f[2];
 
+        /* overwrite tm2 */
+        /* mass sanity check */
+        if (np->mass_simple < 0) {
+            fprintf(stderr,
+                    "Negative lumped mass m=%f. Node ID=%d \n", np->mass_simple, nindex);
+            MPI_Abort(MPI_COMM_WORLD, ERROR);
+            exit(1);
+        }
+
+        /* Dorian. correct Displacement */
+         // TODO: Think of a better place for this
+        if ( np->mass_simple != 0 ) {
+        	tm2Disp->f[0] = nodalForce.f[0] / np->mass_simple;
+        	tm2Disp->f[1] = nodalForce.f[1] / np->mass_simple;
+        	tm2Disp->f[2] = nodalForce.f[2] / np->mass_simple;
+        }
+        else {
+        	tm2Disp->f[0] = 0.0;
+        	tm2Disp->f[1] = 0.0;
+        	tm2Disp->f[2] = 0.0;
+        }
+
         /* Save tm3 for accelerations */
         if ( Param.printStationAccelerations == YES ) {
 
@@ -4186,10 +4208,6 @@ solver_compute_displacement( mysolver_t* solver, mesh_t* mesh )
             tm3Disp->f[2] = tm2Disp->f[2];
         }
 
-        /* overwrite tm2 */
-        tm2Disp->f[0] = nodalForce.f[0] / np->mass_simple;
-        tm2Disp->f[1] = nodalForce.f[1] / np->mass_simple;
-        tm2Disp->f[2] = nodalForce.f[2] / np->mass_simple;
 
     } /* for (nindex ...): all my harbored nodes */
 
