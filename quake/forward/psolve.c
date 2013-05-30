@@ -6627,6 +6627,10 @@ read_stations_info( const char* numericalin )
 	if ( Param.includeBuildings == YES ) {
 	    Param.theStationZ [ iStation ] += get_surface_shift();
 	}
+	if ( Param.includeTopography == YES ) {
+	    Param.theStationZ [ iStation ] += get_thebase_topo();
+	}
+
     }
 
     free( auxiliar );
@@ -6820,6 +6824,43 @@ interpolate_station_displacements( int32_t step )
         dis_y = 0;
         dis_z = 0;
 
+        vel_x = 0;
+        vel_y = 0;
+        vel_z = 0;
+
+        acc_x = 0;
+        acc_y = 0;
+        acc_z = 0;
+
+        double time = Param.theDeltaT * step;
+
+        if ( ( Param.includeTopography == YES ) &&
+        		( compute_tetra_displ (&dis_x, &dis_y, &dis_z,
+        				&vel_x, &vel_y, &vel_z,
+        				&acc_x, &acc_y, &acc_z,
+        				Param.theDeltaT, Param.theDeltaTSquared,
+        				iStation,Global.mySolver) == 1 ) ) {
+
+        	fprintf( Param.myStations[iStation].fpoutputfile,
+        			"\n%10.6f % 8e % 8e % 8e",
+        			time, dis_x, dis_y, dis_z );
+
+        	if (  Param.printStationVelocities    == YES ) {
+        		fprintf( Param.myStations[iStation].fpoutputfile,
+        				" % 8e % 8e % 8e", vel_x, vel_y, vel_z );
+        	}
+
+        	if ( Param.printStationAccelerations == YES ) {
+        		fprintf( Param.myStations[iStation].fpoutputfile,
+        				" % 8e % 8e % 8e", acc_x, acc_y, acc_z );
+        	}
+
+        	if ( (step % (Param.theStationsPrintRate*10)) == 0 ) {
+        		fflush(Param.myStations[iStation].fpoutputfile);
+        	}
+
+        } else {
+
         for (iPhi = 0; iPhi < 8; iPhi++) {
             phi[ iPhi ] = ( 1 + xi[0][iPhi]*localCoords.x[0] )
 		                * ( 1 + xi[1][iPhi]*localCoords.x[1] )
@@ -6829,8 +6870,6 @@ interpolate_station_displacements( int32_t step )
             dis_y += phi[iPhi] * Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[1];
             dis_z += phi[iPhi] * Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[2];
         }
-
-        double time = Param.theDeltaT * step;
 
         /*
          * Please DO NOT CHANGE the format for printing the displacements.
@@ -6899,6 +6938,8 @@ interpolate_station_displacements( int32_t step )
 	/* TODO: Have this 10 as a parameter with a default value */
         if ( (step % (Param.theStationsPrintRate*10)) == 0 ) {
             fflush(Param.myStations[iStation].fpoutputfile);
+        }
+
         }
     }
 
