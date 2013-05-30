@@ -22,12 +22,17 @@
 #include <string.h>
 #include <math.h>
 
+
 #include "psolve.h"
 #include "nonlinear.h" //NEEDS TO BE HERE FOR NONLINEAR TO RUN
 #include "stiffness.h"
 #include "quake_util.h"
 #include "util.h"
 #include "timers.h"
+#include "cvm.h"
+#include "topography.h"
+
+
 
 /* -------------------------------------------------------------------------- */
 /*                             Global Variables                               */
@@ -37,7 +42,8 @@ static int32_t  myLinearElementsCount;
 static int32_t *myLinearElementsMapper;
 
 /* -------------------------------------------------------------------------- */
-/*          Initialization of parameters for nonlinear compatibility          */
+/*                      Initialization of parameters for
+ *                   Nonlinear and Topography compatibility                   */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -50,7 +56,8 @@ void linear_elements_count(int32_t myID, mesh_t *myMesh) {
 
     for (eindex = 0; eindex < myMesh->lenum; eindex++) {
 
-        if ( isThisElementNonLinear(myMesh, eindex) == NO ) {
+        if ( ( isThisElementNonLinear(myMesh, eindex) == NO ) &&
+        	 ( BelongstoTopography   (myMesh, eindex) == NO )  ) {
             count++;
         }
     }
@@ -81,7 +88,9 @@ void linear_elements_mapping(int32_t myID, mesh_t *myMesh) {
 
     for (eindex = 0; eindex < myMesh->lenum; eindex++) {
 
-        if ( isThisElementNonLinear(myMesh, eindex) == NO ) {
+
+        if ( ( isThisElementNonLinear(myMesh, eindex) == NO ) &&
+        	 ( BelongstoTopography(myMesh, eindex)    == NO ) ) {
             myLinearElementsMapper[count] = eindex;
             count++;
         }
@@ -226,7 +235,8 @@ void compute_addforce_effective( mesh_t* myMesh, mysolver_t* mySolver )
         }
 
         for (i = 0; i < 8; i++) {
-            int32_t lnid          = elemp->lnid[i];;
+
+            int32_t lnid          = elemp->lnid[i];
             fvector_t* nodalForce = mySolver->force + lnid;
 
             nodalForce->f[0] += localForce[i].f[0];
