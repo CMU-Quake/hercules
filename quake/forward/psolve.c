@@ -4088,6 +4088,24 @@ solver_compute_force_nonlinear( mysolver_t *solver,
     }
 }
 
+
+/**
+ * Compute the topography contribution to the force.
+ * \param deltaT2 Delta t^2 (i.e., squared).
+ */
+static void
+solver_compute_force_topography( mysolver_t *solver,
+                                mesh_t     *mesh,
+                                double      deltaT2 )
+{
+    if ( Param.includeTopography == YES ) {
+        Timer_Start( "Compute addforces Topography" );
+//        compute_addforce_topo( mesh, solver, deltaT2 );
+        compute_addforce_topoEffective( mesh, solver, deltaT2 );
+        Timer_Stop( "Compute addforces Topography" );
+    }
+}
+
 static void
 solver_compute_force_gravity( mysolver_t *solver, mesh_t *mesh, int step )
 {
@@ -4355,10 +4373,17 @@ static void solver_run()
         solver_nonlinear_state( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2, step );
         solver_compute_force_source( step );
         solver_compute_effective_drm_force( Global.mySolver, Global.myMesh,Global.theK1, Global.theK2, step, Param.theDeltaT );
+        solver_compute_force_topography( Global.mySolver, Global.myMesh, Param.theDeltaTSquared );
         solver_compute_force_stiffness( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2 );
         solver_compute_force_damping( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2 );
         solver_compute_force_gravity( Global.mySolver, Global.myMesh, step );
         solver_compute_force_nonlinear( Global.mySolver, Global.myMesh, Param.theDeltaTSquared );
+
+        /* ------------------ */
+        /* TODO: erase this later*/
+        compute_addforce_topoDRM ( Global.myMesh,Global.mySolver, Param.theDeltaT, step, Global.theK1, Global.theK2);
+        /*----------*/
+
         Timer_Stop( "Compute Physics" );
 
         Timer_Start( "Communication" );
