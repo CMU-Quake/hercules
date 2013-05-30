@@ -6411,6 +6411,12 @@ source_init( const char* physicsin )
 			surfaceShift = get_surface_shift();
 		}
 
+		//TODO: check that this shifting only has effect here
+		if ( Param.includeTopography == YES ) {
+			surfaceShift = get_thebase_topo();
+		}
+
+
 		/* it will create the files to be read each time step to
        load (force) the mesh */
 		if ( compute_print_source( physicsin, Global.myOctree, Global.myMesh,
