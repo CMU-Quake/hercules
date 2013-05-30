@@ -7648,6 +7648,17 @@ int main( int argc, char** argv )
         output_stations_init(Param.parameters_input_file);
     }
 
+
+    /* Initialize topography solver analysis structures */
+    /* must be before solver_init() for proper treatment of the nodal mass */
+    if ( Param.includeTopography == YES ) {
+        topo_solver_init(Global.myID, Global.myMesh);
+        if ( Param.theNumberOfStations !=0 ){
+            topography_stations_init(Global.myMesh, Param.myStations, Param.myNumberOfStations);
+        }
+
+    }
+
     /* Initialize the solver, source and output structures */
     solver_init();
     Timer_Start("Solver Stats Print");
@@ -7664,6 +7675,9 @@ int main( int argc, char** argv )
         nonlinear_stats(Global.myID, Global.theGroupSize);
     }
 
+    /*TODO: this is a checking. erase later. Dorian */
+    topo_DRM_init( Global.myMesh, Global.mySolver);
+    
     Timer_Start("Source Init");
     source_init(Param.parameters_input_file);
     Timer_Stop("Source Init");
@@ -7674,6 +7688,7 @@ int main( int argc, char** argv )
      * \TODO a more clever way should be possible
      */
     stiffness_init(Global.myID, Global.myMesh);
+    damp_init     (Global.myID, Global.myMesh);
 
     /* this is a little too late to check for output parameters,
      * but let's do this in the mean time
