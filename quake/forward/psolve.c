@@ -3485,6 +3485,23 @@ static void solver_init()
         mass = edata->rho * edata->edgesize * edata->edgesize *edata->edgesize;
         M    = mass / 8;
 
+        /* Essential for topography module:   */
+        /* Here I correct the nodal mass in the case that topography exists  */
+        double nodesMass[8]={0};
+
+        /* get element coordinates */
+        double  xo       = Global.myMesh->ticksize * Global.myMesh->nodeTable[lnid0].x;
+        double  yo       = Global.myMesh->ticksize * Global.myMesh->nodeTable[lnid0].y;
+        double  zo       = Global.myMesh->ticksize * Global.myMesh->nodeTable[lnid0].z;
+
+        if ( Param.includeTopography == YES ) {
+        	toponodes_mass( eindex, nodesMass, M, xo, yo, zo );
+        } else {
+    		for (j = 0; j < 8; j++) {
+    			nodesMass[j] = M;
+    		}
+        }
+
         /* For each node */
         for (j = 0; j < 8; j++)
         {
@@ -3494,6 +3511,8 @@ static void solver_init()
 
             lnid = elemp->lnid[j];
             np   = &Global.mySolver->nTable[lnid];
+
+            M = nodesMass[j];
 
             np->mass_simple += M;
 
