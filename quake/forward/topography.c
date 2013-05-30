@@ -772,54 +772,45 @@ double point_elevation ( double xo, double yo, double esize, double So ) {
 void get_airprops_topo( octant_t *leaf, double ticksize,
                    edata_t *edata, etree_t *cvm )
 {
+    int    res;
+    double x, y, z;
+    double edgesize;
+    double halfedge;
 
-    edata->Vs  =  1e10;
-    /* Assign negative Vp to identify air octants */
-    edata->Vp  = -1.0;
-    /* Assign zero density */
-    edata->rho  = 0.0;
+    cvmpayload_t props;
 
-    /* TODO: double check the next commented code. It is not clear its purpose. Dorian*/
-    //    int    res;
-    //    double x, y, z;
-    //    double edgesize;
-    //    double halfedge;
+    edgesize = edata->edgesize;
+    halfedge = edgesize * 0.5;
 
-    //    cvmpayload_t props;
-
-    //    edgesize = edata->edgesize;
-//    halfedge = edgesize * 0.5;
-//
-//    x = ( leaf->lx * ticksize ) + halfedge;
-//    y = ( leaf->ly * ticksize ) + halfedge;
-//    z = ( leaf->lz * ticksize ) + halfedge;
+    x = ( leaf->lx * ticksize ) + halfedge;
+    y = ( leaf->ly * ticksize ) + halfedge;
+    z = ( leaf->lz * ticksize ) + halfedge;
 
     /* Get the Vs at that location on the surface */
-//    if ( theEtreeType == FULL )
-//		res = cvm_query( cvm, y, x, thebase_zcoord, &props );
-//    else
-//    	res = cvm_query( cvm, y, x, 0, &props );
-//
-//    if ( res != 0 ) {
-//        return;
-//        solver_abort ( __FUNCTION_NAME, "Error from cvm_query: ",
-//                       "No properties at east = %f, north = %f", y, x);
-//    }
+    if ( theEtreeType == FULL )
+		res = cvm_query( cvm, y, x, thebase_zcoord, &props );
+    else
+    	res = cvm_query( cvm, y, x, 0, &props );
 
+    if ( res != 0 ) {
+        return;
+        solver_abort ( __FUNCTION_NAME, "Error from cvm_query: ",
+                       "No properties at east = %f, north = %f", y, x);
+    }
 
-//    if ( ( leaf->lz * ticksize + edgesize ) == thebase_zcoord )
-//    	edata->Vs  = props.Vs;
-//    else
-//    	edata->Vs  = 1e10;
+    if ( ( leaf->lz * ticksize + edgesize ) == thebase_zcoord )
+    	edata->Vs  = props.Vs;
+    else
+    	edata->Vs  = 1e10;
 
 
     /* Assign negative Vp to identify air octants */
-//    edata->Vp  = -1;
+    edata->Vp  = -1;
 
     /* Assign zero density */
-//    edata->rho = 0;
+    edata->rho = 0;
 
-//    return;
+    return;
 }
 
 
