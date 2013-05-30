@@ -16,7 +16,7 @@
 -include $(WORKDIR)/user.mk
 
 ifndef SYSTEM
-	SYSTEM = XT5
+	SYSTEM = MACBOOK
 endif
 
 ifeq ($(SYSTEM), XT5)
@@ -164,7 +164,7 @@ ifeq ($(SYSTEM), HOOKE)
 endif
 
 ifeq ($(SYSTEM), MACBOOK)
-	MPI_DIR      = /usr/
+	MPI_DIR      = /usr/local
         MPI_INCLUDE  = $(MPI_DIR)/include/openmpi/ompi/mpi/cxx
         CC           = $(MPI_DIR)/bin/mpicc
         CXX          = $(MPI_DIR)/bin/mpicxx

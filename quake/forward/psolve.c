@@ -2065,7 +2065,7 @@ mesh_generate()
             fprintf(stdout, "Partitioning ");
             fflush(stdout);
         }
-        if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
+        if (octor_partitiontree(Global.myOctree, bldgs_nodesearch_com,pushdowns_nodesearch) != 0) {
             fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",Global.myID);
             MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
         }
@@ -2099,7 +2099,7 @@ mesh_generate()
         }
 
         /* NOTE: If you want to see the carving process, comment next line */
-        octor_carvebuildings(Global.myOctree, 1, bldgs_nodesearch);
+        octor_carvebuildings(Global.myOctree, 1, bldgs_nodesearch_com,pushdowns_search);
         MPI_Barrier(comm_solver);
         Timer_Stop("Carve Buildings");
         if (Global.myID == 0) {
@@ -2112,7 +2112,7 @@ mesh_generate()
             fprintf(stdout, "Repartitioning");
             fflush(stdout);
         }
-        if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
+        if (octor_partitiontree(Global.myOctree, bldgs_nodesearch_com,pushdowns_nodesearch) != 0) {
             fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",
                     Global.myID);
             MPI_Abort(MPI_COMM_WORLD, ERROR);
@@ -2138,7 +2138,7 @@ mesh_generate()
         fprintf(stdout, "Extracting the mesh %30s","");
         fflush(stdout);
     }
-    Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch);
+    Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch,pushdowns_nodesearch,bldgs_nodesearch_com);
     if (Global.myMesh == NULL) {
         fprintf(stderr, "Thread %d: mesh_generate: fail to extract mesh\n",
                 Global.myID);
@@ -2846,6 +2846,10 @@ static void solver_set_critical_T()
 	double	 VpVsZ;	      /* the result of Vp / Vs * zeta		      */
 	double	 Vs;	      /* the Vs					      */
 
+	/* yigit says -- Buildings assume 5% damping */
+	int64_t   n_0;
+	double    z_m;
+
 	/* Captures the element */
 
 	elemp = &Global.myMesh->elemTable[eindex];
@@ -2859,7 +2863,21 @@ static void solver_set_critical_T()
 	/* zeta	       = (edata->Vs < 1500) ? 25 / edata->Vs : 5 / edata->Vs; */
 	/* New formula acording to Graves */
 
-	zeta	    = 10 / edata->Vs;
+
+	n_0 = Global.myMesh->elemTable[eindex].lnid[0];
+	z_m = Global.theZForMeshOrigin + (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].z;
+
+	/* Shift the domain if buildings are considered */
+	if ( Param.includeBuildings == YES ) {
+		z_m -= get_surface_shift();
+	}
+
+	zeta = 10 / edata->Vs;
+
+	/*If element is in the building, use 5% damping.*/
+	if (z_m < 0) {
+		zeta = 0.05;
+	}
 
 	omega	    = 3.46410161514 / ratio;
 	a	    = zeta * Global.theABase;
@@ -3375,6 +3393,11 @@ static void solver_init()
 
         double zeta, a, b;
 
+    	/* yigit says -- Buildings assume 5% damping */
+
+        int32_t   n_0;
+        double    z_m;
+
         /* Note the difference between the two tables */
         elemp = &Global.myMesh->elemTable[eindex];
         edata = (edata_t *)elemp->data;
@@ -3393,8 +3416,21 @@ static void solver_init()
         /* Old formula for damping */
         /* zeta = (edata->Vs < 1500) ? 25 / edata->Vs : 5 / edata->Vs; */
 
+        n_0 = Global.myMesh->elemTable[eindex].lnid[0];
+        z_m = Global.theZForMeshOrigin + (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].z;
+
+        /* Shift the domain if buildings are considered */
+        if ( Param.includeBuildings == YES ) {
+        	z_m -= get_surface_shift();
+        }
+
         /* New formula for damping according to Graves */
-        	zeta = 10 / edata->Vs;
+        zeta = 10 / edata->Vs;
+
+    	/* If element is in a building, use 5% damping */
+        if (z_m < 0) {
+        	zeta = 0.05;
+        }
 
         if ( zeta > Param.theThresholdDamping ) {
         	zeta = Param.theThresholdDamping;
@@ -7449,7 +7485,7 @@ int main( int argc, char** argv )
     }
 
     if (Param.theMeshOutFlag && DO_OUTPUT) {
-        mesh_output();
+    	mesh_output();
     }
 
     if ( Param.storeMeshCoordinatesForMatlab == YES ) {
@@ -7463,6 +7499,7 @@ int main( int argc, char** argv )
 		    Param.theMeshStatFilename);
     Timer_Stop("Mesh Stats Print");
     Timer_Reduce("Mesh Stats Print", MAX | MIN, comm_solver);
+
 
     /* Initialize the output planes */
     if ( Param.theNumberOfPlanes != 0 ) {

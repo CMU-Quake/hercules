@@ -584,7 +584,9 @@ static void    tree_setdistribution(tree_t *tree, int64_t **pCountTable,
 // static void  tree_showstat(tree_t *tree, int32_t mode, const char *comment);
 
 static int32_t tree_setcom(tree_t *tree, int32_t msgsize,
-                           bldgs_nodesearch_t *bldgs_nodesearch);
+                           bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+                           pushdowns_nodesearch_t *pushdowns_nodesearch);
+
 static void    tree_deletecom(tree_t *tree);
 
 static oct_t * tree_ascend(oct_t *oct, dir_t I, oct_stack_t *stackp);
@@ -842,7 +844,9 @@ static void      com_delete(com_t *com);
 static int32_t   com_allocpctl(com_t *com, int32_t msgsize, oct_t *first,
                                tick_t nearendp[3], tick_t farendp[3],
                                tick_t surfacep, double ticksize,
-                               bldgs_nodesearch_t *bldgs_nodesearch);
+                               bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+                               pushdowns_nodesearch_t *pushdowns_nodesearch);
+
 static int32_t   com_resetpctl(com_t *com, int32_t msgsize);
 
 
@@ -1226,6 +1230,9 @@ oct_getleftmost(oct_t *oct)
     }
 
     /* The point should not be reached */
+    /* Yigit says: This can be reached incase of progressive meshing
+     * or carving */
+
     return NULL;
 }
 
@@ -1238,28 +1245,35 @@ oct_getleftmost(oct_t *oct)
 static oct_t *
 oct_getnextleaf(oct_t *oct)
 {
-    oct_t *parent;
-    int8_t whoami;
-    int32_t which;
+	oct_t *parent;
+	int8_t whoami;
+	int32_t which;
 
-    parent = oct->parent;
+	parent = oct->parent;
 
-    if (parent == NULL)
-        /* We are at the root, no next leaf oct exists */
-        return NULL;
+	if (parent == NULL)
+		/* We are at the root, no next leaf oct exists */
+		return NULL;
 
-    whoami = oct->which;;
+	whoami = oct->which;;
 
-    for (which = whoami + 1; which < 8; which++) {
-        /* Move to the next one at the same level */
-//yigit
-        if (parent->payload.interior->child[which] != NULL && parent->payload.interior->child[which]->where !=REMOTE) {
-            return oct_getleftmost(parent->payload.interior->child[which]);
-        }
-    }
+	for (which = whoami + 1; which < 8; which++) {
+		/* Move to the next one at the same level */
+		if (parent->payload.interior->child[which] != NULL) {
+			/* yigit says: do not ever return NULL here since there maybe other local
+			 * octants beyond the NULL.(especially important when carving
+			 * or progressive meshing is on.) */
+			oct_t *noct;
+			noct = oct_getleftmost(parent->payload.interior->child[which]);
+			if (noct == NULL)
+				continue;
+			else
+				return noct;
+		}
+}
 
-    /* No more siblings on the same level. Go one level up */
-    return oct_getnextleaf(parent);
+	/* No more siblings on the same level. Go one level up */
+	return oct_getnextleaf(parent);
 }
 
 
@@ -1399,7 +1413,8 @@ oct_installleaf(tick_t lx, tick_t ly, tick_t lz, int8_t level, void *data,
         /* Parent oct may be a LEAF marked as REMOTE */
         if (parentoct->type == LEAF) {
 
-            /* Sanity check */ //yigit
+            /* Sanity check */
+        	/* yigit says --  T_UNDEFINED check is added */
             if (parentoct->where != REMOTE && parentoct->where != T_UNDEFINED) {
             	fprintf(stderr, "oct_installleaf: fatal error\n");
             	return -1;
@@ -1595,6 +1610,7 @@ oct_sprout(oct_t *leafoct, tree_t *tree)
             childcount++;
 
             child->type = LEAF;
+
             child->where =  leafoct->where; /* inherit the whereabout */
             child->which = which;
             child->level = childlevel;
@@ -2215,7 +2231,8 @@ tree_showstat(tree_t *tree, int32_t mode, const char *comment)
  *
  */
 static int32_t
-tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_t *bldgs_nodesearch)
+tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+		pushdowns_nodesearch_t *pushdowns_nodesearch)
 {
     /* Allocate a communication manager */
     tree->com = com_new(tree->procid, tree->groupsize);
@@ -2233,8 +2250,9 @@ tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_t *bldgs_nodesearch)
        constraint (balanced in mesh generation term).
     */
     if (com_allocpctl(tree->com, msgsize, tree->firstleaf,
-                      tree->nearendp, tree->farendp, tree->surfacep,
-                      tree->ticksize, bldgs_nodesearch) != 0)
+                       tree->nearendp, tree->farendp, tree->surfacep,
+                       tree->ticksize, bldgs_nodesearch_com,
+                       pushdowns_nodesearch) != 0)
         return -1;
 
     return 0;
@@ -2629,7 +2647,8 @@ com_delete(com_t *com)
 static int32_t
 com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
               tick_t nearendp[3], tick_t farendp[3], tick_t surfacep,
-              double ticksize, bldgs_nodesearch_t *bldgs_nodesearch)
+              double ticksize, bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+              pushdowns_nodesearch_t *pushdowns_nodesearch)
 {
     oct_t *oct;
     tick_t ox, oy, oz, increment;
@@ -2644,9 +2663,13 @@ com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
         int32_t i, j, k;
         increment = (tick_t)1 << (PIXELLEVEL - (oct->level + 1));
 
-        ox = oct->lx - increment;
-        oy = oct->ly - increment;
-        oz = oct->lz - increment;
+        /* yigit says */
+        /* +1 (ox,oy,oz) is added so that each search point is located inside an element.
+         * This is important to identify the air elements easily.  */
+
+        ox = oct->lx - increment + 1 ;
+        oy = oct->ly - increment + 1 ;
+        oz = oct->lz - increment + 1 ;
 
         for (k = 0; k < 4; k++) {
 
@@ -2678,19 +2701,30 @@ com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
                     /* If we have pushed the surface down for buildings... */
                     if ( surfacep > 0 ) {
 
-                        /* ...and the point is above the surface... */
-                        if ( pt.z < surfacep ) {
+                    	/* ...and the point is above the surface... */
+                    	if ( pt.z < surfacep ) {
 
-                            /* ...and it does not belong to any building... */
-                            int res = bldgs_nodesearch(
-                                    pt.x, pt.y, pt.z, ticksize);
+                    		/* ...and it does not belong to any building... */
+                    		int res = bldgs_nodesearch_com(
+                    				pt.x, pt.y, pt.z, ticksize);
 
-                            if ( res == 0 ) {
+                    		if ( res == 0 ) {
 
-                                /* ...then, discard 'air' nodes! */
-                                continue;
-                            }
-                        }
+                    			/* ...then, discard 'air' nodes! */
+                    			continue;
+                    		}
+
+                    		/* ...and it belongs to any pushdown... */
+                    		res = pushdowns_nodesearch(
+                    				pt.x, pt.y, pt.z, ticksize);
+
+                    		if ( res == -1  ) {
+
+                    			/* ...then, discard 'air' nodes! */
+                    			continue;
+                    		}
+
+                    	}
                     }
 
                     /* Search the interval table */
@@ -3288,12 +3322,14 @@ node_setproperty ( tree_t             *tree,
                    bldgs_nodesearch_t  bldgs_nodesearch )
 {
     tick_t   nx, ny, nz;
-    int32_t  where, onX, onY, onZ, wrtSurface;
+    int32_t  where, onX = 0, onY = 0, onZ = 0, wrtSurface = -2;
     int32_t  modX, modY, modZ;
     tick_t   masterMask;
     int8_t   masterLevel;
-    double   z_meters;
-    int      inBldgPos;
+
+    /* Yigit says: This function is vastly cleaned as buildings assume only
+     * anchored nodes now.
+     */
 
     /* Save local touches variable */
     int8_t touches = vertex->touches;
@@ -3305,43 +3341,10 @@ node_setproperty ( tree_t             *tree,
      *
      */
     if ( touches == 8 ) {
-        *pproperty = 0X80;
-        return 0;
+    	*pproperty = 0X80;
+    	return 0;
     }
 
-    /*
-     * Information needed for the following cases
-     * ------------------------------------------
-     *
-     * - Vertex coordinates
-     */
-
-    nx = vertex->x;
-    ny = vertex->y;
-    nz = vertex->z;
-
-    /*
-     * Touched by 7
-     * ------------
-     * This node can only occur for the non-rectangular buildings or in the
-     * future case topography. It has to be above the 'surface' and is always
-     * anchored.  Since such cases are not active yet it should return error.
-     *
-     */
-    if ( touches == 7 ) {
-
-        /* Temporary default */
-        return -71;
-
-        /* For future activation */
-        if ( theSurfaceShift == 0 ) {
-            /* A vertex can't have 7 touches if */
-            return -72;
-        }
-
-        *pproperty = 0X80;
-        return 0;
-    }
 
     /*
      * Information needed for the following cases
@@ -3358,207 +3361,191 @@ node_setproperty ( tree_t             *tree,
      * - wrtSurface: single value that tells where the vertex is with respect
      *               to the surface.
      *
+     *               -2: no surface shift,
+     *
      *               -1: is above the surface,
      *                0: is on the surface,
      *                1: beneath the surface.
      *
-     * - inBldgPos:  position of a vertex in a building.
-     *
-     *                0: not in a building,
-     *                1: on the faces of a building,
-     *                2: in the interior of a building.
+     * NOTE: where should be modified in the case of  wrtSurface = 0.
      */
 
     /* Classical info without buildings */
 
-    onX = 0;
-    onY = 0;
-    onZ = 0;
-    inBldgPos = 0;
+    /*
+     * Information needed for the following cases
+     * ------------------------------------------
+     *
+     * - Vertex coordinates
+     */
+
+    nx = vertex->x;
+    ny = vertex->y;
+    nz = vertex->z;
 
     if ( (nx == tree->nearendp[0]) || (nx == tree->farendp[0]) ) {
-        onX = 1;
+    	onX = 1;
     }
 
     if ( (ny == tree->nearendp[1]) || (ny == tree->farendp[1] ) ) {
-        onY = 1;
+    	onY = 1;
     }
 
     if ( (nz == tree->nearendp[2]) || (nz == tree->farendp[2] ) ) {
-        onZ = 1;
+    	onZ = 1;
     }
-
-    /* Additional info for buildings */
-
-    if ( theSurfaceShift > 0 ) {
-
-        z_meters = nz * tree->ticksize;
-
-        /* Where is the node with respect to the surface? */
-        if ( z_meters < theSurfaceShift ) {
-            wrtSurface = -1;
-        } else if ( z_meters == theSurfaceShift ) {
-            wrtSurface = 0;
-        } else if ( z_meters > theSurfaceShift ) {
-            wrtSurface = 1;
-        } else {
-            return -901;
-        }
-
-        /* Where is the node in a building? */
-        if ( wrtSurface < 1 ) {
-            inBldgPos = bldgs_nodesearch(nx, ny, nz, tree->ticksize );
-            if ( ( inBldgPos == 0 ) && ( wrtSurface == -1 ) ) {
-                /* This vertex should not exist. At this point all vertices
-                 * on or above the surface must belong to a building */
-                return -902;
-            }
-        }
-
-    } else {
-        wrtSurface =  1;
-        inBldgPos  = -1;
-    }
-
 
     /* Aggregate values for 'where' */
 
     where = onX + onY + onZ;
 
+    /* Additional info for buildings */
+
+    if ( tree->surfacep > 0 ) {
+
+    	/* Where is the node with respect to the surface ? */
+    	if ( nz < tree->surfacep ) {
+    		wrtSurface = -1;
+    	} else if ( nz == tree->surfacep ) {
+    		wrtSurface = 0;
+    	} else if ( nz > tree->surfacep ) {
+    		wrtSurface = 1;
+    	} else {
+    		return -901;
+    	}
+    }
+
+    /* Yigit says: Every node that belongs to a building+foundation should be anchored*/
+
+    /* If we have pushed the surface down for buildings... */
+    if ( tree->surfacep > 0 ) {
+
+    	double ticksize;
+
+    	/* ticks converter to physical coordinates */
+    	ticksize = tree->ticksize;
+
+    	if ( bldgs_nodesearch( nx, ny, nz, ticksize) != 0 ) {
+
+    		*pproperty = 0X80;
+    		return 0;
+    	}
+    }
+
+    /*  sanity check. should never reach */
+    if ( wrtSurface == -1 ) {
+    	fprintf(stderr, "Thread %d: %s %d: %f %f %f this node is above the surface but "
+    			"does not belong to any building.\n"
+    			, tree->procid, __FILE__, __LINE__, nx*tree->ticksize,
+    			ny*tree->ticksize, nz*tree->ticksize);
+    	MPI_Abort(MPI_COMM_WORLD, UNEXPECTED_ERR);
+    	exit(1);
+    }
+
     /*
-     * Touched by 6
+     * Touched by 7
      * ------------
-     * This node has two main options. (1) If it is an internal node beneath
-     * the surface, then it has to be a dangling node on the edge of the larger
-     * element that does not 'touch' it. (2) If it is on the surface, it must
-     * be at the foot of a building.  (A third option would be an internal node
-     * above the surface --- not considered now for regular buildings.  This
-     * would have to be reviewed for future topography and non-regular building
-     * cases.)
-     *
      */
-    if ( touches == 6 ) {
+    if ( touches == 7 ) {
 
-        /* An interior node with 6 touches is always a dangling node.  To be
-         * interior has to be interior in a building or beneath the surface
-         * and not on a boundary.
-         */
-        if ( ( ( wrtSurface ==  1 ) && ( where     ==  0 ) ) /* dmain int */ ||
-             ( inBldgPos == -1 ) /* bldgs int */ ||
-             ( ( wrtSurface ==  0 ) && ( inBldgPos == 1 ) ) /* bldgs int */ )
-        {
-            masterLevel = vertex->level - 1;
-            masterMask = (((tick_t)1 << (PIXELLEVEL - masterLevel))) - 1;
+    	/*  should never reach */
+    	return -71;
 
-            modX = (nx & masterMask) ? 1 : 0;
-            modY = (ny & masterMask) ? 1 : 0;
-            modZ = (nz & masterMask) ? 1 : 0;
-
-            if ( modX + modY + modZ != 1 ) {
-                return -61;
-            }
-
-            if ( modX ) {
-                *pproperty = XEDGE;
-            } else if ( modY ) {
-                *pproperty = YEDGE;
-            } else {
-                *pproperty = ZEDGE;
-            }
-
-            return 0;
-        }
-
-        /* At the foot's face of a building, the node is anchored.  Here the
-         * node has to be on the surface and it has to touch either only one
-         * lateral face or a lateral face and the bottom face (only if the
-         * bottom face is also the surface) */
-        if ( ( wrtSurface == 0 ) &&
-             ( ( inBldgPos == 2 ) || ( inBldgPos == 3 ) ) ) {
-            *pproperty = 0X80;
-            return 0;
-        }
-
-        /* On or above the surface and not in the interior of a building */
-        if ( ( wrtSurface != 1 ) && ( inBldgPos == 0 ) ) {
-            return -62;
-        }
-
-        /* On a domain boundary error */
-        if ( where != 0 ) {
-            return -63;
-        }
-
-        /* Unexpected case */
-        return -64;
     }
 
     /*
      * Touched by 5
      * ------------
-     * This case can only occurs in the case of buildings or topography and
-     * is always anchored. In the case of buildings considered here the node
-     * has to be at the corner of a building and on the surface.
-     *
      */
     if ( touches == 5 ) {
 
-        /* No buildings error */
-        if ( theSurfaceShift == 0 ) {
-            return -51;
-        }
-
-        /* Not on the surface error */
-        if ( wrtSurface != 0 ) {
-            return -52;
-        }
-
-        /* It has to touch the two lateral faces or the two lateral faces and
-         * the bottom face if equal to the surface, i.e. inBldgPos = 4 or 5 */
-        if ( ( inBldgPos < 4 ) || ( inBldgPos > 5 ) ) {
-            return -53;
-        }
-
-        *pproperty = 0X80;
-        return 0;
+    	/*  should never reach */
+    	return -51;
     }
+
+    /*
+     * Touched by 3
+     * ------------
+     */
+    if ( touches == 3 ) {
+
+    	/*  should never reach */
+    	return -31;
+    }
+
+    /*
+     * Touched by 6
+     * ------------
+     * It is an internal node beneath the surface, then it has to be a dangling
+     * node on the edge of the larger  element that does not 'touch' it.
+     */
+    if ( touches == 6 ) {
+
+    	/* An interior node with 6 touches is always a dangling node.
+    	 */
+    	if ( ( wrtSurface == -2 && where == 0 ) ||
+    		 ( wrtSurface ==  1 && where == 0 ) )
+    	{
+    		masterLevel = vertex->level - 1;
+    		masterMask = (((tick_t)1 << (PIXELLEVEL - masterLevel))) - 1;
+
+    		modX = (nx & masterMask) ? 1 : 0;
+    		modY = (ny & masterMask) ? 1 : 0;
+    		modZ = (nz & masterMask) ? 1 : 0;
+
+    		if ( modX + modY + modZ != 1 ) {
+    			return -61;
+    		}
+
+    		if ( modX ) {
+    			*pproperty = XEDGE;
+    		} else if ( modY ) {
+    			*pproperty = YEDGE;
+    		} else {
+    			*pproperty = ZEDGE;
+    		}
+
+    		return 0;
+    	}
+
+    	/* On a domain boundary error */
+    	if ( where != 0 ) {
+    		return -63;
+    	}
+
+    	/* Unexpected case */
+    	return -64;
+    }
+
 
     /*
      * Touched by 4
      * ------------
-     * This case can only occurs in the case of buildings or topography and
-     * is always anchored.
-     *
+     * This case can only occur when the anchored node is on a surface. Or when
+     * the internal dangling node is on a face or an edge.
      */
     if ( touches == 4 ) {
 
-        /* The node is on one of the lateral faces or on the top of a building
-         * and is has to be anchored */
-        if ( ( theSurfaceShift >   0 ) /* there are buildings  */ &&
-             ( wrtSurface      == -1 ) /* is above the surface */ &&
-             ( inBldgPos       ==  2 ) /* is on only one face  */ )
-        {
-            *pproperty = 0X80;
-            return 0;
-        }
-
         /* In more than one domain face error */
-        if ( ( where == 2 ) || ( where == 3 ) ) {
+        if ( ( where == 2 ) ||
+        	 ( where == 3 ) ||
+        	 ( where == 1 && wrtSurface == 0 ) ) {
             return -41;
         }
 
-        /* The node is on a face and is anchored */
-        if ( (where == 1) || ( (where == 0) && (wrtSurface == 0) ) ) {
+        /* The node is on a domain face and is anchored. */
+        if ( ( where == 1 && wrtSurface != 0 && wrtSurface != -1) ||
+        	 ( where == 0 && wrtSurface ==  0 ) ) {
             *pproperty = 0X80;
             return 0;
         }
 
-        /* It is an internal dangling node on a face or an edge */
-        if ( ( ( wrtSurface == -1 ) && ( inBldgPos == -1 ) ) /* bldgs int */ ||
-             ( ( wrtSurface ==  1 ) && ( where     ==  0 ) ) /* dmain int */ )
+        /* It is an internal dangling node on an element face or an edge */
+     	if ( ( wrtSurface == -2 && where == 0 ) ||
+        	 ( wrtSurface ==  1 && where == 0 ) )
         {
-            masterLevel = vertex->level - 1;
-            masterMask = (((tick_t)1) << (PIXELLEVEL - masterLevel)) - 1;
+        	masterLevel = vertex->level - 1;
+        	masterMask = (((tick_t)1) << (PIXELLEVEL - masterLevel)) - 1;
 
             modX = (nx & masterMask) ? 1 : 0;
             modY = (ny & masterMask) ? 1 : 0;
@@ -3599,122 +3586,42 @@ node_setproperty ( tree_t             *tree,
             }
             return 0;
         }
-
-        /* unexpected location error */
+     	/* unexpected location error */
         return -45;
-    }
-
-    /*
-     * Touched by 3
-     * ------------
-     * This case can only occur in the case of buildings or topography. For
-     * the case considered here it is always a dangling node but it could be
-     * anchored for irregular buildings or topography.
-     *
-     */
-    if ( touches == 3 ) {
-
-        /* No buildings or internal node error */
-        if ( ( theSurfaceShift == 0 ) || ( wrtSurface == 1 ) ) {
-            return -31;
-        }
-
-        /* A non-prismatic building or rear entry topography */
-        if ( wrtSurface == -1 ) {
-
-            /* This case is not covered yet */
-            return -32;
-        }
-
-        /* Dangling node on the surface and at a building's foot corner.
-         * It has to touch the two lateral faces (4) or the two lateral
-         * faces and the bottom one if it is also the surface (5) */
-        if ( ( wrtSurface == 0 ) &&
-             ( ( inBldgPos == 4 ) || ( inBldgPos == 5 ) ) ) {
-
-            masterLevel = vertex->level - 1;
-            masterMask = (((tick_t)1) << (PIXELLEVEL - masterLevel)) - 1;
-
-            modX = (nx & masterMask) ? 1 : 0;
-            modY = (ny & masterMask) ? 1 : 0;
-            modZ = (nz & masterMask) ? 1 : 0;
-
-            switch ( modX + modY + modZ ) {
-
-                case ( 0 ) :
-                    return -33;
-
-                case ( 1 ) :
-                    /* Dangling on an edge*/
-                    if (modX) {
-                        *pproperty = XEDGE;
-                    } else if (modY) {
-                        *pproperty = YEDGE;
-                    } else {
-                        /* on the vertical edge of a foot-corner element */
-                        *pproperty = ZEDGE;
-                    }
-                    break;
-
-                case ( 2 ):
-                    /* It can't be dangling on a face*/
-                    return -34;
-
-                default:
-                    return -35;
-            }
-
-            return 0;
-        }
-
-        return -36;
     }
 
 
     /*
      * Touched by 2
      * ------------
-     * In this case the node has to be on the edge of a building or in one
-     * of the edges of the domain.  This case will have to be revisited for
-     * topography. The same rules won't apply.
-     *
+     * In this case the node has to be in one of the edges of the domain(anchored).
+     * Or it is dangling in an edge on the surface or interior node.
      */
     if ( touches == 2 ) {
 
-        /* The node is on the edge of a building and is anchored.
-         * It must be on two faces of a building (4) */
-        if ( ( wrtSurface == -1 ) && ( inBldgPos == 4 ) ) {
-            *pproperty = 0X80;
-            return 0;
-        }
-
         /* Corner node error */
-        if ( ( where == 3 ) || ( inBldgPos > 4 ) ) {
-            inBldgPos = bldgs_nodesearch(nx, ny, nz, tree->ticksize );
-            return -21;
-        }
+    	if ( ( where == 3 ) ||
+             ( where == 2 && wrtSurface == 0 ) ) {
+
+    		return -21;
+    	}
 
         /* On a boundary edge, it's an anchored node */
-        if ( ( where == 2 ) || ( ( where == 1 ) && ( wrtSurface == 0 ) ) ) {
+        if ( ( where == 2 && wrtSurface != 0 && wrtSurface != -1) ||
+             ( where == 1 && wrtSurface == 0  ) ) {
             *pproperty = 0X80;
             return 0;
         }
 
-	/* RICARDO: DOUBLE CHECK THIS!!!
-	 * Seems to be working but make sure again */
-
         if ( /* dangling in an edge on a domain boundary face */
-             ( where == 1 ) ||
+             ( where == 1  &&  wrtSurface != 0 && wrtSurface != -1 ) ||
 
-             /* dangling in an edge on a building face */
-             ( ( wrtSurface == -1 ) && ( inBldgPos == 2 ) ) ||
-
-             /* dangling in an edge on the surface OR (pending)...
-              * (dangling in a face on the surface at a building's foot) */
-             ( ( where == 0 ) && ( wrtSurface == 0 ) ) ||
+             /* dangling in an edge on the surface */
+             ( where == 0  &&  wrtSurface == 0 ) ||
 
              /* internal dangling node */
-             ( ( where == 0 ) && ( wrtSurface == 1 ) ) )
+             ( where == 0  &&  wrtSurface ==  1 ) ||
+             ( where == 0  &&  wrtSurface == -2 ) )
         {
             masterLevel = vertex->level - 1;
             masterMask = (((tick_t)1) << (PIXELLEVEL - masterLevel)) - 1;
@@ -3759,79 +3666,20 @@ node_setproperty ( tree_t             *tree,
     /*
      * Touched by 1
      * ------------
-     * The node is either on a building corner or in one of the four corners
-     * of the domain.
+     * The node is in one of the eight corners of the domain.
      *
      */
     if ( touches == 1 ) {
 
-        /* The node is above the surface and should be in one of the four
-         * top corners of a building, therefore it is an anchored node */
-        if ( ( wrtSurface == -1 ) && ( inBldgPos == 6 ) ) {
-            *pproperty = 0X80;
-            return 0;
-        }
+    	/* The node is in one of the eight corners of the domain */
+    	if ( ( where == 3 ) ||
+    		(  where == 2  &&  wrtSurface == 0  ) ) {
+    		*pproperty = 0X80;
+    		return 0;
+    	}
 
-        /* The node is in one of the eight corners of the domain */
-        if ( ( where == 3 ) || ( ( where == 2 ) && ( wrtSurface == 0 ) ) ) {
-            *pproperty = 0X80;
-            return 0;
-        }
-
-        /* Dangling at the foot-corner of a building without foundation */
-        if ( ( where == 0 ) && ( wrtSurface == 0 ) && ( inBldgPos == 5 ) ) {
-
-            masterLevel = vertex->level - 1;
-            masterMask = (((tick_t)1) << (PIXELLEVEL - masterLevel)) - 1;
-
-            modX = (nx & masterMask) ? 1 : 0;
-            modY = (ny & masterMask) ? 1 : 0;
-            modZ = (nz & masterMask) ? 1 : 0;
-  
-            switch (modX + modY + modZ) {
-
-                case (0):
-                    return -11;
-
-                case (1) :
-                    /* Dangling on an edge*/
-                    if (modX) {
-                        *pproperty = XEDGE;
-                    } else if (modY) {
-                        *pproperty = YEDGE;
-                    } else {
-                        /* It can't be on a Z-edge */
-                        return -12;
-                    }
-                    break;
-
-                case(2) :
-                    /* Dangling on a face*/
-                    if (modZ == 0) {
-                        *pproperty = ZFACE;
-                    } else {
-                        /* It can't be on a X- or Y-face */
-                        return -13;
-                    }
-                    break;
-
-                case (3):
-                    return -14;
-
-                default:
-                    return -15;
-            }
-
-            return 0;
-        }
-
-        /* Not in a corner error */
-        if ( ( where < 2 ) || ( ( where == 2 ) && ( wrtSurface != 0 ) ) ) {
-            return -16;
-        }
-
-        /* Unexpected case */
-        return -17;
+    	/* Not in a corner error */
+    	return -17;
     }
 
     /*
@@ -3911,7 +3759,9 @@ dnode_correlate(tree_t *tree, mess_t *mess, link_t **vertexHashTable,
 static void
 node_harboranchored(tree_t *tree, link_t **vertexHashTable,
                     int64_t ecount, mem_t *linkpool, mem_t *vertexpool,
-                    com_t *allcom, point_t pt, int64_t *hbrcount)
+                    com_t *allcom, point_t pt, int64_t *hbrcount,
+                    bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+                    pushdowns_nodesearch_t *pushdowns_nodesearch)
 {
     int32_t hashentry;
     link_t *link;
@@ -3964,6 +3814,65 @@ node_harboranchored(tree_t *tree, link_t **vertexHashTable,
             tree->farbound[1] : pt.y;
         adjustedpt.z = (pt.z == tree->farendp[2]) ?
             tree->farbound[2] : pt.z;
+
+        /* yigit says */
+        /* This block is added for adjusting the coordinates of the nodes
+         * on the face of the buildings above the surface */
+
+        /* If we have pushed the surface down for buildings... */
+        if ( tree->surfacep > 0 ) {
+
+        	/* ...and the point is above the surface... */
+        	if ( pt.z <  tree->surfacep ) {
+
+        		int res = bldgs_nodesearch_com(
+        				pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
+
+        		int res2 = pushdowns_nodesearch(
+        				pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
+
+        		/* ... and point+1 is out of buildings or in the pushdown  */
+        		if ( res == 0 || res2 == -1) {
+
+        			/* ...then, adjust! */
+
+        			int    flag = 0;
+        			tick_t xadjust, yadjust, incrementx, incrementy;
+
+        			/* search for a neighbor point that is inside of a bldg */
+        			for ( xadjust = 0; xadjust < 2; xadjust++ ) {
+        				for ( yadjust = 0; yadjust < 2; yadjust++ ) {
+
+        					incrementx = - 1 + 2*xadjust;
+        					incrementy = - 1 + 2*yadjust;
+
+        					/* If the point is inside the buildings and outside
+        					 * the pushdown
+        					 */
+        					if (bldgs_nodesearch_com(
+        							pt.x + incrementx,
+        							pt.y + incrementy,
+        							pt.z + 1, tree->ticksize) == -1) {
+        						if	(pushdowns_nodesearch(
+        								pt.x + incrementx,
+        								pt.y + incrementy,
+        								pt.z + 1, tree->ticksize) == 0) {
+
+        							adjustedpt.x += incrementx;
+        							adjustedpt.y += incrementy;
+        							adjustedpt.z += 1;
+
+        							flag = 1;
+        							break;
+        						}
+        					}
+        				}
+        				if ( flag == 1 ) break;
+        			}
+        		}
+        	}
+        }
+        /* End of the block ... */
 
         vertex->owner = math_zsearch(tree->com->interval, tree->com->groupsize,
                                      &adjustedpt);
@@ -4261,9 +4170,9 @@ octor_newtree(double x, double y, double z, int32_t recsize,
          * pass NULL for the buildings plug-in.
          */
         if (com_allocpctl(tree->com, 0, tree->firstleaf,
-                          tree->nearendp, tree->farendp, 0,
-                          tree->ticksize, NULL) != 0)
-            return NULL;
+        		tree->nearendp, tree->farendp, 0,
+        		tree->ticksize, NULL, NULL) != 0)
+        	return NULL;
 
     } else {
         /* Single processor mode */
@@ -4388,334 +4297,382 @@ octor_coarsentree(octree_t *octree, toshrink_t *toshrink, setrec_t *setrec)
 extern int32_t
 octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
 {
-    int32_t lmax, gmax, lmin, gmin, level, threshold;
-    oct_t *oct, *nbr;
-    dir_t dir;
-    tree_t *tree = (tree_t *)octree;
-    oct_stack_t stack;
-    descent_t *descent;
+	int32_t lmax, gmax, lmin, gmin, level, threshold;
+	oct_t *oct, *nbr;
+	dir_t dir;
+	tree_t *tree = (tree_t *)octree;
+	oct_stack_t stack;
+	descent_t *descent;
 
 #ifdef TREE_VERBOSE
-    /* Print analysis data */
-    int64_t localcount;
-    localcount = tree_countleaves(tree);
-    fprintf(stderr, "Thread %d: before balancetree: %qd\n", tree->procid,
-            localcount);
+	/* Print analysis data */
+	int64_t localcount;
+	localcount = tree_countleaves(tree);
+	fprintf(stderr, "Thread %d: before balancetree: %qd\n", tree->procid,
+			localcount);
 #endif /* TREE_VERBOSE */
 
-    /* 
-     * Note by Yigit and Ricardo:
-     * This block solved a misterious issue with progressive meshing.
-     * We, however, don't know exactly all the implications it may have.
-     * 
-     * START: Block by Yigit and Ricardo related to progressive meshing
-     */
-    
-    /* The neighboring relationship should be updated if  theStepMeshingFactor > 0*/
-    if (tree->groupsize > 1) {
+	/*
+	 * Note by Yigit and Ricardo:
+	 * This block solved a misterious issue with progressive meshing.
+	 * We, however, don't know exactly all the implications it may have.
+	 *
+	 * START: Block by Yigit and Ricardo related to progressive meshing
+	 */
 
-    	if( theStepMeshingFactor > 0 ) {
+	/* The neighboring relationship should be updated if  theStepMeshingFactor > 0*/
+	if (tree->groupsize > 1) {
 
-    		int32_t nbrprocid, msgsize;
+		if( theStepMeshingFactor > 0 ) {
 
-    		tree_deletecom(tree);
+			int32_t nbrprocid, msgsize;
 
-    		/* Allocate a communication manager */
-    		/* Note we do not use the interval array for allcom */
+			tree_deletecom(tree);
 
-    		tree->com = com_new(tree->procid, tree->groupsize);
-    		if (tree->com == NULL) {
-    			fprintf(stderr, "Thread %d: %s %d: out of memory\n",
-    					tree->procid, __FILE__, __LINE__);
-    			MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
-    			exit(1);
-    		}
+			/* Allocate a communication manager */
+			/* Note we do not use the interval array for allcom */
 
-    		/* Global communication */
-    		MPI_Allgather(&tree->firstleaf->lx, sizeof(point_t), MPI_CHAR,
-    				tree->com->interval, sizeof(point_t), MPI_CHAR,
-    				tree->comm_tree);
+			tree->com = com_new(tree->procid, tree->groupsize);
+			if (tree->com == NULL) {
+				fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+						tree->procid, __FILE__, __LINE__);
+				MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+				exit(1);
+			}
 
-    		/* Initialize tree->com manually. Every processor is adjacent
+			/* Global communication */
+			MPI_Allgather(&tree->firstleaf->lx, sizeof(point_t), MPI_CHAR,
+					tree->com->interval, sizeof(point_t), MPI_CHAR,
+					tree->comm_tree);
+
+			/* Initialize tree->com manually. Every processor is adjacent
     	           with every other processors */
 
-    		msgsize = sizeof(descent_t);
-    		for (nbrprocid = tree->groupsize - 1; nbrprocid >= 0; nbrprocid--) {
-    			if (nbrprocid == tree->procid)
-    				continue;
+			msgsize = sizeof(descent_t);
+			for (nbrprocid = tree->groupsize - 1; nbrprocid >= 0; nbrprocid--) {
+				if (nbrprocid == tree->procid)
+					continue;
 
-    			if ((tree->com->pctltab[nbrprocid] = pctl_new(nbrprocid, msgsize))
-    					== NULL) {
-    				fprintf(stderr, "Thread %d: %s %d: out of memory\n",
-    						tree->procid, __FILE__, __LINE__);
-    				MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
-    				exit(1);
-    			}
+				if ((tree->com->pctltab[nbrprocid] = pctl_new(nbrprocid, msgsize))
+						== NULL) {
+					fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+							tree->procid, __FILE__, __LINE__);
+					MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+					exit(1);
+				}
 
-    			/* link into the pctl list */
-    			tree->com->pctltab[nbrprocid]->next = tree->com->firstpctl;
-    			tree->com->firstpctl = tree->com->pctltab[nbrprocid];
-    			tree->com->nbrcnt++;
-    		}
-    	}
+				/* link into the pctl list */
+				tree->com->pctltab[nbrprocid]->next = tree->com->firstpctl;
+				tree->com->firstpctl = tree->com->pctltab[nbrprocid];
+				tree->com->nbrcnt++;
+			}
+		}
 
-    }/* if groupsize > 1 */
+	}/* if groupsize > 1 */
 
 	/* See note above.
 	 * END: Block by Yigit and Ricardo related to progressive meshing
 	 */
 
-    /* Link LOCAL leaf octs at the same level together */
-    memset(tree->toleaf, 0, sizeof(oct_t *) * TOTALLEVEL);
-    oct = tree->firstleaf;
-    while ((oct != NULL) && (oct->where == LOCAL)) {
-        oct_linkleaf(oct, tree->toleaf);
-        oct = oct_getnextleaf(oct);
-    }
+	/* Link LOCAL leaf octs at the same level together */
+	memset(tree->toleaf, 0, sizeof(oct_t *) * TOTALLEVEL);
+	oct = tree->firstleaf;
+	while ((oct != NULL) && (oct->where == LOCAL)) {
+		oct_linkleaf(oct, tree->toleaf);
+		oct = oct_getnextleaf(oct);
+	}
 
-    /* Set bounds for Prioritized Ripple Propagation. */
-    lmin = tree_getminleaflevel(tree);
-    lmax = tree_getmaxleaflevel(tree);
+	/* Set bounds for Prioritized Ripple Propagation. */
+	lmin = tree_getminleaflevel(tree);
+	lmax = tree_getmaxleaflevel(tree);
 
-    if (tree->groupsize == 1) {
-        gmin = lmin;
-        gmax = lmax;
-    } else {
-        MPI_Allreduce(&lmin, &gmin, 1, MPI_INT, MPI_MIN, tree->comm_tree);
-        MPI_Allreduce(&lmax, &gmax, 1, MPI_INT, MPI_MAX, tree->comm_tree);
-    }
+	if (tree->groupsize == 1) {
+		gmin = lmin;
+		gmax = lmax;
+	} else {
+		MPI_Allreduce(&lmin, &gmin, 1, MPI_INT, MPI_MIN, tree->comm_tree);
+		MPI_Allreduce(&lmax, &gmax, 1, MPI_INT, MPI_MAX, tree->comm_tree);
+	}
 
-    /* Work from bottom up. Prioritized ripple propagation */
-    threshold = gmin + 1;
-    for (level = gmax; level > threshold; level--) {
+	/* Work from bottom up. Prioritized ripple propagation */
+	threshold = gmin + 1;
+	for (level = gmax; level > threshold; level--) {
 
-        /* Reset the message buffer of pctls if groupsize > 1. This
+		/* Reset the message buffer of pctls if groupsize > 1. This
            needs to be done for each iteration for a different level */
 
-        if (tree->groupsize > 1)
-            com_resetpctl(tree->com, sizeof(descent_t));
+		if (tree->groupsize > 1)
+			com_resetpctl(tree->com, sizeof(descent_t));
 
-        /* Traverse small octs at the same level */
-        oct = tree->toleaf[level];
-        while (oct != NULL) {
+		/* Traverse small octs at the same level */
+		oct = tree->toleaf[level];
+		while (oct != NULL && (oct->where == LOCAL)) {
 
-            for (dir = L; dir <= UF; dir = (dir_t) ((int)dir + 1)) {
+			for (dir = L; dir <= UF; dir = (dir_t) ((int)dir + 1)) {
 
-                /* stack must be cleaned before calling oct_findneighbor */
-                stack.top = 0;
-                nbr = oct_findneighbor(oct, dir, &stack);
+				/* This block is added to ignore the out of bound neighbors*/
+				/* Find the procid that accomodate the LDB pixel
+            	 of an equal-sized neighbor */
+				point_t octLDB;
+				uint32_t dir_bits;
+				tick_t edgesize_tick;
+				edgesize_tick = (tick_t)1 << (PIXELLEVEL - oct->level);
 
-                /* Discard out of bounds */ //yigit
+				dir_bits = theDirBitRep[dir];
 
-                if ( nbr != NULL ) {
-                	if ( ( nbr->lz < tree->nearendp[2] ) ||
-                			( nbr->lz >= tree->farendp[2] ) ) {
-                		continue;
-                	}
+				/* Assign the coordinate of oct to its neighbor */
+				octLDB = *(point_t *)&oct->lx;
 
-                	/* Discard out of bounds */
-                	if ( ( nbr->ly < tree->nearendp[1] ) ||
-                			( nbr->ly >= tree->farendp[1] ) ) {
-                		continue;
-                	}
+				/* Adjust the x, y, z coordinate as necessary */
+
+				if (dir_bits & LEFT)
+					octLDB.x = oct->lx - edgesize_tick;
+
+				if (dir_bits & RIGHT)
+					octLDB.x = oct->lx + edgesize_tick;
+
+				if (dir_bits & DOWN)
+					octLDB.y = oct->ly - edgesize_tick;
+
+				if (dir_bits & UP)
+					octLDB.y = oct->ly + edgesize_tick;
+
+				if (dir_bits & BACK)
+					octLDB.z = oct->lz - edgesize_tick;
+
+				if (dir_bits & FRONT)
+					octLDB.z = oct->lz + edgesize_tick;
+
+				if ((octLDB.x < tree->nearendp[0]) ||
+						(octLDB.y < tree->nearendp[1]) ||
+						(octLDB.z < tree->nearendp[2]) ||
+						(octLDB.x >= tree->farendp[0]) ||
+						(octLDB.y >= tree->farendp[1]) ||
+						(octLDB.z >= tree->farendp[2])) {
+					/* Ignore the out-of-bound neighbor oct */
+					continue;
+				}
+				/* End of the block */
 
 
-                	/* Discard out of bounds */
-                	if ( ( nbr->lx < tree->nearendp[0] ) ||
-                			( nbr->lx >= tree->farendp[0] ) ) {
-                		continue;
-                	}
-                }
+				/* stack must be cleaned before calling oct_findneighbor */
+				stack.top = 0;
+				nbr = oct_findneighbor(oct, dir, &stack);
 
-                /* Should never return NULL */
-                if ((nbr == NULL) || (nbr->level > oct->level - 2)) {
-                    /* Ignore a non-existent neighbor or a neighbor
+				//        		/* Discard out of bounds */ //yigit
+				//
+				//        		if ( nbr != NULL ) {
+				//        			if ( ( nbr->lz < tree->nearendp[2] ) ||
+				//        					( nbr->lz >= tree->farendp[2] ) ) {
+				//        				continue;
+				//        			}
+				//
+				//        			/* Discard out of bounds */
+				//        			if ( ( nbr->ly < tree->nearendp[1] ) ||
+				//        					( nbr->ly >= tree->farendp[1] ) ) {
+				//        				continue;
+				//        			}
+				//
+				//
+				//        			/* Discard out of bounds */
+				//        			if ( ( nbr->lx < tree->nearendp[0] ) ||
+				//        					( nbr->lx >= tree->farendp[0] ) ) {
+				//        				continue;
+				//        			}
+				//        		}
+
+
+				if ((nbr == NULL) || (nbr->level > oct->level - 2)) {
+					/* Ignore a non-existent neighbor or a neighbor
                        that is small enough already */
-                    continue;
-                }
+					continue;
+				}
 
-                if (nbr->where == LOCAL) {
-                    if (tree_pushdown(nbr, tree, &stack, setrec) != 0) {
-                        fprintf(stderr, "Thread %d: %s %d: ",
-                                tree->procid, __FILE__, __LINE__);
-                        fprintf(stderr, "Cannot pushdown local neighbor\n");
-                        MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
-                    } else {
-                        continue;
-                    }
+				if (nbr->where == LOCAL) {
+					if (tree_pushdown(nbr, tree, &stack, setrec) != 0) {
+						fprintf(stderr, "Thread %d: %s %d: ",
+								tree->procid, __FILE__, __LINE__);
+						fprintf(stderr, "Cannot pushdown local neighbor\n");
+						MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+					} else {
+						continue;
+					}
 
-                } else if (nbr->where != LOCAL) {
-					/* Note by Yigit+Ricardo: 
-					 * This condition used to be == REMOTE 
-					 * The change was made in the search for fixing 
+				} else if (nbr->where != LOCAL) {
+					/* Note by Yigit+Ricardo:
+					 * This condition used to be == REMOTE
+					 * The change was made in the search for fixing
 					 * progressive meshing issues */
 
-                    /* This only happens if groupsize > 1. We have
+					/* This only happens if groupsize > 1. We have
                        maintained the validity of tree->com throughout. */
 
-                    int32_t procid;
-                    pctl_t *topctl;
-                    point_t nbrLDB;
-                    uint32_t dirbits;
-                    tick_t edgesize;
+					int32_t procid;
+					pctl_t *topctl;
+					point_t nbrLDB;
+					uint32_t dirbits;
+					tick_t edgesize;
 
-                    /* Find the procid that accomodate the LDB pixel
+					/* Find the procid that accomodate the LDB pixel
                        of an equal-sized neighbor */
 
-                    edgesize = (tick_t)1 << (PIXELLEVEL - oct->level);
+					edgesize = (tick_t)1 << (PIXELLEVEL - oct->level);
 
-                    dirbits = theDirBitRep[dir];
+					dirbits = theDirBitRep[dir];
 
-                    /* Assign the coordinate of oct to its neighbor */
-                    nbrLDB = *(point_t *)&oct->lx;
+					/* Assign the coordinate of oct to its neighbor */
+					nbrLDB = *(point_t *)&oct->lx;
 
-                    /* Adjust the x, y, z coordinate as necessary */
+					/* Adjust the x, y, z coordinate as necessary */
 
-                    if (dirbits & LEFT)
-                        nbrLDB.x = oct->lx - edgesize;
+					if (dirbits & LEFT)
+						nbrLDB.x = oct->lx - edgesize;
 
-                    if (dirbits & RIGHT)
-                        nbrLDB.x = oct->lx + edgesize;
+					if (dirbits & RIGHT)
+						nbrLDB.x = oct->lx + edgesize;
 
-                    if (dirbits & DOWN)
-                        nbrLDB.y = oct->ly - edgesize;
+					if (dirbits & DOWN)
+						nbrLDB.y = oct->ly - edgesize;
 
-                    if (dirbits & UP)
-                        nbrLDB.y = oct->ly + edgesize;
+					if (dirbits & UP)
+						nbrLDB.y = oct->ly + edgesize;
 
-                    if (dirbits & BACK)
-                        nbrLDB.z = oct->lz - edgesize;
+					if (dirbits & BACK)
+						nbrLDB.z = oct->lz - edgesize;
 
-                    if (dirbits & FRONT)
-                        nbrLDB.z = oct->lz + edgesize;
+					if (dirbits & FRONT)
+						nbrLDB.z = oct->lz + edgesize;
 
-                    if ((nbrLDB.x < tree->nearendp[0]) ||
-                        (nbrLDB.y < tree->nearendp[1]) ||
-                        (nbrLDB.z < tree->nearendp[2]) ||
-                        (nbrLDB.x >= tree->farendp[0]) ||
-                        (nbrLDB.y >= tree->farendp[1]) ||
-                        (nbrLDB.z >= tree->farendp[2])) {
-                        /* Ignore the out-of-bound neighbor oct */
-                        continue;
-                    }
+					/* This seems obsolete now -yigit*/
+					if ((nbrLDB.x < tree->nearendp[0]) ||
+							(nbrLDB.y < tree->nearendp[1]) ||
+							(nbrLDB.z < tree->nearendp[2]) ||
+							(nbrLDB.x >= tree->farendp[0]) ||
+							(nbrLDB.y >= tree->farendp[1]) ||
+							(nbrLDB.z >= tree->farendp[2])) {
+						/* Ignore the out-of-bound neighbor oct */
+						continue;
+					}
 
-                    /* Find out who possesses the pixel */
-                    procid = math_zsearch(tree->com->interval,
-                                          tree->com->groupsize,
-                                          &nbrLDB);
+					/* Find out who possesses the pixel */
+					procid = math_zsearch(tree->com->interval,
+							tree->com->groupsize,
+							&nbrLDB);
 
-                    if (procid == tree->procid) {
-                        fprintf(stderr, "Thread %d: %s %d: internal error\n",
-                                tree->procid, __FILE__, __LINE__);
-                        MPI_Abort(MPI_COMM_WORLD, UNEXPECTED_ERR);
-                        exit(1);
-                    }
+					if (procid == tree->procid) {
 
-                    /* Create a message destined to procid */
-                    topctl = tree->com->pctltab[procid];
+						fprintf(stderr, "Thread %d: %s %d: internal error\n",
+								tree->procid, __FILE__, __LINE__);
+						MPI_Abort(MPI_COMM_WORLD, UNEXPECTED_ERR);
+						exit(1);
 
-                    if (topctl == NULL) {
-                        /* This should not happen */
-                        fprintf(stderr, "Thread %d: %s %d: internal error\n",
-                                tree->procid, __FILE__, __LINE__);
-                        MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
-                        exit(1);
-                    }
+					}
 
-                    descent = (descent_t *)mem_newobj(topctl->sndmem);
-                    if (descent == NULL) {
-                        fprintf(stderr, "Thread %d: %s %d: out of memory\n",
-                                tree->procid, __FILE__, __LINE__);
-                        MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
-                        exit(1);
+					/* Create a message destined to procid */
+					topctl = tree->com->pctltab[procid];
 
-                    }
+					if (topctl == NULL) {
+						/* This should not happen */
+						fprintf(stderr, "Thread %d: %s %d: internal error\n",
+								tree->procid, __FILE__, __LINE__);
+						MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+						exit(1);
+					}
 
-                    /* Marshal a DESCENT message */
-                    descent->lx = nbr->lx;
-                    descent->ly = nbr->ly;
-                    descent->lz = nbr->lz;
-                    descent->level = nbr->level;
-                    descent->stack = stack;
-                }
-            } /* for all the directions */
+					descent = (descent_t *)mem_newobj(topctl->sndmem);
+					if (descent == NULL) {
+						fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+								tree->procid, __FILE__, __LINE__);
+						MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+						exit(1);
 
-            oct = oct->payload.leaf->next;
+					}
 
-        } /* while */
+					/* Marshal a DESCENT message */
+					descent->lx = nbr->lx;
+					descent->ly = nbr->ly;
+					descent->lz = nbr->lz;
+					descent->level = nbr->level;
+					descent->stack = stack;
+				}
+			} /* for all the directions */
 
-        /* Exchange descend instructions */
-        if (tree->groupsize > 1) {
-            pctl_t *frompctl;
+			oct = oct->payload.leaf->next;
 
-            /* Exchange DESCENT_MSG (indicated by the level of interest)
+		} /* while */
+
+		/* Exchange descend instructions */
+		if (tree->groupsize > 1) {
+			pctl_t *frompctl;
+
+			/* Exchange DESCENT_MSG (indicated by the level of interest)
                between adjacent processors. May result in abort and exit. */
-            com_OrchestrateExchange(tree->com, DESCENT_MSG, tree->comm_tree);
+			com_OrchestrateExchange(tree->com, DESCENT_MSG, tree->comm_tree);
 
-            /* Take care of neighbor processors' requests */
-            frompctl = tree->com->firstpctl;
+			/* Take care of neighbor processors' requests */
+			frompctl = tree->com->firstpctl;
 
-            while (frompctl != NULL) {
-                mem_initcursor(frompctl->rcvmem);
+			while (frompctl != NULL) {
+				mem_initcursor(frompctl->rcvmem);
 
-                while ((descent =
-                        (descent_t *)mem_getcursor(frompctl->rcvmem))
-                       != NULL) {
+				while ((descent =
+						(descent_t *)mem_getcursor(frompctl->rcvmem))
+						!= NULL) {
 
-                    tick_t lx, ly, lz;
-                    int8_t level;
+					tick_t lx, ly, lz;
+					int8_t level;
 
-                    lx = descent->lx;
-                    ly = descent->ly;
-                    lz = descent->lz;
-                    level = descent->level;
-                    stack = descent->stack;
+					lx = descent->lx;
+					ly = descent->ly;
+					lz = descent->lz;
+					level = descent->level;
+					stack = descent->stack;
 
-                    nbr = tree_searchoct(tree, lx, ly, lz, level,
-                                         EXACT_SEARCH);
-                    if (nbr == NULL) {
-                        /* This should not happen */
-                        fprintf(stderr, "Thread %d: %s %d: ",
-                                tree->procid, __FILE__, __LINE__);
-                        fprintf(stderr, "Cannot find the anchor oct\n");
-                        MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
-                        exit(1);
-                    }
+					nbr = tree_searchoct(tree, lx, ly, lz, level,
+							EXACT_SEARCH);
+					if (nbr == NULL) {
+						/* This should not happen */
+						fprintf(stderr, "Thread %d: %s %d: ",
+								tree->procid, __FILE__, __LINE__);
+						fprintf(stderr, "Cannot find the anchor oct\n");
+						MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+						exit(1);
+					}
 
-                    if (tree_pushdown(nbr, tree, &stack, setrec) != 0) {
-                        fprintf(stderr, "Thread %d: %s %d: ",
-                                tree->procid, __FILE__, __LINE__);
-                        fprintf(stderr, "Cannot pushdown from anchor oct\n");
-                        MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
-                        exit(1);
-                    }
+					if (tree_pushdown(nbr, tree, &stack, setrec) != 0) {
+						fprintf(stderr, "Thread %d: %s %d: ",
+								tree->procid, __FILE__, __LINE__);
+						fprintf(stderr, "Cannot pushdown from anchor oct\n");
+						MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+						exit(1);
+					}
 
-                    /* move the next descend instruction */
-                    mem_advcursor(frompctl->rcvmem);
+					/* move the next descend instruction */
+					mem_advcursor(frompctl->rcvmem);
 
-                } /* while descent != NULL */
+				} /* while descent != NULL */
 
-                frompctl = frompctl->next;
+				frompctl = frompctl->next;
 
-            } /* while fromctl */
+			} /* while fromctl */
 
-            /* Synchronzie globally */
-            MPI_Barrier(tree->comm_tree);
+			/* Synchronzie globally */
+			MPI_Barrier(tree->comm_tree);
 
-        } /* if tree->groupsize > 1 */
+		} /* if tree->groupsize > 1 */
 
-    } /* for all levels */
+	} /* for all levels */
 
-    /* Discard residual communication data, set the message size to 0 */
-    if (tree->groupsize > 1) {
-        com_resetpctl(tree->com, 0);
-    }
+	/* Discard residual communication data, set the message size to 0 */
+	if (tree->groupsize > 1) {
+		com_resetpctl(tree->com, 0);
+	}
 
 #ifdef TREE_VERBOSE
-    tree_showstat(tree, DETAILS, "octor_balancetree");
+	tree_showstat(tree, DETAILS, "octor_balancetree");
 #endif /* TREE_VERBOSE */
 
-    return 0;
+	return 0;
 }
 
 
@@ -4759,83 +4716,104 @@ void backfire_parent(oct_t *parent) {
 
 extern void
 octor_carvebuildings(octree_t *octree, int flag,
-                     bldgs_nodesearch_t *bldgs_nodesearch)
+                     bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+                     pushdowns_search_t *pushdowns_search)
 {
-    tree_t  *tree = (tree_t *)octree;
-    oct_t   *oct, *nextOct;
-    int64_t  ecount;
-    int64_t  myCount = 0;
-    edata_t *edata;
-
-    ecount = tree_countleaves(tree);
-
-    oct = oct_getleftmost(tree->root);
-
-    /* A sanity check */
-    if ( tree->firstleaf != oct_getleftmost(tree->root) ) {
-        fprintf(stderr,
-                "Thread %d: %s %d: error in the first leaf \n",
-                tree->procid, __FILE__, __LINE__);
-    }
-
-    if ( tree->firstleaf == NULL ) {
-        fprintf(stderr,
-                "Thread %d: %s %d: NULL first leaf \n",
-                tree->procid, __FILE__, __LINE__);
-    }
+	tree_t  *tree = (tree_t *)octree;
+	oct_t   *oct, *nextOct;
+	int64_t  ecount;
+	int64_t  myCount = 0;
+	edata_t *edata;
 
 
-    while ( oct != NULL ) {
+	/* Yigit says: If you want to keep toleaf updated switch on this block.*/
+	/* Link LOCAL leaf octs at the same level together */
+		memset(tree->toleaf, 0, sizeof(oct_t *) * TOTALLEVEL);
+		oct = tree->firstleaf;
+		while ((oct != NULL) && (oct->where == LOCAL)) {
+			oct_linkleaf(oct, tree->toleaf);
+			oct = oct_getnextleaf(oct);
+		}
+	/* Block ends here */
 
-    	double Vp;
+	ecount = tree_countleaves(tree);
 
-    	myCount++;
+	oct = oct_getleftmost(tree->root);
 
-    	edata = (edata_t *)oct->payload.leaf->data;
-    	Vp = edata->Vp;
+	/* A sanity check */
+	if ( tree->firstleaf != oct_getleftmost(tree->root) ) {
+		fprintf(stderr,
+				"Thread %d: %s %d: error in the first leaf \n",
+				tree->procid, __FILE__, __LINE__);
+	}
 
-    	nextOct = oct_getnextleaf(oct);
+	if ( tree->firstleaf == NULL ) {
+		fprintf(stderr,
+				"Thread %d: %s %d: NULL first leaf \n",
+				tree->procid, __FILE__, __LINE__);
+	}
 
-    	if ( Vp < 0 ) {//yigit
+	while ( oct != NULL && (oct->where == LOCAL) ) {
 
-    		/* Now I will eliminate this leaf */
+		double Vp;
 
-    		/* making sure the first leaf is updated */
-    		if ( oct == tree->firstleaf ) {
-    			tree->firstleaf = nextOct;
-    		}
+		myCount++;
+		edata = (edata_t *)oct->payload.leaf->data;
 
-    		/* unlinking the octant and making sure the corresponding
-    		 * tree->toleaf list is updated */
-    		oct_unlinkleaf(oct, tree->toleaf);
+		/* Octants belonging to pushdowns are eliminated here. yigit */
 
-    		/* Modify the statistics */
-    		tree->leafcount[(int32_t)oct->level]--;
+		if (pushdowns_search(oct->lx,oct->ly,oct->lz,tree->ticksize) ) {
+			edata->Vp = -1;
+		}
 
-    		/* Mark this leaf as remote */
-    		oct->where = REMOTE;
-    	}
+		Vp = edata->Vp;
+		nextOct = oct_getnextleaf(oct);
 
-    	/* moving on to next octant */
-    	oct = nextOct;
-    }
+		if ( Vp < 0 ) {//yigit
 
-    /* Release and recover memory */
-    oct_shrink(tree->root, tree, REMOTE, NULL, NULL);
+			/* Now I will eliminate this leaf */
 
-    /* A sanity check */
-    if ( tree->firstleaf != oct_getleftmost(tree->root) ) {
-        fprintf(stderr,
-                "Thread %d: %s %d: error in the first leaf \n",
-                tree->procid, __FILE__, __LINE__);
-    }
+			/* making sure the first leaf is updated */
+			if ( oct == tree->firstleaf ) {
+				tree->firstleaf = nextOct;
+			}
+
+			/* unlinking the octant and making sure the corresponding
+			 * tree->toleaf list is updated */
+
+			/* Yigit says: This seems unnecesary and creates an error if carving
+			 * is not called right after balancing. However, if you need toleaf,
+			 * you can uncomment the following command and the block above. */
+
+			oct_unlinkleaf(oct, tree->toleaf);
+
+			/* Modify the statistics */
+			tree->leafcount[(int32_t)oct->level]--;
+
+			/* Mark this leaf as remote */
+			oct->where = REMOTE;
+		}
+
+		/* moving on to next octant */
+		oct = nextOct;
+	}
+
+	/* Release and recover memory */
+	oct_shrink(tree->root, tree, REMOTE, NULL, NULL);
+
+	/* A sanity check */
+	if ( tree->firstleaf != oct_getleftmost(tree->root) ) {
+		fprintf(stderr,
+				"Thread %d: %s %d: error in the first leaf \n",
+				tree->procid, __FILE__, __LINE__);
+	}
 
 
 #ifdef TREE_VERBOSE
-    tree_showstat(tree, DETAILS, "octor_balancetree");
+	tree_showstat(tree, DETAILS, "octor_balancetree");
 #endif /* TREE_VERBOSE */
 
-    return;
+	return;
 }
 
 
@@ -4844,7 +4822,7 @@ octor_carvebuildings(octree_t *octree, int flag,
  *
  */
 extern int32_t
-octor_partitiontree(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
+octor_partitiontree(octree_t *octree, bldgs_nodesearch_com_t *bldgs_nodesearch_com,pushdowns_nodesearch_t *pushdowns_nodesearch)
 {
     tree_t *tree = (tree_t *)octree;
     int32_t start_procid, end_procid, bin_procid;
@@ -5182,7 +5160,7 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
      *
      * tree_deletecom(tree);
      *
-     * if (tree_setcom(tree, 0, bldgs_nodesearch) != 0) {
+     * if (tree_setcom(tree, 0, bldgs_nodesearch_com,pushdowns_nodesearch) != 0) {
      *     fprintf(stderr,
      *             "Thread %d: %s %d: fail to create new communication manager\n",
      *             tree->procid, __FILE__, __LINE__);
@@ -5207,7 +5185,9 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
  *
  */
 extern mesh_t *
-octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
+octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
+		pushdowns_nodesearch_t *pushdowns_nodesearch,
+		bldgs_nodesearch_com_t *bldgs_nodesearch_com)
 {
     tree_t *tree = (tree_t *)octree;
     int64_t *octCountTable;
@@ -5257,7 +5237,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
 
     	tree_deletecom(tree);
 
-    	if (tree_setcom(tree, 0, bldgs_nodesearch) != 0) {
+    	if (tree_setcom(tree, 0, bldgs_nodesearch_com,pushdowns_nodesearch) != 0) {
     		fprintf(stderr,
     				"Thread %d: %s %d: fail to create new communication manager\n",
     				tree->procid, __FILE__, __LINE__);
@@ -5412,9 +5392,69 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                         adjustedpt.z = (pt.z == tree->farendp[2]) ?
                             tree->farbound[2] : pt.z;
 
+
+                        /* Yigit says -- This block is added for adjusting the
+                           coordinates of the nodes on the face of the buildings
+						   above the surface.  */
+
+                        /* If we have pushed the surface down for buildings... */
+                        if ( tree->surfacep > 0 ) {
+
+                        	/* ...and the point is above the surface... */
+                        	if ( pt.z <  tree->surfacep ) {
+
+                        		int res = bldgs_nodesearch_com(
+                        				pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
+
+                        		int res2 = pushdowns_nodesearch(
+                        				pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
+
+                        		/* ... and point+1 is out of buildings or in the pushdown  */
+                        		if ( res == 0 || res2 == -1) {
+
+                        			/* ...then, adjust! */
+
+                        			int    flag = 0;
+                        			tick_t xadjust, yadjust, incrementx, incrementy;
+
+                        			/* search for a neighbor point that is inside of a bldg */
+                        			for ( xadjust = 0; xadjust < 2; xadjust++ ) {
+                        				for ( yadjust = 0; yadjust < 2; yadjust++ ) {
+
+                        					incrementx = - 1 + 2*xadjust;
+                        					incrementy = - 1 + 2*yadjust;
+
+                        					/* If the point is inside the buildings
+                        					 *  and outside the pushdown */
+                        					if (bldgs_nodesearch_com(
+                        							pt.x + incrementx,
+                        							pt.y + incrementy,
+                        							pt.z + 1, tree->ticksize) == -1) {
+                        						if	(pushdowns_nodesearch(
+                        								pt.x + incrementx,
+                        								pt.y + incrementy,
+                        								pt.z + 1, tree->ticksize) == 0) {
+
+                        							adjustedpt.x += incrementx;
+                        							adjustedpt.y += incrementy;
+                        							adjustedpt.z += 1;
+
+                        							flag = 1;
+                        							break;
+                        						}
+                        					}
+                        				}
+                        				if ( flag == 1 ) break;
+                        			}
+                        		}
+                        	}
+                        }
+                        /* End of block. See comments above. */
+
+
                         vertex->owner = (tree->groupsize == 1) ? 0 :
-                            math_zsearch(tree->com->interval,
-                                         tree->com->groupsize, &adjustedpt);
+                        		math_zsearch(tree->com->interval,
+                        				tree->com->groupsize, &adjustedpt);
 
                         vertex->lnid = -1; /* undefined */
                         vertex->touches = 1;
@@ -5487,9 +5527,12 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                     continue;
                 }
 
-                nx = vertex->x;
-                ny = vertex->y;
-                nz = vertex->z;
+                /* Yigit says -- +1(nx,ny,nz) is added so that each search point is
+                 * located inside the elements. This is important to identify
+                 * the air elements easily. */
+                nx = vertex->x + 1 ;
+                ny = vertex->y + 1;
+                nz = vertex->z + 1;
 
                 /* Mark as no neighbors at this moment */
                 nbrs = 0;
@@ -5497,101 +5540,110 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                 /* Find which neighbor(s) processor share this vertex */
                 for (ztick = 0; ztick < 2; ztick++) {
 
-                    pt.z = nz - ztick;
+                	pt.z = nz - 2*ztick; /* used to be nz - ztick*/
 
-                    /* Discard out of bounds */
-                    if ( ( pt.z < tree->nearendp[2] ) ||
-                         ( pt.z >= tree->farendp[2] ) ) {
-                        continue;
-                    }
+                	/* Discard out of bounds */
+                	if ( ( pt.z < tree->nearendp[2] ) ||
+                			( pt.z >= tree->farendp[2] ) ) {
+                		continue;
+                	}
 
-                    for (ytick = 0; ytick < 2; ytick++) {
+                	for (ytick = 0; ytick < 2; ytick++) {
 
-                        pt.y = ny - ytick;
+                		pt.y = ny - 2*ytick; /* used to be ny - ytick*/
 
-                        /* Discard out of bounds */
-                        if ( ( pt.y < tree->nearendp[1] ) ||
-                             ( pt.y >= tree->farendp[1] ) ) {
-                            continue;
-                        }
+                		/* Discard out of bounds */
+                		if ( ( pt.y < tree->nearendp[1] ) ||
+                				( pt.y >= tree->farendp[1] ) ) {
+                			continue;
+                		}
 
-                        for (xtick = 0; xtick < 2; xtick++) {
+                		for (xtick = 0; xtick < 2; xtick++) {
 
-                            pt.x = nx - xtick;
+                			pt.x = nx - 2*xtick; /* used to be nx - xtick*/
 
-                            /* Discard out of bounds */
-                            if ( ( pt.x < tree->nearendp[0] ) ||
-                                 ( pt.x >= tree->farendp[0] ) ) {
-                                continue;
-                            }
+                			/* Discard out of bounds */
+                			if ( ( pt.x < tree->nearendp[0] ) ||
+                					( pt.x >= tree->farendp[0] ) ) {
+                				continue;
+                			}
 
-                            /* If we pushed the surface down for bldgs... */
-                            if ( tree->surfacep > 0 ) {
+                			/* If we pushed the surface down for bldgs... */
+                			if ( tree->surfacep > 0 ) {
 
-                                /* ...and the point is above the surface... */
-                                if ( pt.z < tree->surfacep ) {
+                				/* ...and the point is above the surface... */
+                				if ( pt.z < tree->surfacep ) {
 
-                                    /* ...and does not belong to any bldg... */
-                                    int res = bldgs_nodesearch(
-                                            pt.x, pt.y, pt.z, tree->ticksize);
+                					/* ...and does not belong to any bldg... */
+                					int res = bldgs_nodesearch_com(
+                							pt.x, pt.y, pt.z, tree->ticksize);
 
-                                    if ( res == 0 ) {
+                					if ( res == 0 ) {
 
-                                        /* ...then, discard 'air' nodes! */
-                                        continue;
-                                    }
-                                }
-                            }
+                						/* ...then, discard 'air' nodes! */
+                						continue;
+                					}
 
-                            /* Find who possess the pixel */
-                            procid = math_zsearch(tree->com->interval,
-                                                  tree->groupsize, &pt);
+                					/* ...and it belongs to any pushdown... */
+                					res = pushdowns_nodesearch(
+                							pt.x, pt.y, pt.z, tree->ticksize);
 
-			    /* Sanity check introduced after the buildings
-			     * options were incorporated. Should never occur */
-			    if ( ( procid < 0 ) ||
-			         ( procid > tree->groupsize ) ) {
-	                        fprintf(stderr,
-	                                "Thread %d: wrong procid from math "
-	                                "search at octor_extractmesh direct "
-	                                "sharing in vertex with coords "
-	                                "x,y,z = %f %f %f\n",
-	                                procid,
-	                                pt.x*tree->ticksize,
-	                                pt.y*tree->ticksize,
-	                                pt.z*tree->ticksize);
-			    }
+                					if ( res == -1 ) {
+                						continue;
+                						/* ...then, discard 'air' nodes! */
+                					}
+                				}
+                			}
 
-                            if (procid == tree->procid) {
+                			/* Find who possess the pixel */
+                			procid = math_zsearch(tree->com->interval,
+                					tree->groupsize, &pt);
 
-                                /* Discard my own nodes */
-                                continue;
+                			/* Sanity check introduced after the buildings
+                			 * options were incorporated. Should never occur */
+                			if ( ( procid < 0 ) ||
+                					( procid > tree->groupsize ) ) {
+                				fprintf(stderr,
+                						"Thread %d: wrong procid from math "
+                						"search at octor_extractmesh direct "
+                						"sharing in vertex with coords "
+                						"x,y,z = %f %f %f\n",
+                						procid,
+                						pt.x*tree->ticksize,
+                						pt.y*tree->ticksize,
+                						pt.z*tree->ticksize);
+                			}
 
-                            } else {
+                			if (procid == tree->procid) {
 
-                                /* Owned by a remote processor */
+                				/* Discard my own nodes */
+                				continue;
 
-                                /* Assume it's the first occurrence */
-                                existed = 0;
+                			} else {
 
-                                for (idx = 0; idx < nbrs; idx++) {
-                                    if (procid == nbrprocid[idx]) {
-                                        /* Message created already */
-                                        existed = 1;
-                                        break;
-                                    }
-                                }
+                				/* Owned by a remote processor */
 
-                                if (existed)
-                                    continue;
-                                else {
-                                    nbrprocid[nbrs] = procid;
-                                    nbrs++;
-                                }
-                            }
+                				/* Assume it's the first occurrence */
+                				existed = 0;
 
-                        } /* xtick */
-                    } /* ytick */
+                				for (idx = 0; idx < nbrs; idx++) {
+                					if (procid == nbrprocid[idx]) {
+                						/* Message created already */
+                						existed = 1;
+                						break;
+                					}
+                				}
+
+                				if (existed)
+                					continue;
+                				else {
+                					nbrprocid[nbrs] = procid;
+                					nbrs++;
+                				}
+                			}
+
+                		} /* xtick */
+                	} /* ytick */
                 } /* ztick */
 
                 /* Create a message destined for the found (sharing)
@@ -5825,9 +5877,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                         ((dep & 0x2) ? smalloctsize : -smalloctsize);
 
                     if (tree->groupsize > 1) {
-                        node_harboranchored(tree, vertexHashTable, ecount,
-                                            linkpool, vertexpool, allcom,
-                                            pt, &harborcount);
+                    	node_harboranchored(tree, vertexHashTable, ecount,
+                    			linkpool, vertexpool, allcom,
+                    			pt, &harborcount, bldgs_nodesearch_com,
+                    			pushdowns_nodesearch);
                     }
                 }
 
@@ -5844,9 +5897,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                         ((dep & 0x2) ? smalloctsize : -smalloctsize);
 
                     if (tree->groupsize > 1) {
-                        node_harboranchored(tree, vertexHashTable, ecount,
-                                            linkpool, vertexpool, allcom,
-                                            pt, &harborcount);
+                    	node_harboranchored(tree, vertexHashTable, ecount,
+                    			linkpool, vertexpool, allcom,
+                    			pt, &harborcount,bldgs_nodesearch_com,
+                    			pushdowns_nodesearch);
                     }
                 }
                 break;
@@ -5862,9 +5916,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                         ((dep & 0x2) ? smalloctsize : -smalloctsize);
 
                     if (tree->groupsize > 1) {
-                        node_harboranchored(tree, vertexHashTable, ecount,
-                                            linkpool, vertexpool, allcom,
-                                            pt, &harborcount);
+                    	node_harboranchored(tree, vertexHashTable, ecount,
+                    			linkpool, vertexpool, allcom,
+                    			pt, &harborcount,bldgs_nodesearch_com,
+                    			pushdowns_nodesearch);
                     }
                 }
                 break;
@@ -5879,9 +5934,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                     pt.z = vertex->z;
 
                     if (tree->groupsize > 1) {
-                        node_harboranchored(tree, vertexHashTable, ecount,
-                                            linkpool, vertexpool, allcom,
-                                            pt, &harborcount);
+                    	node_harboranchored(tree, vertexHashTable, ecount,
+                    			linkpool, vertexpool, allcom,
+                    			pt, &harborcount,bldgs_nodesearch_com,
+                    			pushdowns_nodesearch);
                     }
                 }
                 break;
@@ -5896,9 +5952,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                     pt.z = vertex->z;
 
                     if (tree->groupsize > 1) {
-                        node_harboranchored(tree, vertexHashTable, ecount,
-                                            linkpool, vertexpool, allcom,
-                                            pt, &harborcount);
+                    	node_harboranchored(tree, vertexHashTable, ecount,
+                    			linkpool, vertexpool, allcom,
+                    			pt, &harborcount,bldgs_nodesearch_com,
+                    			pushdowns_nodesearch);
                     }
                 }
                 break;
@@ -5914,9 +5971,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                     pt.y = vertex->y;
 
                     if (tree->groupsize > 1) {
-                        node_harboranchored(tree, vertexHashTable, ecount,
-                                            linkpool, vertexpool, allcom,
-                                            pt, &harborcount);
+                    	node_harboranchored(tree, vertexHashTable, ecount,
+                    			linkpool, vertexpool, allcom,
+                    			pt, &harborcount,bldgs_nodesearch_com,
+                    			pushdowns_nodesearch);
                     }
                 }
                 break;
@@ -6039,7 +6097,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
             node = &nodeTable[nindex];
 
             /* Adjust the node coordinate for ordering purpose. We
-               shall reverse the coordiante at later stage */
+               shall reverse the coordinate at later stage */
             node->x = (vertex->x == tree->farendp[0]) ?
                 tree->farbound[0] : vertex->x;
             node->y = (vertex->y == tree->farendp[1]) ?
@@ -6105,6 +6163,9 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
     } /* for all the hash table entries */
 
     /* Sort all the nodes I've harbored in ascending Z-order */
+    /* Yigit says --  Nodes on the building boundaries are not adjusted.
+     * But not sure if that is necessary */
+
     qsort(nodeTable, harborcount, sizeof(node_t), octor_zcompare);
 
     /* Set up the nodeCountTable and nodeStartTable, in a similar
