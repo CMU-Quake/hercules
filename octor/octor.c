@@ -584,7 +584,9 @@ static void    tree_setdistribution(tree_t *tree, int64_t **pCountTable,
 // static void  tree_showstat(tree_t *tree, int32_t mode, const char *comment);
 
 static int32_t tree_setcom(tree_t *tree, int32_t msgsize,
-		 	 	 	 	   bldgs_nodesearch_com_t *bldgs_nodesearch_com);
+                           bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+                           pushdowns_nodesearch_t *pushdowns_nodesearch);
+
 static void    tree_deletecom(tree_t *tree);
 
 static oct_t * tree_ascend(oct_t *oct, dir_t I, oct_stack_t *stackp);
@@ -842,7 +844,9 @@ static void      com_delete(com_t *com);
 static int32_t   com_allocpctl(com_t *com, int32_t msgsize, oct_t *first,
                                tick_t nearendp[3], tick_t farendp[3],
                                tick_t surfacep, double ticksize,
-                               bldgs_nodesearch_com_t *bldgs_nodesearch_com);
+                               bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+                               pushdowns_nodesearch_t *pushdowns_nodesearch);
+
 static int32_t   com_resetpctl(com_t *com, int32_t msgsize);
 
 
@@ -1255,15 +1259,17 @@ oct_getnextleaf(oct_t *oct)
 
 	for (which = whoami + 1; which < 8; which++) {
 		/* Move to the next one at the same level */
-		/* yigit says: do not return NULL ever */
 		if (parent->payload.interior->child[which] != NULL) {
-            oct_t *noct;
-            noct = oct_getleftmost(parent->payload.interior->child[which]);
+			/* yigit says: do not ever return NULL here since there maybe other local
+			 * octants beyond the NULL.(especially important when carving
+			 * or progressive meshing is on.) */
+			oct_t *noct;
+			noct = oct_getleftmost(parent->payload.interior->child[which]);
 			if (noct == NULL)
 				continue;
 			else
 				return noct;
-	}
+		}
 }
 
 	/* No more siblings on the same level. Go one level up */
@@ -2225,7 +2231,8 @@ tree_showstat(tree_t *tree, int32_t mode, const char *comment)
  *
  */
 static int32_t
-tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_com_t *bldgs_nodesearch_com)
+tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+		pushdowns_nodesearch_t *pushdowns_nodesearch)
 {
     /* Allocate a communication manager */
     tree->com = com_new(tree->procid, tree->groupsize);
@@ -2243,8 +2250,9 @@ tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_com_t *bldgs_nodesea
        constraint (balanced in mesh generation term).
     */
     if (com_allocpctl(tree->com, msgsize, tree->firstleaf,
-                      tree->nearendp, tree->farendp, tree->surfacep,
-                      tree->ticksize, bldgs_nodesearch_com) != 0)
+                       tree->nearendp, tree->farendp, tree->surfacep,
+                       tree->ticksize, bldgs_nodesearch_com,
+                       pushdowns_nodesearch) != 0)
         return -1;
 
     return 0;
@@ -2639,7 +2647,8 @@ com_delete(com_t *com)
 static int32_t
 com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
               tick_t nearendp[3], tick_t farendp[3], tick_t surfacep,
-              double ticksize, bldgs_nodesearch_com_t *bldgs_nodesearch_com)
+              double ticksize, bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+              pushdowns_nodesearch_t *pushdowns_nodesearch)
 {
     oct_t *oct;
     tick_t ox, oy, oz, increment;
@@ -2692,19 +2701,30 @@ com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
                     /* If we have pushed the surface down for buildings... */
                     if ( surfacep > 0 ) {
 
-                        /* ...and the point is above the surface... */
-                        if ( pt.z < surfacep ) {
+                    	/* ...and the point is above the surface... */
+                    	if ( pt.z < surfacep ) {
 
-                            /* ...and it does not belong to any building... */
-                            int res = bldgs_nodesearch_com(
-                                    pt.x, pt.y, pt.z, ticksize);
+                    		/* ...and it does not belong to any building... */
+                    		int res = bldgs_nodesearch_com(
+                    				pt.x, pt.y, pt.z, ticksize);
 
-                            if ( res == 0 ) {
+                    		if ( res == 0 ) {
 
-                                /* ...then, discard 'air' nodes! */
-                                continue;
-                            }
-                        }
+                    			/* ...then, discard 'air' nodes! */
+                    			continue;
+                    		}
+
+                    		/* ...and it belongs to any pushdown... */
+                    		res = pushdowns_nodesearch(
+                    				pt.x, pt.y, pt.z, ticksize);
+
+                    		if ( res == -1  ) {
+
+                    			/* ...then, discard 'air' nodes! */
+                    			continue;
+                    		}
+
+                    	}
                     }
 
                     /* Search the interval table */
@@ -3307,6 +3327,10 @@ node_setproperty ( tree_t             *tree,
     tick_t   masterMask;
     int8_t   masterLevel;
 
+    /* Yigit says: This function is vastly cleaned as buildings assume only
+     * anchored nodes now.
+     */
+
     /* Save local touches variable */
     int8_t touches = vertex->touches;
 
@@ -3736,7 +3760,8 @@ static void
 node_harboranchored(tree_t *tree, link_t **vertexHashTable,
                     int64_t ecount, mem_t *linkpool, mem_t *vertexpool,
                     com_t *allcom, point_t pt, int64_t *hbrcount,
-                    bldgs_nodesearch_com_t *bldgs_nodesearch_com)
+                    bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+                    pushdowns_nodesearch_t *pushdowns_nodesearch)
 {
     int32_t hashentry;
     link_t *link;
@@ -3803,8 +3828,11 @@ node_harboranchored(tree_t *tree, link_t **vertexHashTable,
         		int res = bldgs_nodesearch_com(
         				pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
 
-        		/* ... and point+1 is out of buildings  */
-        		if ( res == 0 ) {
+        		int res2 = pushdowns_nodesearch(
+        				pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
+
+        		/* ... and point+1 is out of buildings or in the pushdown  */
+        		if ( res == 0 || res2 == -1) {
 
         			/* ...then, adjust! */
 
@@ -3818,13 +3846,17 @@ node_harboranchored(tree_t *tree, link_t **vertexHashTable,
         					incrementx = - 1 + 2*xadjust;
         					incrementy = - 1 + 2*yadjust;
 
-        					/* If the point is inside the buildings
+        					/* If the point is inside the buildings and outside
+        					 * the pushdown
         					 */
         					if (bldgs_nodesearch_com(
         							pt.x + incrementx,
         							pt.y + incrementy,
         							pt.z + 1, tree->ticksize) == -1) {
-
+        						if	(pushdowns_nodesearch(
+        								pt.x + incrementx,
+        								pt.y + incrementy,
+        								pt.z + 1, tree->ticksize) == 0) {
 
         							adjustedpt.x += incrementx;
         							adjustedpt.y += incrementy;
@@ -3832,7 +3864,7 @@ node_harboranchored(tree_t *tree, link_t **vertexHashTable,
 
         							flag = 1;
         							break;
-
+        						}
         					}
         				}
         				if ( flag == 1 ) break;
@@ -3840,7 +3872,7 @@ node_harboranchored(tree_t *tree, link_t **vertexHashTable,
         		}
         	}
         }
-
+        /* End of the block ... */
 
         vertex->owner = math_zsearch(tree->com->interval, tree->com->groupsize,
                                      &adjustedpt);
@@ -4138,9 +4170,9 @@ octor_newtree(double x, double y, double z, int32_t recsize,
          * pass NULL for the buildings plug-in.
          */
         if (com_allocpctl(tree->com, 0, tree->firstleaf,
-                          tree->nearendp, tree->farendp, 0,
-                          tree->ticksize, NULL) != 0)
-            return NULL;
+        		tree->nearendp, tree->farendp, 0,
+        		tree->ticksize, NULL, NULL) != 0)
+        	return NULL;
 
     } else {
         /* Single processor mode */
@@ -4684,7 +4716,8 @@ void backfire_parent(oct_t *parent) {
 
 extern void
 octor_carvebuildings(octree_t *octree, int flag,
-		             bldgs_nodesearch_com_t *bldgs_nodesearch_com)
+                     bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+                     pushdowns_search_t *pushdowns_search)
 {
 	tree_t  *tree = (tree_t *)octree;
 	oct_t   *oct, *nextOct;
@@ -4725,10 +4758,15 @@ octor_carvebuildings(octree_t *octree, int flag,
 		double Vp;
 
 		myCount++;
-
 		edata = (edata_t *)oct->payload.leaf->data;
-		Vp = edata->Vp;
 
+		/* Octants belonging to pushdowns are eliminated here. yigit */
+
+		if (pushdowns_search(oct->lx,oct->ly,oct->lz,tree->ticksize) ) {
+			edata->Vp = -1;
+		}
+
+		Vp = edata->Vp;
 		nextOct = oct_getnextleaf(oct);
 
 		if ( Vp < 0 ) {//yigit
@@ -4747,7 +4785,7 @@ octor_carvebuildings(octree_t *octree, int flag,
 			 * is not called right after balancing. However, if you need toleaf,
 			 * you can uncomment the following command and the block above. */
 
-			 oct_unlinkleaf(oct, tree->toleaf);
+			oct_unlinkleaf(oct, tree->toleaf);
 
 			/* Modify the statistics */
 			tree->leafcount[(int32_t)oct->level]--;
@@ -4784,7 +4822,7 @@ octor_carvebuildings(octree_t *octree, int flag,
  *
  */
 extern int32_t
-octor_partitiontree(octree_t *octree, bldgs_nodesearch_com_t *bldgs_nodesearch_com)
+octor_partitiontree(octree_t *octree, bldgs_nodesearch_com_t *bldgs_nodesearch_com,pushdowns_nodesearch_t *pushdowns_nodesearch)
 {
     tree_t *tree = (tree_t *)octree;
     int32_t start_procid, end_procid, bin_procid;
@@ -5122,7 +5160,7 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_com_t *bldgs_nodesearch_c
      *
      * tree_deletecom(tree);
      *
-     * if (tree_setcom(tree, 0, bldgs_nodesearch_com) != 0) {
+     * if (tree_setcom(tree, 0, bldgs_nodesearch_com,pushdowns_nodesearch) != 0) {
      *     fprintf(stderr,
      *             "Thread %d: %s %d: fail to create new communication manager\n",
      *             tree->procid, __FILE__, __LINE__);
@@ -5148,6 +5186,7 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_com_t *bldgs_nodesearch_c
  */
 extern mesh_t *
 octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
+		pushdowns_nodesearch_t *pushdowns_nodesearch,
 		bldgs_nodesearch_com_t *bldgs_nodesearch_com)
 {
     tree_t *tree = (tree_t *)octree;
@@ -5198,7 +5237,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
 
     	tree_deletecom(tree);
 
-    	if (tree_setcom(tree, 0, bldgs_nodesearch_com) != 0) {
+    	if (tree_setcom(tree, 0, bldgs_nodesearch_com,pushdowns_nodesearch) != 0) {
     		fprintf(stderr,
     				"Thread %d: %s %d: fail to create new communication manager\n",
     				tree->procid, __FILE__, __LINE__);
@@ -5367,10 +5406,11 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         		int res = bldgs_nodesearch_com(
                         				pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
 
-
+                        		int res2 = pushdowns_nodesearch(
+                        				pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
 
                         		/* ... and point+1 is out of buildings or in the pushdown  */
-                        		if ( res == 0 ) {
+                        		if ( res == 0 || res2 == -1) {
 
                         			/* ...then, adjust! */
 
@@ -5390,15 +5430,18 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         							pt.x + incrementx,
                         							pt.y + incrementy,
                         							pt.z + 1, tree->ticksize) == -1) {
+                        						if	(pushdowns_nodesearch(
+                        								pt.x + incrementx,
+                        								pt.y + incrementy,
+                        								pt.z + 1, tree->ticksize) == 0) {
 
+                        							adjustedpt.x += incrementx;
+                        							adjustedpt.y += incrementy;
+                        							adjustedpt.z += 1;
 
-                        						adjustedpt.x += incrementx;
-                        						adjustedpt.y += incrementy;
-                        						adjustedpt.z += 1;
-
-                        						flag = 1;
-                        						break;
-
+                        							flag = 1;
+                        							break;
+                        						}
                         					}
                         				}
                         				if ( flag == 1 ) break;
@@ -5484,7 +5527,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     continue;
                 }
 
-                /* Yigit says -- +1 is added so that each search point is
+                /* Yigit says -- +1(nx,ny,nz) is added so that each search point is
                  * located inside the elements. This is important to identify
                  * the air elements easily. */
                 nx = vertex->x + 1 ;
@@ -5497,101 +5540,110 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                 /* Find which neighbor(s) processor share this vertex */
                 for (ztick = 0; ztick < 2; ztick++) {
 
-                    pt.z = nz - 2*ztick; /* used to be nz - ztick*/
+                	pt.z = nz - 2*ztick; /* used to be nz - ztick*/
 
-                    /* Discard out of bounds */
-                    if ( ( pt.z < tree->nearendp[2] ) ||
-                         ( pt.z >= tree->farendp[2] ) ) {
-                        continue;
-                    }
+                	/* Discard out of bounds */
+                	if ( ( pt.z < tree->nearendp[2] ) ||
+                			( pt.z >= tree->farendp[2] ) ) {
+                		continue;
+                	}
 
-                    for (ytick = 0; ytick < 2; ytick++) {
+                	for (ytick = 0; ytick < 2; ytick++) {
 
-                        pt.y = ny - 2*ytick; /* used to be ny - ytick*/
+                		pt.y = ny - 2*ytick; /* used to be ny - ytick*/
 
-                        /* Discard out of bounds */
-                        if ( ( pt.y < tree->nearendp[1] ) ||
-                             ( pt.y >= tree->farendp[1] ) ) {
-                            continue;
-                        }
+                		/* Discard out of bounds */
+                		if ( ( pt.y < tree->nearendp[1] ) ||
+                				( pt.y >= tree->farendp[1] ) ) {
+                			continue;
+                		}
 
-                        for (xtick = 0; xtick < 2; xtick++) {
+                		for (xtick = 0; xtick < 2; xtick++) {
 
-                            pt.x = nx - 2*xtick; /* used to be nx - xtick*/
+                			pt.x = nx - 2*xtick; /* used to be nx - xtick*/
 
-                            /* Discard out of bounds */
-                            if ( ( pt.x < tree->nearendp[0] ) ||
-                                 ( pt.x >= tree->farendp[0] ) ) {
-                                continue;
-                            }
+                			/* Discard out of bounds */
+                			if ( ( pt.x < tree->nearendp[0] ) ||
+                					( pt.x >= tree->farendp[0] ) ) {
+                				continue;
+                			}
 
-                            /* If we pushed the surface down for bldgs... */
-                            if ( tree->surfacep > 0 ) {
+                			/* If we pushed the surface down for bldgs... */
+                			if ( tree->surfacep > 0 ) {
 
-                                /* ...and the point is above the surface... */
-                                if ( pt.z < tree->surfacep ) {
+                				/* ...and the point is above the surface... */
+                				if ( pt.z < tree->surfacep ) {
 
-                                    /* ...and does not belong to any bldg... */
-                                    int res = bldgs_nodesearch_com(
-                                            pt.x, pt.y, pt.z, tree->ticksize);
+                					/* ...and does not belong to any bldg... */
+                					int res = bldgs_nodesearch_com(
+                							pt.x, pt.y, pt.z, tree->ticksize);
 
-                                    if ( res == 0 ) {
+                					if ( res == 0 ) {
 
-                                        /* ...then, discard 'air' nodes! */
-                                        continue;
-                                    }
-                                }
-                            }
+                						/* ...then, discard 'air' nodes! */
+                						continue;
+                					}
 
-                            /* Find who possess the pixel */
-                            procid = math_zsearch(tree->com->interval,
-                                                  tree->groupsize, &pt);
+                					/* ...and it belongs to any pushdown... */
+                					res = pushdowns_nodesearch(
+                							pt.x, pt.y, pt.z, tree->ticksize);
 
-			    /* Sanity check introduced after the buildings
-			     * options were incorporated. Should never occur */
-			    if ( ( procid < 0 ) ||
-			         ( procid > tree->groupsize ) ) {
-	                        fprintf(stderr,
-	                                "Thread %d: wrong procid from math "
-	                                "search at octor_extractmesh direct "
-	                                "sharing in vertex with coords "
-	                                "x,y,z = %f %f %f\n",
-	                                procid,
-	                                pt.x*tree->ticksize,
-	                                pt.y*tree->ticksize,
-	                                pt.z*tree->ticksize);
-			    }
+                					if ( res == -1 ) {
+                						continue;
+                						/* ...then, discard 'air' nodes! */
+                					}
+                				}
+                			}
 
-                            if (procid == tree->procid) {
+                			/* Find who possess the pixel */
+                			procid = math_zsearch(tree->com->interval,
+                					tree->groupsize, &pt);
 
-                                /* Discard my own nodes */
-                                continue;
+                			/* Sanity check introduced after the buildings
+                			 * options were incorporated. Should never occur */
+                			if ( ( procid < 0 ) ||
+                					( procid > tree->groupsize ) ) {
+                				fprintf(stderr,
+                						"Thread %d: wrong procid from math "
+                						"search at octor_extractmesh direct "
+                						"sharing in vertex with coords "
+                						"x,y,z = %f %f %f\n",
+                						procid,
+                						pt.x*tree->ticksize,
+                						pt.y*tree->ticksize,
+                						pt.z*tree->ticksize);
+                			}
 
-                            } else {
+                			if (procid == tree->procid) {
 
-                                /* Owned by a remote processor */
+                				/* Discard my own nodes */
+                				continue;
 
-                                /* Assume it's the first occurrence */
-                                existed = 0;
+                			} else {
 
-                                for (idx = 0; idx < nbrs; idx++) {
-                                    if (procid == nbrprocid[idx]) {
-                                        /* Message created already */
-                                        existed = 1;
-                                        break;
-                                    }
-                                }
+                				/* Owned by a remote processor */
 
-                                if (existed)
-                                    continue;
-                                else {
-                                    nbrprocid[nbrs] = procid;
-                                    nbrs++;
-                                }
-                            }
+                				/* Assume it's the first occurrence */
+                				existed = 0;
 
-                        } /* xtick */
-                    } /* ytick */
+                				for (idx = 0; idx < nbrs; idx++) {
+                					if (procid == nbrprocid[idx]) {
+                						/* Message created already */
+                						existed = 1;
+                						break;
+                					}
+                				}
+
+                				if (existed)
+                					continue;
+                				else {
+                					nbrprocid[nbrs] = procid;
+                					nbrs++;
+                				}
+                			}
+
+                		} /* xtick */
+                	} /* ytick */
                 } /* ztick */
 
                 /* Create a message destined for the found (sharing)
@@ -5825,9 +5877,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         ((dep & 0x2) ? smalloctsize : -smalloctsize);
 
                     if (tree->groupsize > 1) {
-                        node_harboranchored(tree, vertexHashTable, ecount,
-                                            linkpool, vertexpool, allcom,
-                                            pt, &harborcount,bldgs_nodesearch_com);
+                    	node_harboranchored(tree, vertexHashTable, ecount,
+                    			linkpool, vertexpool, allcom,
+                    			pt, &harborcount, bldgs_nodesearch_com,
+                    			pushdowns_nodesearch);
                     }
                 }
 
@@ -5844,9 +5897,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         ((dep & 0x2) ? smalloctsize : -smalloctsize);
 
                     if (tree->groupsize > 1) {
-                        node_harboranchored(tree, vertexHashTable, ecount,
-                                            linkpool, vertexpool, allcom,
-                                            pt, &harborcount,bldgs_nodesearch_com);
+                    	node_harboranchored(tree, vertexHashTable, ecount,
+                    			linkpool, vertexpool, allcom,
+                    			pt, &harborcount,bldgs_nodesearch_com,
+                    			pushdowns_nodesearch);
                     }
                 }
                 break;
@@ -5862,9 +5916,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         ((dep & 0x2) ? smalloctsize : -smalloctsize);
 
                     if (tree->groupsize > 1) {
-                        node_harboranchored(tree, vertexHashTable, ecount,
-                                            linkpool, vertexpool, allcom,
-                                            pt, &harborcount,bldgs_nodesearch_com);
+                    	node_harboranchored(tree, vertexHashTable, ecount,
+                    			linkpool, vertexpool, allcom,
+                    			pt, &harborcount,bldgs_nodesearch_com,
+                    			pushdowns_nodesearch);
                     }
                 }
                 break;
@@ -5879,9 +5934,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     pt.z = vertex->z;
 
                     if (tree->groupsize > 1) {
-                        node_harboranchored(tree, vertexHashTable, ecount,
-                                            linkpool, vertexpool, allcom,
-                                            pt, &harborcount,bldgs_nodesearch_com);
+                    	node_harboranchored(tree, vertexHashTable, ecount,
+                    			linkpool, vertexpool, allcom,
+                    			pt, &harborcount,bldgs_nodesearch_com,
+                    			pushdowns_nodesearch);
                     }
                 }
                 break;
@@ -5896,9 +5952,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     pt.z = vertex->z;
 
                     if (tree->groupsize > 1) {
-                        node_harboranchored(tree, vertexHashTable, ecount,
-                                            linkpool, vertexpool, allcom,
-                                            pt, &harborcount,bldgs_nodesearch_com);
+                    	node_harboranchored(tree, vertexHashTable, ecount,
+                    			linkpool, vertexpool, allcom,
+                    			pt, &harborcount,bldgs_nodesearch_com,
+                    			pushdowns_nodesearch);
                     }
                 }
                 break;
@@ -5914,9 +5971,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     pt.y = vertex->y;
 
                     if (tree->groupsize > 1) {
-                        node_harboranchored(tree, vertexHashTable, ecount,
-                                            linkpool, vertexpool, allcom,
-                                            pt, &harborcount,bldgs_nodesearch_com);
+                    	node_harboranchored(tree, vertexHashTable, ecount,
+                    			linkpool, vertexpool, allcom,
+                    			pt, &harborcount,bldgs_nodesearch_com,
+                    			pushdowns_nodesearch);
                     }
                 }
                 break;

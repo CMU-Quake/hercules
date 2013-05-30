@@ -195,6 +195,12 @@ typedef int bldgs_nodesearch_t ( tick_t x, tick_t y, tick_t z,
 typedef int bldgs_nodesearch_com_t ( tick_t x, tick_t y, tick_t z,
                                  double ticksize );
 
+typedef int pushdowns_nodesearch_t ( tick_t x, tick_t y, tick_t z,
+                                 double ticksize );
+
+typedef int pushdowns_search_t ( tick_t x, tick_t y, tick_t z,
+                                 double ticksize );
+
 /***************************/
 /* Octant-level operations */
 /***************************/
@@ -320,14 +326,17 @@ octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor);
 
 extern void
 octor_carvebuildings(octree_t *octree, int flag,
-					 bldgs_nodesearch_com_t *bldgs_nodesearch_com);
+                     bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+                     pushdowns_search_t *pushdowns_search);
 
 extern int32_t
-octor_partitiontree(octree_t *octree, bldgs_nodesearch_com_t *bldgs_nodesearch_com);
+octor_partitiontree(octree_t *octree, bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+		pushdowns_nodesearch_t *pushdowns_nodesearch);
 
 extern mesh_t *
 octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
-				  bldgs_nodesearch_com_t *bldgs_nodesearch_com);
+		pushdowns_nodesearch_t *pushdowns_nodesearch,
+		bldgs_nodesearch_com_t *bldgs_nodesearch_com);
 
 extern void
 octor_deletemesh(mesh_t *mesh);

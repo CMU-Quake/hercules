@@ -33,6 +33,10 @@ int bldgs_nodesearch ( tick_t x, tick_t y, tick_t z, double ticksize );
 
 int bldgs_nodesearch_com ( tick_t x, tick_t y, tick_t z, double ticksize );
 
+int pushdowns_nodesearch ( tick_t x, tick_t y, tick_t z, double ticksize );
+
+int pushdowns_search ( tick_t x, tick_t y, tick_t z, double ticksize);
+
 int bldgs_setrec   ( octant_t *leaf,
                      double    ticksize,
                      edata_t  *edata,

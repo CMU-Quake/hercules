@@ -1019,7 +1019,7 @@ int main(int argc, char **argv)
     if (myID == 0) {
 	fprintf(stdout, "octor_partitiontree ...");
     }
-    if (octor_partitiontree(myOctree, NULL) != 0) {
+    if (octor_partitiontree(myOctree, NULL,NULL) != 0) {
 	fprintf(stderr, "Thread %d: fail to balance load\n", myID);
 	MPI_Abort(MPI_COMM_WORLD, ERROR);
 	exit(1);
@@ -1035,7 +1035,7 @@ int main(int argc, char **argv)
     if (myID == 0) {
 	fprintf(stdout, "octor_extractmesh ... ");
     }
-    mesh = octor_extractmesh(myOctree, NULL,NULL);
+    mesh = octor_extractmesh(myOctree, NULL,NULL,NULL);
     if (mesh == NULL) {
 	fprintf(stderr, "Thread %d: fail to extract mesh\n", myID);
 	MPI_Abort(MPI_COMM_WORLD, ERROR);

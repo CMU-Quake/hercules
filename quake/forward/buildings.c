@@ -56,6 +56,14 @@ typedef struct bldg_t {
 
 } bldg_t;
 
+typedef struct pdown_t {
+
+	double       height;
+	double       depth;
+	bounds_t     bounds;
+
+} pdown_t;
+
 typedef struct basenode_t {
     lnid_t nindex;
     int    bldg;
@@ -77,9 +85,11 @@ static fvector_t  **theBaseSignals;
 /* Permanent */
 
 static int      theNumberOfBuildings;
+static int      theNumberOfPushdowns;
 static double   theMinOctSizeMeters;
 static double   theSurfaceShift = 0;
 static bldg_t  *theBuilding;
+static pdown_t  *thePushdown;
 
 /* Transient */
 
@@ -93,7 +103,10 @@ static double  *theBuildingsXMin,  *theBuildingsXMax;
 static double  *theBuildingsYMin,  *theBuildingsYMax;
 static double  *theBuildingsZMin,  *theBuildingsZMax;
 static double  *theBuildingsDepth, *theBuildingsHeight;
-
+static double  *thePushDownsXMin,  *thePushDownsXMax;
+static double  *thePushDownsYMin,  *thePushDownsYMax;
+static double  *thePushDownsZMin,  *thePushDownsZMax;
+static double  *thePushDownsDepth, *thePushDownsHeight;
 /* -------------------------------------------------------------------------- */
 /*                         Private Method Prototypes                          */
 /* -------------------------------------------------------------------------- */
@@ -104,6 +117,7 @@ int crossing_rule ( tick_t   tickcoord,
                     double   bound );
 
 bounds_t get_bldgbounds( int i );
+bounds_t get_pushdownbounds( int i );
 
 void get_airprops( octant_t *leaf, double ticksize,
                    edata_t *edata, etree_t *cvm,
@@ -123,6 +137,13 @@ int bldg_exclusivesearch ( tick_t   x,
                            double   ticksize,
                            edata_t *edata,
                            int      bldg );
+
+int pushdown_exclusivesearch ( tick_t   x,
+							   tick_t   y,
+		                       tick_t   z,
+		                       double   ticksize,
+		                       int      bldg );
+
 
 int bldg_meshingsearch ( octant_t *leaf,
                          double    ticksize,
@@ -194,6 +215,12 @@ bounds_t get_bldgbounds( int i ) {
 
     return theBuilding[i].bounds;
 }
+
+bounds_t get_pushdownbounds( int i ) {
+
+	 return thePushdown[i].bounds;
+}
+
 
 cvmpayload_t get_props( int i, double z ) {
 
@@ -386,6 +413,35 @@ int bldg_exclusivesearch ( tick_t   x,
     return 0;
 }
 
+
+/**
+  * Return 1 if a node is in a pushdown, 0 otherwise. with left-upper-front
+  */
+ int pushdown_exclusivesearch ( tick_t   x,
+		 tick_t   y,
+		 tick_t   z,
+		 double   ticksize,
+		 int      pushdown )
+ {
+
+	 double   x_m, y_m, z_m;
+	 bounds_t bounds;
+
+	 x_m = x * ticksize;
+	 y_m = y * ticksize;
+	 z_m = z * ticksize;
+
+	 bounds = get_pushdownbounds( pushdown );
+
+	 if ( exclusivesearch(x_m, y_m, z_m, bounds) ) {
+		 return 1;
+	 }
+
+	 return 0;
+ }
+
+
+
 /**
  * Return 1 if an element is in the building+foundation, 0 otherwise.
  */
@@ -468,6 +524,26 @@ int bldgs_search ( octant_t *leaf, double ticksize, edata_t *edata ) {
     return 0;
 }
 
+
+/**
+  * Return N if the element belongs to a pushdown, N being the n-th pushdown
+  * Return 0 otherwise.
+  */
+int pushdowns_search ( tick_t x, tick_t y, tick_t z, double ticksize) {
+
+	int i;
+
+	for ( i = 0; i < theNumberOfPushdowns; i++ ) {
+		if ( pushdown_exclusivesearch( x, y, z, ticksize, i ) == 1 ) {
+			/* the i-th pushdown has index i-1 */
+			return i+1;
+		}
+	}
+
+	return 0;
+}
+
+
 /**
  * Depending on the position of a node wrt to a building it returns:
  *      0: out of building bounds,
@@ -523,6 +599,35 @@ int bldgs_nodesearch ( tick_t x, tick_t y, tick_t z, double ticksize ) {
 
 	 for ( i = 0; i < theNumberOfBuildings; i++ ) {
 		 bounds_t bounds = get_bldgbounds(i);
+		 if ( inclusivesearch(x_m, y_m, z_m, bounds) ) {
+			 if ( ininteriorsearch(x_m, y_m, z_m, bounds) ) {
+				 return -1;
+			 }
+			 /* on a face */
+			 return 1;
+		 }
+	 }
+	 return 0;
+ }
+
+
+ /**
+  * Depending on the position of a node wrt to a pushdown  it returns:
+  *  0: out of pushdown bounds,
+  * -1: in the interior of a pushdown,
+  *  1: on a face of a pushdown.
+  */
+ int pushdowns_nodesearch ( tick_t x, tick_t y, tick_t z, double ticksize ) {
+
+	 int    i;
+	 double x_m, y_m, z_m;
+
+	 x_m = x * ticksize;
+	 y_m = y * ticksize;
+	 z_m = z * ticksize;
+
+	 for ( i = 0; i < theNumberOfPushdowns; i++ ) {
+		 bounds_t bounds = get_pushdownbounds(i);
 		 if ( inclusivesearch(x_m, y_m, z_m, bounds) ) {
 			 if ( ininteriorsearch(x_m, y_m, z_m, bounds) ) {
 				 return -1;
@@ -700,42 +805,48 @@ int bldgs_toexpand ( octant_t *leaf,
  */
 int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 {
-    int    i;
-    double ticksize;
-    tick_t x, y, z;
+	int    i;
+	double ticksize;
+	tick_t x, y, z;
 
-    /* Element's lower left coordinates in ticks */
-    x = myMesh->nodeTable[lnid0].x;
-    y = myMesh->nodeTable[lnid0].y;
-    z = myMesh->nodeTable[lnid0].z;
+	/* Element's lower left coordinates in ticks */
+	x = myMesh->nodeTable[lnid0].x;
+	y = myMesh->nodeTable[lnid0].y;
+	z = myMesh->nodeTable[lnid0].z;
 
-    /* ticks converter to physical coordinates */
-    ticksize = myMesh->ticksize;
+	/* ticks converter to physical coordinates */
+	ticksize = myMesh->ticksize;
 
-    for ( i = 0; i < theNumberOfBuildings; i++ ) {
+	/* If there is a pushdown, foundation properties should be set equal
+	 * to the those of the soil at the location of a pushdown.  */
 
-        if ( bldg_exclusivesearch( x, y, z, ticksize, edata, i) == 1 ) {
+	for ( i = 0; i < theNumberOfBuildings; i++ ) {
 
-            double z_m = z * ticksize;
+		if ( bldg_exclusivesearch( x, y, z, ticksize, edata, i) == 1 ) {
+			/* artificially set z = theSurfaceShift - 1 for irregular shaped fdnts. */
+			if ( ( pushdowns_search( x, y,
+					theSurfaceShift/ticksize - 1, ticksize) ) == 0 ) {
 
-            if ( z_m >= theSurfaceShift ) {
-                /* Element is in the foundation */
-                edata->Vp  = theBuilding[i].fdtnprops.Vp;
-                edata->Vs  = theBuilding[i].fdtnprops.Vs;
-                edata->rho = theBuilding[i].fdtnprops.rho;
-            } else {
-                /* Element is in the building */
-                edata->Vp  = theBuilding[i].bldgprops.Vp;
-                edata->Vs  = theBuilding[i].bldgprops.Vs;
-                edata->rho = theBuilding[i].bldgprops.rho;
-            }
+				double z_m = z * ticksize;
 
-            return 1;
-        }
-    }
+				if ( z_m >= theSurfaceShift ) {
+					/* Element is in the foundation */
+					edata->Vp  = theBuilding[i].fdtnprops.Vp;
+					edata->Vs  = theBuilding[i].fdtnprops.Vs;
+					edata->rho = theBuilding[i].fdtnprops.rho;
+				} else {
+					/* Element is in the building */
+					edata->Vp  = theBuilding[i].bldgprops.Vp;
+					edata->Vs  = theBuilding[i].bldgprops.Vs;
+					edata->rho = theBuilding[i].bldgprops.rho;
+				}
 
-    /* NOTE: If you want to see the carving process, activate this */
-/*
+				return 1;
+			}
+		}
+	}
+	/* NOTE: If you want to see the carving process, activate this */
+	/*
     double z_m = z * ticksize;
     if ( z_m < theSurfaceShift ) {
         edata->Vp  = -500;
@@ -743,9 +854,9 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
         edata->rho = -1500;
         return 1;
     }
-*/
+	 */
 
-    return 0;
+	return 0;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -756,7 +867,7 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 void bldgs_init ( int32_t myID, const char *parametersin )
 {
     int     i;
-    int     int_message[2];
+    int     int_message[3];
     double  double_message[2];
 
     /* Capturing data from file --- only done by PE0 */
@@ -776,14 +887,16 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     double_message[1] = theMinOctSizeMeters;
     int_message[0]    = theNumberOfBuildings;
     int_message[1]    = areBaseFixed;
+	int_message[2]    = theNumberOfPushdowns;
 
     MPI_Bcast(double_message, 2, MPI_DOUBLE, 0, comm_solver);
-    MPI_Bcast(int_message,    2, MPI_INT,    0, comm_solver);
+    MPI_Bcast(int_message,    3, MPI_INT,    0, comm_solver);
 
     theSurfaceShift      = double_message[0];
     theMinOctSizeMeters  = double_message[1];
     theNumberOfBuildings = int_message[0];
     areBaseFixed         = int_message[1];
+	theNumberOfPushdowns = int_message[2];
 
     /* allocate table of properties for all other PEs */
     if ( theNumberOfBuildings > 0 ) {
@@ -885,6 +998,59 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     	free(theFoundationsVs);
     	free(theFoundationsRho);
     }
+
+
+    if ( theNumberOfPushdowns > 0 ) {
+    	if (myID != 0) {
+
+    		thePushDownsXMin   = (double*)malloc( sizeof(double) * theNumberOfPushdowns );
+    		thePushDownsXMax   = (double*)malloc( sizeof(double) * theNumberOfPushdowns );
+    		thePushDownsYMin   = (double*)malloc( sizeof(double) * theNumberOfPushdowns );
+    		thePushDownsYMax   = (double*)malloc( sizeof(double) * theNumberOfPushdowns );
+    		thePushDownsZMin   = (double*)malloc( sizeof(double) * theNumberOfPushdowns );
+    		thePushDownsZMax   = (double*)malloc( sizeof(double) * theNumberOfPushdowns );
+    		thePushDownsHeight = (double*)malloc( sizeof(double) * theNumberOfPushdowns );
+    		thePushDownsDepth  = (double*)malloc( sizeof(double) * theNumberOfPushdowns );
+    	}
+
+    	MPI_Bcast(thePushDownsXMin,   theNumberOfPushdowns, MPI_DOUBLE, 0, comm_solver);
+    	MPI_Bcast(thePushDownsXMax,   theNumberOfPushdowns, MPI_DOUBLE, 0, comm_solver);
+    	MPI_Bcast(thePushDownsYMin,   theNumberOfPushdowns, MPI_DOUBLE, 0, comm_solver);
+    	MPI_Bcast(thePushDownsYMax,   theNumberOfPushdowns, MPI_DOUBLE, 0, comm_solver);
+    	MPI_Bcast(thePushDownsZMin,   theNumberOfPushdowns, MPI_DOUBLE, 0, comm_solver);
+    	MPI_Bcast(thePushDownsZMax,   theNumberOfPushdowns, MPI_DOUBLE, 0, comm_solver);
+    	MPI_Bcast(thePushDownsHeight, theNumberOfPushdowns, MPI_DOUBLE, 0, comm_solver);
+    	MPI_Bcast(thePushDownsDepth,  theNumberOfPushdowns, MPI_DOUBLE, 0, comm_solver);
+
+    	thePushdown = (pdown_t *)malloc( sizeof(pdown_t) * theNumberOfPushdowns );
+    	if ( thePushdown == NULL ) {
+    		solver_abort ( __FUNCTION_NAME, "NULL from malloc",
+    				"Error allocating thePushdown memory" );
+    	}
+
+    	for ( i = 0; i < theNumberOfPushdowns; i++ ) {
+
+    		thePushdown[i].bounds.xmin = thePushDownsXMin[i];
+    		thePushdown[i].bounds.xmax = thePushDownsXMax[i];
+    		thePushdown[i].bounds.ymin = thePushDownsYMin[i];
+    		thePushdown[i].bounds.ymax = thePushDownsYMax[i];
+    		thePushdown[i].bounds.zmin = thePushDownsZMin[i];
+    		thePushdown[i].bounds.zmax = thePushDownsZMax[i];
+
+    		thePushdown[i].height = thePushDownsHeight[i];
+    		thePushdown[i].depth  = thePushDownsDepth[i];
+    	}
+
+    	free(thePushDownsXMin);
+    	free(thePushDownsXMax);
+    	free(thePushDownsYMin);
+    	free(thePushDownsYMax);
+    	free(thePushDownsZMin);
+    	free(thePushDownsZMax);
+    	free(thePushDownsHeight);
+    	free(thePushDownsDepth);
+    }
+
     return;
 }
 
@@ -892,151 +1058,217 @@ void bldgs_init ( int32_t myID, const char *parametersin )
 int32_t
 buildings_initparameters ( const char *parametersin )
 {
-    FILE   *fp;
-    int     iBldg, numBldgs;
-    double  min_oct_size, surface_shift;
-    double *auxiliar;
-    char    consider_fixed_base[16];
+	FILE   *fp;
+	int     iBldg, numBldgs, numPushDown, iPDown;
+	double  min_oct_size, surface_shift;
+	double *auxiliar;
+	char    consider_fixed_base[16];
 
-    noyesflag_t fixedbase = -1;
+	noyesflag_t fixedbase = -1;
 
-    /* Opens parametersin file */
+	/* Opens parametersin file */
 
-    if ( ( fp = fopen(parametersin, "r" ) ) == NULL ) {
-        fprintf( stderr,
-                 "Error opening %s\n at buildings_initparameters",
-                 parametersin );
-        return -1;
-    }
+	if ( ( fp = fopen(parametersin, "r" ) ) == NULL ) {
+		fprintf( stderr,
+				"Error opening %s\n at buildings_initparameters",
+				parametersin );
+		return -1;
+	}
 
-    /* Parses parametersin to capture building single-value parameters */
+	/* Parses parametersin to capture building single-value parameters */
 
-    if ( ( parsetext(fp, "number_of_buildings", 'i', &numBldgs           ) != 0) ||
-         ( parsetext(fp, "min_octant_size_m",   'd', &min_oct_size       ) != 0) ||
-         ( parsetext(fp, "surface_shift_m",     'd', &surface_shift      ) != 0) ||
-         ( parsetext(fp, "consider_fixed_base", 's', &consider_fixed_base) != 0) )
-    {
-        fprintf( stderr,
-                 "Error parsing building parameters from %s\n",
-                 parametersin );
-        return -1;
-    }
+	if ( ( parsetext(fp, "number_of_buildings", 'i', &numBldgs           ) != 0) ||
+			( parsetext(fp, "number_of_pushdowns", 'i', &numPushDown        ) != 0) ||
+			( parsetext(fp, "min_octant_size_m",   'd', &min_oct_size       ) != 0) ||
+			( parsetext(fp, "surface_shift_m",     'd', &surface_shift      ) != 0) ||
+			( parsetext(fp, "consider_fixed_base", 's', &consider_fixed_base) != 0) )
+	{
+		fprintf( stderr,
+				"Error parsing building parameters from %s\n",
+				parametersin );
+		return -1;
+	}
 
-    /* Performs sanity checks */
+	/* Performs sanity checks */
 
-    if ( numBldgs < 0 ) {
-        fprintf( stderr,
-                 "Illegal number of buildings %d\n",
-                 numBldgs );
-        return -1;
-    }
+	if ( numBldgs < 0 ) {
+		fprintf( stderr,
+				"Illegal number of buildings %d\n",
+				numBldgs );
+		return -1;
+	}
 
 
-    if ( min_oct_size < 0 ) {
-        fprintf( stderr,
-                 "Illegal minimum octant size for buildings %f\n",
-                 min_oct_size );
-        return -1;
-    }
+	if ( numPushDown < 0 ) {
+		fprintf( stderr,
+				"Illegal number of push-downs %d\n",
+				numPushDown );
+		return -1;
+	}
 
-    if ( surface_shift < 0 ) {
-        fprintf( stderr,
-                 "Illegal surface_shift for buildings %f\n",
-                 surface_shift );
-        return -1;
-    }
+	if ( min_oct_size < 0 ) {
+		fprintf( stderr,
+				"Illegal minimum octant size for buildings %f\n",
+				min_oct_size );
+		return -1;
+	}
 
-    if ( strcasecmp(consider_fixed_base, "yes") == 0 ) {
-        fixedbase = YES;
-    } else if ( strcasecmp(consider_fixed_base, "no") == 0 ) {
-        fixedbase = NO;
-    } else {
-        solver_abort( __FUNCTION_NAME, NULL,
-                "Unknown response for considering"
-                "fixed base option (yes or no): %s\n",
-                consider_fixed_base );
-    }
+	if ( surface_shift < 0 ) {
+		fprintf( stderr,
+				"Illegal surface_shift for buildings %f\n",
+				surface_shift );
+		return -1;
+	}
 
-    /* Initialize the static global variables */
+	if ( strcasecmp(consider_fixed_base, "yes") == 0 ) {
+		fixedbase = YES;
+	} else if ( strcasecmp(consider_fixed_base, "no") == 0 ) {
+		fixedbase = NO;
+	} else {
+		solver_abort( __FUNCTION_NAME, NULL,
+				"Unknown response for considering"
+				"fixed base option (yes or no): %s\n",
+				consider_fixed_base );
+	}
 
-    theNumberOfBuildings = numBldgs;
-    theMinOctSizeMeters  = min_oct_size;
-    theSurfaceShift      = surface_shift;
-    areBaseFixed         = fixedbase;
+	/* Initialize the static global variables */
 
-    /* Detour for fixed base option */
-    if ( areBaseFixed == YES ) {
-        fixedbase_read( fp );
-    }
+	theNumberOfBuildings = numBldgs;
+	theNumberOfPushdowns = numPushDown;
+	theMinOctSizeMeters  = min_oct_size;
+	theSurfaceShift      = surface_shift;
+	areBaseFixed         = fixedbase;
 
-    if ( numBldgs > 0 ) {
+	/* Detour for fixed base option */
+	if ( areBaseFixed == YES ) {
+		fixedbase_read( fp );
+	}
 
-    	auxiliar           = (double*)malloc( sizeof(double) * numBldgs * 12 );
-    	theBuildingsXMin   = (double*)malloc( sizeof(double) * numBldgs );
-    	theBuildingsXMax   = (double*)malloc( sizeof(double) * numBldgs );
-    	theBuildingsYMin   = (double*)malloc( sizeof(double) * numBldgs );
-    	theBuildingsYMax   = (double*)malloc( sizeof(double) * numBldgs );
-    	theBuildingsZMin   = (double*)malloc( sizeof(double) * numBldgs );
-    	theBuildingsZMax   = (double*)malloc( sizeof(double) * numBldgs );
-    	theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
-    	theBuildingsHeight = (double*)malloc( sizeof(double) * numBldgs );
-    	theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
-    	theBuildingsVp     = (double*)malloc( sizeof(double) * numBldgs );
-    	theBuildingsVs     = (double*)malloc( sizeof(double) * numBldgs );
-    	theBuildingsRho    = (double*)malloc( sizeof(double) * numBldgs );
-    	theFoundationsVp   = (double*)malloc( sizeof(double) * numBldgs );
-    	theFoundationsVs   = (double*)malloc( sizeof(double) * numBldgs );
-    	theFoundationsRho  = (double*)malloc( sizeof(double) * numBldgs );
+	if ( numBldgs > 0 ) {
 
-    	if ( ( auxiliar           == NULL ) ||
-    			( theBuildingsXMin   == NULL ) ||
-    			( theBuildingsXMax   == NULL ) ||
-    			( theBuildingsYMin   == NULL ) ||
-    			( theBuildingsYMax   == NULL ) ||
-    			( theBuildingsDepth  == NULL ) ||
-    			( theBuildingsHeight == NULL ) ||
-    			( theBuildingsVp     == NULL ) ||
-    			( theBuildingsVs     == NULL ) ||
-    			( theBuildingsRho    == NULL ) ||
-    			( theFoundationsVp   == NULL ) ||
-    			( theFoundationsVs   == NULL ) ||
-    			( theFoundationsRho  == NULL ) )
-    	{
-    		fprintf( stderr, "Errror allocating transient building arrays"
-    				"in buildings_initparameters " );
-    		return -1;
-    	}
+		auxiliar           = (double*)malloc( sizeof(double) * numBldgs * 12 );
+		theBuildingsXMin   = (double*)malloc( sizeof(double) * numBldgs );
+		theBuildingsXMax   = (double*)malloc( sizeof(double) * numBldgs );
+		theBuildingsYMin   = (double*)malloc( sizeof(double) * numBldgs );
+		theBuildingsYMax   = (double*)malloc( sizeof(double) * numBldgs );
+		theBuildingsZMin   = (double*)malloc( sizeof(double) * numBldgs );
+		theBuildingsZMax   = (double*)malloc( sizeof(double) * numBldgs );
+		theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
+		theBuildingsHeight = (double*)malloc( sizeof(double) * numBldgs );
+		theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
+		theBuildingsVp     = (double*)malloc( sizeof(double) * numBldgs );
+		theBuildingsVs     = (double*)malloc( sizeof(double) * numBldgs );
+		theBuildingsRho    = (double*)malloc( sizeof(double) * numBldgs );
+		theFoundationsVp   = (double*)malloc( sizeof(double) * numBldgs );
+		theFoundationsVs   = (double*)malloc( sizeof(double) * numBldgs );
+		theFoundationsRho  = (double*)malloc( sizeof(double) * numBldgs );
 
-    	if ( parsedarray( fp, "building_properties", numBldgs*12, auxiliar ) != 0)
-    	{
-    		fprintf( stderr,
-    				"Error parsing building_properties list from %s\n",
-    				parametersin );
-    		return -1;
-    	}
+		if ( ( auxiliar           == NULL ) ||
+				( theBuildingsXMin   == NULL ) ||
+				( theBuildingsXMax   == NULL ) ||
+				( theBuildingsYMin   == NULL ) ||
+				( theBuildingsYMax   == NULL ) ||
+				( theBuildingsDepth  == NULL ) ||
+				( theBuildingsHeight == NULL ) ||
+				( theBuildingsVp     == NULL ) ||
+				( theBuildingsVs     == NULL ) ||
+				( theBuildingsRho    == NULL ) ||
+				( theFoundationsVp   == NULL ) ||
+				( theFoundationsVs   == NULL ) ||
+				( theFoundationsRho  == NULL ) )
+		{
+			fprintf( stderr, "Errror allocating transient building arrays"
+					"in buildings_initparameters " );
+			return -1;
+		}
 
-    	/* We DO NOT convert physical coordinates into etree coordinates here */
-    	for (iBldg = 0; iBldg < numBldgs; iBldg++) {
+		if ( parsedarray( fp, "building_properties", numBldgs*12, auxiliar ) != 0)
+		{
+			fprintf( stderr,
+					"Error parsing building_properties list from %s\n",
+					parametersin );
+			return -1;
+		}
 
-    		theBuildingsXMin   [ iBldg ] = auxiliar [ iBldg * 12      ];
-    		theBuildingsXMax   [ iBldg ] = auxiliar [ iBldg * 12 +  1 ];
-    		theBuildingsYMin   [ iBldg ] = auxiliar [ iBldg * 12 +  2 ];
-    		theBuildingsYMax   [ iBldg ] = auxiliar [ iBldg * 12 +  3 ];
-    		theBuildingsDepth  [ iBldg ] = auxiliar [ iBldg * 12 +  4 ];
-    		theBuildingsHeight [ iBldg ] = auxiliar [ iBldg * 12 +  5 ];
-    		theBuildingsVp     [ iBldg ] = auxiliar [ iBldg * 12 +  6 ];
-    		theBuildingsVs     [ iBldg ] = auxiliar [ iBldg * 12 +  7 ];
-    		theBuildingsRho    [ iBldg ] = auxiliar [ iBldg * 12 +  8 ];
-    		theFoundationsVp   [ iBldg ] = auxiliar [ iBldg * 12 +  9 ];
-    		theFoundationsVs   [ iBldg ] = auxiliar [ iBldg * 12 + 10 ];
-    		theFoundationsRho  [ iBldg ] = auxiliar [ iBldg * 12 + 11 ];
-    	}
+		/* We DO NOT convert physical coordinates into etree coordinates here */
+		for (iBldg = 0; iBldg < numBldgs; iBldg++) {
 
-    	free( auxiliar );
-    }
+			theBuildingsXMin   [ iBldg ] = auxiliar [ iBldg * 12      ];
+			theBuildingsXMax   [ iBldg ] = auxiliar [ iBldg * 12 +  1 ];
+			theBuildingsYMin   [ iBldg ] = auxiliar [ iBldg * 12 +  2 ];
+			theBuildingsYMax   [ iBldg ] = auxiliar [ iBldg * 12 +  3 ];
+			theBuildingsDepth  [ iBldg ] = auxiliar [ iBldg * 12 +  4 ];
+			theBuildingsHeight [ iBldg ] = auxiliar [ iBldg * 12 +  5 ];
+			theBuildingsVp     [ iBldg ] = auxiliar [ iBldg * 12 +  6 ];
+			theBuildingsVs     [ iBldg ] = auxiliar [ iBldg * 12 +  7 ];
+			theBuildingsRho    [ iBldg ] = auxiliar [ iBldg * 12 +  8 ];
+			theFoundationsVp   [ iBldg ] = auxiliar [ iBldg * 12 +  9 ];
+			theFoundationsVs   [ iBldg ] = auxiliar [ iBldg * 12 + 10 ];
+			theFoundationsRho  [ iBldg ] = auxiliar [ iBldg * 12 + 11 ];
+		}
+
+		free( auxiliar );
+	}
+
+	if ( numPushDown > 0 ) {
+
+		auxiliar           = (double*)malloc( sizeof(double) * numPushDown * 6 );
+		thePushDownsXMin   = (double*)malloc( sizeof(double) * numPushDown );
+		thePushDownsXMax   = (double*)malloc( sizeof(double) * numPushDown );
+		thePushDownsYMin   = (double*)malloc( sizeof(double) * numPushDown );
+		thePushDownsYMax   = (double*)malloc( sizeof(double) * numPushDown );
+		thePushDownsZMin   = (double*)malloc( sizeof(double) * numPushDown );
+		thePushDownsZMax   = (double*)malloc( sizeof(double) * numPushDown );
+		thePushDownsHeight = (double*)malloc( sizeof(double) * numPushDown );
+		thePushDownsDepth  = (double*)malloc( sizeof(double) * numPushDown );
+
+		if   ( ( auxiliar         == NULL ) ||
+				( thePushDownsXMin   == NULL ) ||
+				( thePushDownsXMax   == NULL ) ||
+				( thePushDownsYMin   == NULL ) ||
+				( thePushDownsYMax   == NULL ) ||
+				( thePushDownsZMin   == NULL ) ||
+				( thePushDownsZMax   == NULL ) ||
+				( thePushDownsHeight == NULL ) ||
+				( thePushDownsDepth  == NULL ))
+
+		{
+			fprintf( stderr, "Errror allocating transient push-down arrays"
+					"in buildings_initparameters " );
+			return -1;
+		}
+
+
+		if ( parsedarray( fp, "pushdown_properties", numPushDown*6, auxiliar ) != 0)
+		{
+			fprintf( stderr,
+					"Error parsing pushdown_properties list from %s\n",
+					parametersin );
+			return -1;
+		}
+
+		/* We DO NOT convert physical coordinates into etree coordinates here */
+		for (iPDown = 0; iPDown < numPushDown; iPDown++) {
+
+			thePushDownsXMin   [ iPDown ] = auxiliar [ iPDown * 6      ];
+			thePushDownsXMax   [ iPDown ] = auxiliar [ iPDown * 6 +  1 ];
+			thePushDownsYMin   [ iPDown ] = auxiliar [ iPDown * 6 +  2 ];
+			thePushDownsYMax   [ iPDown ] = auxiliar [ iPDown * 6 +  3 ];
+			thePushDownsDepth  [ iPDown ] = auxiliar [ iPDown * 6 +  4 ];
+			thePushDownsHeight [ iPDown ] = auxiliar [ iPDown * 6 +  5 ];
+
+			/* thePushDownsDepth is set to 0, whatever the value is given
+			 * in the parameters file.*/
+
+			thePushDownsDepth  [ iPDown ] = 0;
+
+		}
+
+		free( auxiliar );
+	}
+
 	fclose(fp);
-
-    return 0;
+	return 0;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1247,34 +1479,57 @@ double adjust (double input) {
  */
 void adjust_dimensions ( ) {
 
-    int iBldg;
+	int iBldg,iPDown;
 
-    theSurfaceShift = adjust( theSurfaceShift );
+	theSurfaceShift = adjust( theSurfaceShift );
 
-    for (iBldg = 0; iBldg < theNumberOfBuildings; iBldg++) {
+	for (iBldg = 0; iBldg < theNumberOfBuildings; iBldg++) {
 
-        /* Compute Z limits based on surface shift and building vertical info */
-        theBuildingsZMin[iBldg] = theSurfaceShift - theBuildingsHeight[iBldg];
-        theBuildingsZMax[iBldg] = theSurfaceShift + theBuildingsDepth[iBldg];
+		/* Compute Z limits based on surface shift and building vertical info */
+		theBuildingsZMin[iBldg] = theSurfaceShift - theBuildingsHeight[iBldg];
+		theBuildingsZMax[iBldg] = theSurfaceShift + theBuildingsDepth[iBldg];
 
-        /* Correct Z-min to avoid negative coords. This occurs if the height
-         * of a building is greater than the surface shift (pushdown) */
-        if ( theBuildingsZMin[iBldg] < 0 ) {
-            theBuildingsZMin[iBldg] = 0;
-        }
+		/* Correct Z-min to avoid negative coords. This occurs if the height
+		 * of a building is greater than the surface shift (pushdown) */
+		if ( theBuildingsZMin[iBldg] < 0 ) {
+			theBuildingsZMin[iBldg] = 0;
+		}
 
-        theBuildingsXMin   [ iBldg ] = adjust( theBuildingsXMin   [ iBldg ] );
-        theBuildingsXMax   [ iBldg ] = adjust( theBuildingsXMax   [ iBldg ] );
-        theBuildingsYMin   [ iBldg ] = adjust( theBuildingsYMin   [ iBldg ] );
-        theBuildingsYMax   [ iBldg ] = adjust( theBuildingsYMax   [ iBldg ] );
-        theBuildingsZMin   [ iBldg ] = adjust( theBuildingsZMin   [ iBldg ] );
-        theBuildingsZMax   [ iBldg ] = adjust( theBuildingsZMax   [ iBldg ] );
-        theBuildingsDepth  [ iBldg ] = adjust( theBuildingsDepth  [ iBldg ] );
-        theBuildingsHeight [ iBldg ] = adjust( theBuildingsHeight [ iBldg ] );
+		theBuildingsXMin   [ iBldg ] = adjust( theBuildingsXMin   [ iBldg ] );
+		theBuildingsXMax   [ iBldg ] = adjust( theBuildingsXMax   [ iBldg ] );
+		theBuildingsYMin   [ iBldg ] = adjust( theBuildingsYMin   [ iBldg ] );
+		theBuildingsYMax   [ iBldg ] = adjust( theBuildingsYMax   [ iBldg ] );
+		theBuildingsZMin   [ iBldg ] = adjust( theBuildingsZMin   [ iBldg ] );
+		theBuildingsZMax   [ iBldg ] = adjust( theBuildingsZMax   [ iBldg ] );
+		theBuildingsDepth  [ iBldg ] = adjust( theBuildingsDepth  [ iBldg ] );
+		theBuildingsHeight [ iBldg ] = adjust( theBuildingsHeight [ iBldg ] );
 
-    }
+	}
 
-    return;
+	for (iPDown = 0; iPDown < theNumberOfPushdowns; iPDown++) {
+
+		/* Compute Z limits based on surface shift and building vertical info */
+		thePushDownsZMin[iPDown] = theSurfaceShift - thePushDownsHeight[iPDown];
+		thePushDownsZMax[iPDown] = theSurfaceShift + thePushDownsDepth[iPDown];
+
+		/* Correct Z-min to avoid negative coords. This occurs if the height
+		 * of a pushdown is greater than the surface shift (pushdown) */
+		if ( thePushDownsZMin[iPDown] < 0 ) {
+			thePushDownsZMin[iPDown] = 0;
+		}
+
+		thePushDownsXMin   [ iPDown ] = adjust( thePushDownsXMin   [ iPDown ] );
+		thePushDownsXMax   [ iPDown ] = adjust( thePushDownsXMax   [ iPDown ] );
+		thePushDownsYMin   [ iPDown ] = adjust( thePushDownsYMin   [ iPDown ] );
+		thePushDownsYMax   [ iPDown ] = adjust( thePushDownsYMax   [ iPDown ] );
+		thePushDownsZMin   [ iPDown ] = adjust( thePushDownsZMin   [ iPDown ] );
+		thePushDownsZMax   [ iPDown ] = adjust( thePushDownsZMax   [ iPDown ] );
+		thePushDownsDepth  [ iPDown ] = adjust( thePushDownsDepth  [ iPDown ] );
+		thePushDownsHeight [ iPDown ] = adjust( thePushDownsHeight [ iPDown ] );
+
+	}
+
+	return;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1285,6 +1540,10 @@ void bldgs_finalize() {
 
 	if ( theNumberOfBuildings > 0 ) {
 		free( theBuilding );
+	}
+
+	if ( theNumberOfPushdowns > 0 ) {
+		free( thePushdown );
 	}
 	return;
 }
