@@ -17,3 +17,4 @@ quake/forward/single_query
 
 *.[oa]
 *~
+*.DS_Store
