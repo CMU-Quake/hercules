@@ -1238,28 +1238,36 @@ oct_getleftmost(oct_t *oct)
 static oct_t *
 oct_getnextleaf(oct_t *oct)
 {
-    oct_t *parent;
-    int8_t whoami;
-    int32_t which;
+	oct_t *parent;
+	int8_t whoami;
+	int32_t which;
 
-    parent = oct->parent;
+	parent = oct->parent;
 
-    if (parent == NULL)
-        /* We are at the root, no next leaf oct exists */
-        return NULL;
+	if (parent == NULL)
+		/* We are at the root, no next leaf oct exists */
+		return NULL;
 
-    whoami = oct->which;;
+	whoami = oct->which;;
 
-    for (which = whoami + 1; which < 8; which++) {
-        /* Move to the next one at the same level */
-//yigit
-        if (parent->payload.interior->child[which] != NULL && parent->payload.interior->child[which]->where !=REMOTE) {
-            return oct_getleftmost(parent->payload.interior->child[which]);
-        }
-    }
+	for (which = whoami + 1; which < 8; which++) {
+		/* Move to the next one at the same level */
+		if (parent->payload.interior->child[which] != NULL) {
+			/* yigit says: do not ever return NULL here since there maybe other local
+			 * octants beyond the NULL.(especially important when carving
+			 * or progressive meshing is on.) */
+			oct_t *noct;
+			noct = oct_getleftmost(parent->payload.interior->child[which]);
+			if (noct == NULL)
+				continue;
+			else
+				return noct;
 
-    /* No more siblings on the same level. Go one level up */
-    return oct_getnextleaf(parent);
+		}
+	}
+
+	/* No more siblings on the same level. Go one level up */
+	return oct_getnextleaf(parent);
 }
 
 
@@ -1342,7 +1350,7 @@ oct_findneighbor(oct_t *oct, dir_t dir, oct_stack_t *stackp)
             mirror = tree_descend(ancestor, stackp);
 
         } else {
-            /* An edge neighbor may or may not share a common acnestor */
+            /* An edge neighbor may or may not share a common ancestor */
             dir_t O, sharedface;
 
             O = (dir_t)firstoctant->which;
@@ -2310,7 +2318,7 @@ tree_descend(oct_t *oct, oct_stack_t *stackp)
 {
 
 	/* Original code was...
-	 * 
+	 *
      * while (stackp->top > 0) {
      *     if ((oct == NULL) || (oct->type == LEAF)) {
      *         break;
@@ -2342,6 +2350,7 @@ tree_descend(oct_t *oct, oct_stack_t *stackp)
 
 			dir = (dir_t)stackp->dir[(int32_t)(stackp->top-1)];
 
+			/* This should only occur if oct->where = T_UNDEFINED || oct->where = REMOTE */
 			if (oct->payload.interior->child[dir] == NULL) {
 				return oct;
 			}
@@ -2353,7 +2362,7 @@ tree_descend(oct_t *oct, oct_stack_t *stackp)
 	} /* descend until we cannot go further down */
 
 	return oct;
-    
+
 }
 
 
@@ -4499,146 +4508,194 @@ octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
         oct = tree->toleaf[level];
         while (oct != NULL) {
 
-            for (dir = L; dir <= UF; dir = (dir_t) ((int)dir + 1)) {
+        	for (dir = L; dir <= UF; dir = (dir_t) ((int)dir + 1)) {
 
-                /* stack must be cleaned before calling oct_findneighbor */
-                stack.top = 0;
-                nbr = oct_findneighbor(oct, dir, &stack);
+        		/* This block is added to ignore the out of bound neighbors*/
+        		/* Find the procid that accomodate the LDB pixel
+            	 of an equal-sized neighbor */
+        		point_t octLDB;
+        		uint32_t dir_bits;
+        		tick_t edgesize_tick;
+        		edgesize_tick = (tick_t)1 << (PIXELLEVEL - oct->level);
 
-                /* Discard out of bounds */ //yigit
+        		dir_bits = theDirBitRep[dir];
 
-                if ( nbr != NULL ) {
-                	if ( ( nbr->lz < tree->nearendp[2] ) ||
-                			( nbr->lz >= tree->farendp[2] ) ) {
-                		continue;
-                	}
+        		/* Assign the coordinate of oct to its neighbor */
+        		octLDB = *(point_t *)&oct->lx;
 
-                	/* Discard out of bounds */
-                	if ( ( nbr->ly < tree->nearendp[1] ) ||
-                			( nbr->ly >= tree->farendp[1] ) ) {
-                		continue;
-                	}
+        		/* Adjust the x, y, z coordinate as necessary */
+
+        		if (dir_bits & LEFT)
+        			octLDB.x = oct->lx - edgesize_tick;
+
+        		if (dir_bits & RIGHT)
+        			octLDB.x = oct->lx + edgesize_tick;
+
+        		if (dir_bits & DOWN)
+        			octLDB.y = oct->ly - edgesize_tick;
+
+        		if (dir_bits & UP)
+        			octLDB.y = oct->ly + edgesize_tick;
+
+        		if (dir_bits & BACK)
+        			octLDB.z = oct->lz - edgesize_tick;
+
+        		if (dir_bits & FRONT)
+        			octLDB.z = oct->lz + edgesize_tick;
+
+        		if ((octLDB.x < tree->nearendp[0]) ||
+        				(octLDB.y < tree->nearendp[1]) ||
+        				(octLDB.z < tree->nearendp[2]) ||
+        				(octLDB.x >= tree->farendp[0]) ||
+        				(octLDB.y >= tree->farendp[1]) ||
+        				(octLDB.z >= tree->farendp[2])) {
+        			/* Ignore the out-of-bound neighbor oct */
+        			continue;
+        		}
+        		/* End of the block */
 
 
-                	/* Discard out of bounds */
-                	if ( ( nbr->lx < tree->nearendp[0] ) ||
-                			( nbr->lx >= tree->farendp[0] ) ) {
-                		continue;
-                	}
-                }
+        		/* stack must be cleaned before calling oct_findneighbor */
+        		stack.top = 0;
+        		nbr = oct_findneighbor(oct, dir, &stack);
 
-                /* Should never return NULL */
-                if ((nbr == NULL) || (nbr->level > oct->level - 2)) {
-                    /* Ignore a non-existent neighbor or a neighbor
+        		//        		/* Discard out of bounds */ //yigit
+        		//
+        		//        		if ( nbr != NULL ) {
+        		//        			if ( ( nbr->lz < tree->nearendp[2] ) ||
+        		//        					( nbr->lz >= tree->farendp[2] ) ) {
+        		//        				continue;
+        		//        			}
+        		//
+        		//        			/* Discard out of bounds */
+        		//        			if ( ( nbr->ly < tree->nearendp[1] ) ||
+        		//        					( nbr->ly >= tree->farendp[1] ) ) {
+        		//        				continue;
+        		//        			}
+        		//
+        		//
+        		//        			/* Discard out of bounds */
+        		//        			if ( ( nbr->lx < tree->nearendp[0] ) ||
+        		//        					( nbr->lx >= tree->farendp[0] ) ) {
+        		//        				continue;
+        		//        			}
+        		//        		}
+
+
+        		if ((nbr == NULL) || (nbr->level > oct->level - 2)) {
+        			/* Ignore a non-existent neighbor or a neighbor
                        that is small enough already */
-                    continue;
-                }
+        			continue;
+        		}
 
-                if (nbr->where == LOCAL) {
-                    if (tree_pushdown(nbr, tree, &stack, setrec) != 0) {
-                        fprintf(stderr, "Thread %d: %s %d: ",
-                                tree->procid, __FILE__, __LINE__);
-                        fprintf(stderr, "Cannot pushdown local neighbor\n");
-                        MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
-                    } else {
-                        continue;
-                    }
+        		if (nbr->where == LOCAL) {
+        			if (tree_pushdown(nbr, tree, &stack, setrec) != 0) {
+        				fprintf(stderr, "Thread %d: %s %d: ",
+        						tree->procid, __FILE__, __LINE__);
+        				fprintf(stderr, "Cannot pushdown local neighbor\n");
+        				MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+        			} else {
+        				continue;
+        			}
 
-                } else if (nbr->where != LOCAL) {
-					/* Note by Yigit+Ricardo: 
-					 * This condition used to be == REMOTE 
-					 * The change was made in the search for fixing 
-					 * progressive meshing issues */
+        		} else if (nbr->where != LOCAL) {
+        			/* Note by Yigit+Ricardo:
+        			 * This condition used to be == REMOTE
+        			 * The change was made in the search for fixing
+        			 * progressive meshing issues */
 
-                    /* This only happens if groupsize > 1. We have
+        			/* This only happens if groupsize > 1. We have
                        maintained the validity of tree->com throughout. */
 
-                    int32_t procid;
-                    pctl_t *topctl;
-                    point_t nbrLDB;
-                    uint32_t dirbits;
-                    tick_t edgesize;
+        			int32_t procid;
+        			pctl_t *topctl;
+        			point_t nbrLDB;
+        			uint32_t dirbits;
+        			tick_t edgesize;
 
-                    /* Find the procid that accomodate the LDB pixel
+        			/* Find the procid that accomodate the LDB pixel
                        of an equal-sized neighbor */
 
-                    edgesize = (tick_t)1 << (PIXELLEVEL - oct->level);
+        			edgesize = (tick_t)1 << (PIXELLEVEL - oct->level);
 
-                    dirbits = theDirBitRep[dir];
+        			dirbits = theDirBitRep[dir];
 
-                    /* Assign the coordinate of oct to its neighbor */
-                    nbrLDB = *(point_t *)&oct->lx;
+        			/* Assign the coordinate of oct to its neighbor */
+        			nbrLDB = *(point_t *)&oct->lx;
 
-                    /* Adjust the x, y, z coordinate as necessary */
+        			/* Adjust the x, y, z coordinate as necessary */
 
-                    if (dirbits & LEFT)
-                        nbrLDB.x = oct->lx - edgesize;
+        			if (dirbits & LEFT)
+        				nbrLDB.x = oct->lx - edgesize;
 
-                    if (dirbits & RIGHT)
-                        nbrLDB.x = oct->lx + edgesize;
+        			if (dirbits & RIGHT)
+        				nbrLDB.x = oct->lx + edgesize;
 
-                    if (dirbits & DOWN)
-                        nbrLDB.y = oct->ly - edgesize;
+        			if (dirbits & DOWN)
+        				nbrLDB.y = oct->ly - edgesize;
 
-                    if (dirbits & UP)
-                        nbrLDB.y = oct->ly + edgesize;
+        			if (dirbits & UP)
+        				nbrLDB.y = oct->ly + edgesize;
 
-                    if (dirbits & BACK)
-                        nbrLDB.z = oct->lz - edgesize;
+        			if (dirbits & BACK)
+        				nbrLDB.z = oct->lz - edgesize;
 
-                    if (dirbits & FRONT)
-                        nbrLDB.z = oct->lz + edgesize;
+        			if (dirbits & FRONT)
+        				nbrLDB.z = oct->lz + edgesize;
 
-                    if ((nbrLDB.x < tree->nearendp[0]) ||
-                        (nbrLDB.y < tree->nearendp[1]) ||
-                        (nbrLDB.z < tree->nearendp[2]) ||
-                        (nbrLDB.x >= tree->farendp[0]) ||
-                        (nbrLDB.y >= tree->farendp[1]) ||
-                        (nbrLDB.z >= tree->farendp[2])) {
-                        /* Ignore the out-of-bound neighbor oct */
-                        continue;
-                    }
+        			/* This seems obsolete now -yigit*/
+        			if ((nbrLDB.x < tree->nearendp[0]) ||
+        					(nbrLDB.y < tree->nearendp[1]) ||
+        					(nbrLDB.z < tree->nearendp[2]) ||
+        					(nbrLDB.x >= tree->farendp[0]) ||
+        					(nbrLDB.y >= tree->farendp[1]) ||
+        					(nbrLDB.z >= tree->farendp[2])) {
+        				/* Ignore the out-of-bound neighbor oct */
+        				continue;
+        			}
 
-                    /* Find out who possesses the pixel */
-                    procid = math_zsearch(tree->com->interval,
-                                          tree->com->groupsize,
-                                          &nbrLDB);
+        			/* Find out who possesses the pixel */
+        			procid = math_zsearch(tree->com->interval,
+        					tree->com->groupsize,
+        					&nbrLDB);
 
-                    if (procid == tree->procid) {
-                        fprintf(stderr, "Thread %d: %s %d: internal error\n",
-                                tree->procid, __FILE__, __LINE__);
-                        MPI_Abort(MPI_COMM_WORLD, UNEXPECTED_ERR);
-                        exit(1);
-                    }
+        			if (procid == tree->procid) {
 
-                    /* Create a message destined to procid */
-                    topctl = tree->com->pctltab[procid];
+        				fprintf(stderr, "Thread %d: %s %d: internal error\n",
+        						tree->procid, __FILE__, __LINE__);
+        				MPI_Abort(MPI_COMM_WORLD, UNEXPECTED_ERR);
+        				exit(1);
 
-                    if (topctl == NULL) {
-                        /* This should not happen */
-                        fprintf(stderr, "Thread %d: %s %d: internal error\n",
-                                tree->procid, __FILE__, __LINE__);
-                        MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
-                        exit(1);
-                    }
+        			}
 
-                    descent = (descent_t *)mem_newobj(topctl->sndmem);
-                    if (descent == NULL) {
-                        fprintf(stderr, "Thread %d: %s %d: out of memory\n",
-                                tree->procid, __FILE__, __LINE__);
-                        MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
-                        exit(1);
+        			/* Create a message destined to procid */
+        			topctl = tree->com->pctltab[procid];
 
-                    }
+        			if (topctl == NULL) {
+        				/* This should not happen */
+        				fprintf(stderr, "Thread %d: %s %d: internal error\n",
+        						tree->procid, __FILE__, __LINE__);
+        				MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+        				exit(1);
+        			}
 
-                    /* Marshal a DESCENT message */
-                    descent->lx = nbr->lx;
-                    descent->ly = nbr->ly;
-                    descent->lz = nbr->lz;
-                    descent->level = nbr->level;
-                    descent->stack = stack;
-                }
-            } /* for all the directions */
+        			descent = (descent_t *)mem_newobj(topctl->sndmem);
+        			if (descent == NULL) {
+        				fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+        						tree->procid, __FILE__, __LINE__);
+        				MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+        				exit(1);
+
+        			}
+
+        			/* Marshal a DESCENT message */
+        			descent->lx = nbr->lx;
+        			descent->ly = nbr->ly;
+        			descent->lz = nbr->lz;
+        			descent->level = nbr->level;
+        			descent->stack = stack;
+        		}
+        	} /* for all the directions */
 
             oct = oct->payload.leaf->next;
 
@@ -4807,8 +4864,9 @@ octor_carvebuildings(octree_t *octree, int flag,
 
     		/* unlinking the octant and making sure the corresponding
     		 * tree->toleaf list is updated */
-    		oct_unlinkleaf(oct, tree->toleaf);
 
+    		  oct_unlinkleaf(oct, tree->toleaf);
+    		  
     		/* Modify the statistics */
     		tree->leafcount[(int32_t)oct->level]--;
 
