@@ -47,12 +47,29 @@ typedef struct bounds_t {
 
 typedef struct bldg_t {
 
-    double       height;
-    double       depth;
-    bounds_t     bounds;
+	double       height;
+	double       depth;
+	bounds_t     bounds;
 	bounds_t     bounds_expanded; /* to avoid dangling nodes at the buildings base*/
-    cvmpayload_t bldgprops;
-    cvmpayload_t fdtnprops;
+	cvmpayload_t bldgprops;
+	cvmpayload_t fdtnprops;
+
+	/* These two are active if asymmetric_buildings=yes.If so, for buildings, there is a linear
+	 * variation in rho along the EW direction (y coordinate in Hercules).
+	 * Nodes at the leftmost are assigned the values in bldgprops_left and
+	 * nodes at the rightmost have the values in bldgprops_right. The values
+	 * for the intermediate nodes are linearly interpolated. In other words, mass
+	 * center is shifted wrt to geometric center.
+	 * However, the distribution is different for Vp and Vs. Stiffness center is
+	 * remained at the same place as the geometric center. The center nodes of the
+	 * buildings have the values in bldgprops_right, whereas the leftmost and the rightmost
+	 * nodes have the values in bldgprops_left. The values for the rest of the
+	 * nodes are linearly interpolated.
+	 *   */
+
+	cvmpayload_t bldgprops_left;
+	cvmpayload_t bldgprops_right;
+
 
 } bldg_t;
 
@@ -74,6 +91,8 @@ typedef struct basenode_t {
 /* -------------------------------------------------------------------------- */
 
 static noyesflag_t  areBaseFixed = 0;
+static noyesflag_t  asymmetricBuildings = 0;
+
 static char         theBaseFixedDir[256];
 static char         theBaseFixedSufix[64];
 static double       theBaseFixedDT;
@@ -88,7 +107,7 @@ static int      theNumberOfBuildings;
 static int      theNumberOfPushdowns;
 static double   theMinOctSizeMeters;
 static double   theSurfaceShift = 0;
-static bldg_t  *theBuilding;
+static bldg_t   *theBuilding;
 static pdown_t  *thePushdown;
 
 /* Transient */
@@ -107,6 +126,15 @@ static double  *thePushDownsXMin,  *thePushDownsXMax;
 static double  *thePushDownsYMin,  *thePushDownsYMax;
 static double  *thePushDownsZMin,  *thePushDownsZMax;
 static double  *thePushDownsDepth, *thePushDownsHeight;
+
+/* Active if asymmetric_buildings=yes */
+static double  *theBuildingsVs_left;
+static double  *theBuildingsVp_left;
+static double  *theBuildingsRho_left;
+
+static double  *theBuildingsVs_right;
+static double  *theBuildingsVp_right;
+static double  *theBuildingsRho_right;
 /* -------------------------------------------------------------------------- */
 /*                         Private Method Prototypes                          */
 /* -------------------------------------------------------------------------- */
@@ -211,6 +239,10 @@ noyesflag_t get_fixedbase_flag() {
     return areBaseFixed;
 }
 
+noyesflag_t get_asymmetric_flag() {
+    return asymmetricBuildings;
+}
+
 bounds_t get_bldgbounds( int i ) {
 
     return theBuilding[i].bounds;
@@ -224,16 +256,26 @@ bounds_t get_pushdownbounds( int i ) {
 
 cvmpayload_t get_props( int i, double z ) {
 
-    /* the i-th building is in the i-1 index */
-    i--;
+	/* the i-th building is in the i-1 index */
+	i--;
 
-    if ( z >= theSurfaceShift ) {
-        /* Element is in the foundation */
-        return theBuilding[i].fdtnprops;
-    } else {
-        /* Element is in the foundation */
-        return theBuilding[i].bldgprops;
-    }
+	if ( z >= theSurfaceShift ) {
+		/* Element is in the foundation */
+		return theBuilding[i].fdtnprops;
+	} else {
+		/* Element is in the building */
+		if ( asymmetricBuildings == NO ) {
+			return theBuilding[i].bldgprops;
+		}
+
+		/* Return the lowest Vs */
+		if ( asymmetricBuildings == YES ) {
+			if( theBuilding[i].bldgprops_left.Vs > theBuilding[i].bldgprops_right.Vs )
+				return theBuilding[i].bldgprops_right;
+			else
+				return theBuilding[i].bldgprops_left;
+		}
+	}
 }
 
 void get_airprops( octant_t *leaf, double ticksize, edata_t *edata,
@@ -696,6 +738,7 @@ int bldgs_refine ( octant_t *leaf,
 	 */
 	double   edgesize;
 	double   z_m;
+	float   Vs_min;
 
 	edgesize = edata->edgesize;
 	z_m      = leaf->lz * ticksize;
@@ -705,8 +748,20 @@ int bldgs_refine ( octant_t *leaf,
 		return 1;
 	}
 
+	if ( asymmetricBuildings == NO ) {
+		Vs_min = theBuilding[bldg].bldgprops.Vs;
+	}
+
+	if ( asymmetricBuildings == YES ) {
+		Vs_min = theBuilding[bldg].bldgprops_left.Vs;
+		if( theBuilding[bldg].bldgprops_left.Vs > theBuilding[bldg].bldgprops_right.Vs )
+			Vs_min = theBuilding[bldg].bldgprops_right.Vs;
+
+	}
+
 	/* Elements not complying with vs-rule */
 	if ( z_m >= theSurfaceShift ) {
+
 		/* Element is in the foundation */
 		if ( theMinOctSizeMeters > ( theBuilding[bldg].fdtnprops.Vs / theFactor ) &&
 				theBuilding[bldg].depth !=0  ) {
@@ -720,7 +775,7 @@ int bldgs_refine ( octant_t *leaf,
 		}
 	} else {
 		/* Element is in the building */
-		if ( theMinOctSizeMeters > ( theBuilding[bldg].bldgprops.Vs / theFactor ) &&
+		if ( theMinOctSizeMeters > ( Vs_min / theFactor ) &&
 				theBuilding[bldg].height !=0) {
 			fprintf(stderr, "Error:%s %d: theMinOctSizeMeters should be decreased "
 					"to %f to comply with the Vs rule for the %dth buildings \n",
@@ -835,10 +890,39 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 					edata->Vs  = theBuilding[i].fdtnprops.Vs;
 					edata->rho = theBuilding[i].fdtnprops.rho;
 				} else {
-					/* Element is in the building */
-					edata->Vp  = theBuilding[i].bldgprops.Vp;
-					edata->Vs  = theBuilding[i].bldgprops.Vs;
-					edata->rho = theBuilding[i].bldgprops.rho;
+
+					if ( asymmetricBuildings == NO ) {
+						edata->Vp  = theBuilding[i].bldgprops.Vp;
+						edata->Vs  = theBuilding[i].bldgprops.Vs;
+						edata->rho = theBuilding[i].bldgprops.rho;
+					}
+
+					if ( asymmetricBuildings == YES ) {
+
+						int n, location;
+						double y_physical, increment_rho, increment_Vs, increment_Vp ;
+
+						y_physical = y * ticksize;
+
+						/* non-uniform mass distribution in the y direction only (EW). */
+						n = (theBuilding[i].bounds.ymax - theBuilding[i].bounds.ymin)/theMinOctSizeMeters;
+						increment_rho = (theBuilding[i].bldgprops_right.rho - theBuilding[i].bldgprops_left.rho)/n;
+						location = (y_physical - theBuilding[i].bounds.ymin)/theMinOctSizeMeters;
+						edata->rho = theBuilding[i].bldgprops_left.rho + increment_rho*location + increment_rho/2 ;
+
+						/* non-uniform Vp and Vs distribution in y direction only. - but symmetric */
+						n = (theBuilding[i].bounds.ymax - theBuilding[i].bounds.ymin)/theMinOctSizeMeters/2;
+						increment_Vp = (theBuilding[i].bldgprops_right.Vp - theBuilding[i].bldgprops_left.Vp)/n;
+						increment_Vs = (theBuilding[i].bldgprops_right.Vs - theBuilding[i].bldgprops_left.Vs)/n;
+						location = (y_physical - (theBuilding[i].bounds.ymin + theBuilding[i].bounds.ymax)/2 )/theMinOctSizeMeters;
+						if(location < 0) location++;
+						location = abs(location);
+						printf("\n  increment_Vs = %d  increment_Vs = %d \n",location,location);
+
+						edata->Vp = theBuilding[i].bldgprops_right.Vp - increment_Vp*location - increment_Vp/2 ;
+					    edata->Vs = theBuilding[i].bldgprops_right.Vs - increment_Vs*location - increment_Vs/2 ;
+
+					}
 				}
 
 				return 1;
@@ -867,7 +951,7 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 void bldgs_init ( int32_t myID, const char *parametersin )
 {
     int     i;
-    int     int_message[3];
+    int     int_message[4];
     double  double_message[2];
 
     /* Capturing data from file --- only done by PE0 */
@@ -888,15 +972,17 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     int_message[0]    = theNumberOfBuildings;
     int_message[1]    = areBaseFixed;
 	int_message[2]    = theNumberOfPushdowns;
+	int_message[3]    = asymmetricBuildings;
 
     MPI_Bcast(double_message, 2, MPI_DOUBLE, 0, comm_solver);
-    MPI_Bcast(int_message,    3, MPI_INT,    0, comm_solver);
+    MPI_Bcast(int_message,    4, MPI_INT,    0, comm_solver);
 
     theSurfaceShift      = double_message[0];
     theMinOctSizeMeters  = double_message[1];
     theNumberOfBuildings = int_message[0];
     areBaseFixed         = int_message[1];
 	theNumberOfPushdowns = int_message[2];
+	asymmetricBuildings  = int_message[3];
 
     /* allocate table of properties for all other PEs */
     if ( theNumberOfBuildings > 0 ) {
@@ -911,12 +997,24 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     		theBuildingsZMax   = (double*)malloc( sizeof(double) * theNumberOfBuildings );
     		theBuildingsDepth  = (double*)malloc( sizeof(double) * theNumberOfBuildings );
     		theBuildingsHeight = (double*)malloc( sizeof(double) * theNumberOfBuildings );
-    		theBuildingsVp     = (double*)malloc( sizeof(double) * theNumberOfBuildings );
-    		theBuildingsVs     = (double*)malloc( sizeof(double) * theNumberOfBuildings );
-    		theBuildingsRho    = (double*)malloc( sizeof(double) * theNumberOfBuildings );
+
     		theFoundationsVp   = (double*)malloc( sizeof(double) * theNumberOfBuildings );
     		theFoundationsVs   = (double*)malloc( sizeof(double) * theNumberOfBuildings );
     		theFoundationsRho  = (double*)malloc( sizeof(double) * theNumberOfBuildings );
+
+    		if(asymmetricBuildings == NO) {
+    			theBuildingsVp     = (double*)malloc( sizeof(double) * theNumberOfBuildings );
+    			theBuildingsVs     = (double*)malloc( sizeof(double) * theNumberOfBuildings );
+    			theBuildingsRho    = (double*)malloc( sizeof(double) * theNumberOfBuildings );
+    		} else {
+    			theBuildingsVp_left     = (double*)malloc( sizeof(double) * theNumberOfBuildings );
+    			theBuildingsVs_left     = (double*)malloc( sizeof(double) * theNumberOfBuildings );
+    			theBuildingsRho_left    = (double*)malloc( sizeof(double) * theNumberOfBuildings );
+    			theBuildingsVp_right     = (double*)malloc( sizeof(double) * theNumberOfBuildings );
+    			theBuildingsVs_right     = (double*)malloc( sizeof(double) * theNumberOfBuildings );
+    			theBuildingsRho_right    = (double*)malloc( sizeof(double) * theNumberOfBuildings );
+    		}
+
 
     	}
 
@@ -929,12 +1027,27 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     	MPI_Bcast(theBuildingsZMax,   theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
     	MPI_Bcast(theBuildingsDepth,  theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
     	MPI_Bcast(theBuildingsHeight, theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
-    	MPI_Bcast(theBuildingsVp,     theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
-    	MPI_Bcast(theBuildingsVs,     theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
-    	MPI_Bcast(theBuildingsRho,    theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
     	MPI_Bcast(theFoundationsVp,   theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
     	MPI_Bcast(theFoundationsVs,   theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
     	MPI_Bcast(theFoundationsRho,  theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
+
+    	if(asymmetricBuildings == NO) {
+    		MPI_Bcast(theBuildingsVp,     theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
+    		MPI_Bcast(theBuildingsVs,     theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
+    		MPI_Bcast(theBuildingsRho,    theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
+
+    	} else if(asymmetricBuildings == YES) {
+
+    		MPI_Bcast(theBuildingsVp_left,     theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
+    		MPI_Bcast(theBuildingsVs_left,     theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
+    		MPI_Bcast(theBuildingsRho_left,    theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
+
+    		MPI_Bcast(theBuildingsVp_right,     theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
+    		MPI_Bcast(theBuildingsVs_right,     theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
+    		MPI_Bcast(theBuildingsRho_right,    theNumberOfBuildings, MPI_DOUBLE, 0, comm_solver);
+    	}
+
+
 
     	/* Broadcast fixed base data */
     	if ( areBaseFixed == YES ) {
@@ -974,13 +1087,24 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     		theBuilding[i].height = theBuildingsHeight[i];
     		theBuilding[i].depth  = theBuildingsDepth[i];
 
-    		theBuilding[i].bldgprops.Vp  = theBuildingsVp[i];
-    		theBuilding[i].bldgprops.Vs  = theBuildingsVs[i];
-    		theBuilding[i].bldgprops.rho = theBuildingsRho[i];
+    		if(asymmetricBuildings == NO) {
+    			theBuilding[i].bldgprops.Vp  = theBuildingsVp[i];
+    			theBuilding[i].bldgprops.Vs  = theBuildingsVs[i];
+    			theBuilding[i].bldgprops.rho = theBuildingsRho[i];
+    		}
+    		else if (asymmetricBuildings == YES) {
+    			theBuilding[i].bldgprops_left.Vp  = theBuildingsVp_left[i];
+    			theBuilding[i].bldgprops_left.Vs  = theBuildingsVs_left[i];
+    			theBuilding[i].bldgprops_left.rho = theBuildingsRho_left[i];
 
+    			theBuilding[i].bldgprops_right.Vp  = theBuildingsVp_right[i];
+    			theBuilding[i].bldgprops_right.Vs  = theBuildingsVs_right[i];
+    			theBuilding[i].bldgprops_right.rho = theBuildingsRho_right[i];
+    		}
     		theBuilding[i].fdtnprops.Vp  = theFoundationsVp[i];
     		theBuilding[i].fdtnprops.Vs  = theFoundationsVs[i];
     		theBuilding[i].fdtnprops.rho = theFoundationsRho[i];
+
     	}
 
     	free(theBuildingsXMin);
@@ -991,9 +1115,23 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     	free(theBuildingsZMax);
     	free(theBuildingsHeight);
     	free(theBuildingsDepth);
-    	free(theBuildingsVp);
-    	free(theBuildingsVs);
-    	free(theBuildingsRho);
+
+    	if(asymmetricBuildings == NO) {
+    		free(theBuildingsVp);
+    		free(theBuildingsVs);
+    		free(theBuildingsRho);
+    	}
+
+    	if(asymmetricBuildings == YES) {
+    		free(theBuildingsVp_left);
+    		free(theBuildingsVs_left);
+    		free(theBuildingsRho_left);
+
+    		free(theBuildingsVp_right);
+    		free(theBuildingsVs_right);
+    		free(theBuildingsRho_right);
+    	}
+
     	free(theFoundationsVp);
     	free(theFoundationsVs);
     	free(theFoundationsRho);
@@ -1063,8 +1201,10 @@ buildings_initparameters ( const char *parametersin )
 	double  min_oct_size, surface_shift;
 	double *auxiliar;
 	char    consider_fixed_base[16];
+	char    asymmetric_buildings[16];
 
 	noyesflag_t fixedbase = -1;
+	noyesflag_t asymmetry = -1;
 
 	/* Opens parametersin file */
 
@@ -1081,7 +1221,8 @@ buildings_initparameters ( const char *parametersin )
 			( parsetext(fp, "number_of_pushdowns", 'i', &numPushDown        ) != 0) ||
 			( parsetext(fp, "min_octant_size_m",   'd', &min_oct_size       ) != 0) ||
 			( parsetext(fp, "surface_shift_m",     'd', &surface_shift      ) != 0) ||
-			( parsetext(fp, "consider_fixed_base", 's', &consider_fixed_base) != 0) )
+			( parsetext(fp, "consider_fixed_base", 's', &consider_fixed_base) != 0) ||
+			( parsetext(fp, "asymmetric_buildings", 's', &asymmetric_buildings) != 0))
 	{
 		fprintf( stderr,
 				"Error parsing building parameters from %s\n",
@@ -1127,7 +1268,18 @@ buildings_initparameters ( const char *parametersin )
 	} else {
 		solver_abort( __FUNCTION_NAME, NULL,
 				"Unknown response for considering"
-				"fixed base option (yes or no): %s\n",
+				" fixed base option (yes or no): %s\n",
+				consider_fixed_base );
+	}
+
+	if ( strcasecmp(asymmetric_buildings, "yes") == 0 ) {
+		asymmetry = YES;
+	} else if ( strcasecmp(asymmetric_buildings, "no") == 0 ) {
+		asymmetry = NO;
+	} else {
+		solver_abort( __FUNCTION_NAME, NULL,
+				"Unknown response for considering"
+				" asymmetric buildings option (yes or no): %s\n",
 				consider_fixed_base );
 	}
 
@@ -1138,6 +1290,7 @@ buildings_initparameters ( const char *parametersin )
 	theMinOctSizeMeters  = min_oct_size;
 	theSurfaceShift      = surface_shift;
 	areBaseFixed         = fixedbase;
+	asymmetricBuildings  = asymmetry;
 
 	/* Detour for fixed base option */
 	if ( areBaseFixed == YES ) {
@@ -1146,68 +1299,157 @@ buildings_initparameters ( const char *parametersin )
 
 	if ( numBldgs > 0 ) {
 
-		auxiliar           = (double*)malloc( sizeof(double) * numBldgs * 12 );
-		theBuildingsXMin   = (double*)malloc( sizeof(double) * numBldgs );
-		theBuildingsXMax   = (double*)malloc( sizeof(double) * numBldgs );
-		theBuildingsYMin   = (double*)malloc( sizeof(double) * numBldgs );
-		theBuildingsYMax   = (double*)malloc( sizeof(double) * numBldgs );
-		theBuildingsZMin   = (double*)malloc( sizeof(double) * numBldgs );
-		theBuildingsZMax   = (double*)malloc( sizeof(double) * numBldgs );
-		theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
-		theBuildingsHeight = (double*)malloc( sizeof(double) * numBldgs );
-		theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
-		theBuildingsVp     = (double*)malloc( sizeof(double) * numBldgs );
-		theBuildingsVs     = (double*)malloc( sizeof(double) * numBldgs );
-		theBuildingsRho    = (double*)malloc( sizeof(double) * numBldgs );
-		theFoundationsVp   = (double*)malloc( sizeof(double) * numBldgs );
-		theFoundationsVs   = (double*)malloc( sizeof(double) * numBldgs );
-		theFoundationsRho  = (double*)malloc( sizeof(double) * numBldgs );
+		if(asymmetricBuildings == NO) {
 
-		if ( ( auxiliar           == NULL ) ||
-				( theBuildingsXMin   == NULL ) ||
-				( theBuildingsXMax   == NULL ) ||
-				( theBuildingsYMin   == NULL ) ||
-				( theBuildingsYMax   == NULL ) ||
-				( theBuildingsDepth  == NULL ) ||
-				( theBuildingsHeight == NULL ) ||
-				( theBuildingsVp     == NULL ) ||
-				( theBuildingsVs     == NULL ) ||
-				( theBuildingsRho    == NULL ) ||
-				( theFoundationsVp   == NULL ) ||
-				( theFoundationsVs   == NULL ) ||
-				( theFoundationsRho  == NULL ) )
-		{
-			fprintf( stderr, "Errror allocating transient building arrays"
-					"in buildings_initparameters " );
-			return -1;
+			auxiliar           = (double*)malloc( sizeof(double) * numBldgs * 12 );
+			theBuildingsXMin   = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsXMax   = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsYMin   = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsYMax   = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsZMin   = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsZMax   = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsHeight = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsVp     = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsVs     = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsRho    = (double*)malloc( sizeof(double) * numBldgs );
+			theFoundationsVp   = (double*)malloc( sizeof(double) * numBldgs );
+			theFoundationsVs   = (double*)malloc( sizeof(double) * numBldgs );
+			theFoundationsRho  = (double*)malloc( sizeof(double) * numBldgs );
+
+			if ( ( auxiliar           == NULL ) ||
+					( theBuildingsXMin   == NULL ) ||
+					( theBuildingsXMax   == NULL ) ||
+					( theBuildingsYMin   == NULL ) ||
+					( theBuildingsYMax   == NULL ) ||
+					( theBuildingsDepth  == NULL ) ||
+					( theBuildingsHeight == NULL ) ||
+					( theBuildingsVp     == NULL ) ||
+					( theBuildingsVs     == NULL ) ||
+					( theBuildingsRho    == NULL ) ||
+					( theFoundationsVp   == NULL ) ||
+					( theFoundationsVs   == NULL ) ||
+					( theFoundationsRho  == NULL ) )
+			{
+				fprintf( stderr, "Errror allocating transient building arrays"
+						"in buildings_initparameters " );
+				return -1;
+			}
+
+			if ( parsedarray( fp, "building_properties", numBldgs*12, auxiliar ) != 0)
+			{
+				fprintf( stderr,
+						"Error parsing building_properties list from %s\n",
+						parametersin );
+				return -1;
+			}
+
+			/* We DO NOT convert physical coordinates into etree coordinates here */
+			for (iBldg = 0; iBldg < numBldgs; iBldg++) {
+
+				theBuildingsXMin   [ iBldg ] = auxiliar [ iBldg * 12      ];
+				theBuildingsXMax   [ iBldg ] = auxiliar [ iBldg * 12 +  1 ];
+				theBuildingsYMin   [ iBldg ] = auxiliar [ iBldg * 12 +  2 ];
+				theBuildingsYMax   [ iBldg ] = auxiliar [ iBldg * 12 +  3 ];
+				theBuildingsDepth  [ iBldg ] = auxiliar [ iBldg * 12 +  4 ];
+				theBuildingsHeight [ iBldg ] = auxiliar [ iBldg * 12 +  5 ];
+				theBuildingsVp     [ iBldg ] = auxiliar [ iBldg * 12 +  6 ];
+				theBuildingsVs     [ iBldg ] = auxiliar [ iBldg * 12 +  7 ];
+				theBuildingsRho    [ iBldg ] = auxiliar [ iBldg * 12 +  8 ];
+				theFoundationsVp   [ iBldg ] = auxiliar [ iBldg * 12 +  9 ];
+				theFoundationsVs   [ iBldg ] = auxiliar [ iBldg * 12 + 10 ];
+				theFoundationsRho  [ iBldg ] = auxiliar [ iBldg * 12 + 11 ];
+			}
+
+			free( auxiliar );
 		}
 
-		if ( parsedarray( fp, "building_properties", numBldgs*12, auxiliar ) != 0)
-		{
-			fprintf( stderr,
-					"Error parsing building_properties list from %s\n",
-					parametersin );
-			return -1;
+		/* Three more values are to be read from the parameters. */
+		if(asymmetricBuildings == YES) {
+
+			auxiliar           = (double*)malloc( sizeof(double) * numBldgs * 15 );
+			theBuildingsXMin   = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsXMax   = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsYMin   = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsYMax   = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsZMin   = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsZMax   = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsHeight = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
+
+			theBuildingsVp_left     = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsVp_right     = (double*)malloc( sizeof(double) * numBldgs );
+
+			theBuildingsVs_left     = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsVs_right     = (double*)malloc( sizeof(double) * numBldgs );
+
+			theBuildingsRho_left    = (double*)malloc( sizeof(double) * numBldgs );
+			theBuildingsRho_right    = (double*)malloc( sizeof(double) * numBldgs );
+
+			theFoundationsVp   = (double*)malloc( sizeof(double) * numBldgs );
+			theFoundationsVs   = (double*)malloc( sizeof(double) * numBldgs );
+			theFoundationsRho  = (double*)malloc( sizeof(double) * numBldgs );
+
+			if ( ( auxiliar           == NULL ) ||
+					( theBuildingsXMin   == NULL ) ||
+					( theBuildingsXMax   == NULL ) ||
+					( theBuildingsYMin   == NULL ) ||
+					( theBuildingsYMax   == NULL ) ||
+					( theBuildingsDepth  == NULL ) ||
+					( theBuildingsHeight == NULL ) ||
+					( theBuildingsVp_left     == NULL ) ||
+					( theBuildingsVs_left     == NULL ) ||
+					( theBuildingsRho_left    == NULL ) ||
+					( theBuildingsVp_right     == NULL ) ||
+					( theBuildingsVs_right     == NULL ) ||
+					( theBuildingsRho_right    == NULL ) ||
+					( theFoundationsVp   == NULL ) ||
+					( theFoundationsVs   == NULL ) ||
+					( theFoundationsRho  == NULL ) )
+			{
+				fprintf( stderr, "Errror allocating transient building arrays"
+						"in buildings_initparameters " );
+				return -1;
+			}
+
+			if ( parsedarray( fp, "building_properties", numBldgs*15, auxiliar ) != 0)
+			{
+				fprintf( stderr,
+						"Error parsing building_properties list from %s. Note that "
+						"asymmetric_buildings = yes \n",
+						parametersin );
+				return -1;
+			}
+
+			/* We DO NOT convert physical coordinates into etree coordinates here */
+			for (iBldg = 0; iBldg < numBldgs; iBldg++) {
+
+				theBuildingsXMin      [ iBldg ] = auxiliar [ iBldg * 15     ];
+				theBuildingsXMax      [ iBldg ] = auxiliar [ iBldg * 15 + 1 ];
+				theBuildingsYMin      [ iBldg ] = auxiliar [ iBldg * 15 + 2 ];
+				theBuildingsYMax      [ iBldg ] = auxiliar [ iBldg * 15 + 3 ];
+				theBuildingsDepth     [ iBldg ] = auxiliar [ iBldg * 15 + 4 ];
+				theBuildingsHeight    [ iBldg ] = auxiliar [ iBldg * 15 + 5 ];
+				theBuildingsVp_left   [ iBldg ] = auxiliar [ iBldg * 15 + 6 ];
+				theBuildingsVp_right  [ iBldg ] = auxiliar [ iBldg * 15 + 7 ];
+
+				theBuildingsVs_left   [ iBldg ] = auxiliar [ iBldg * 15 + 8 ];
+				theBuildingsVs_right  [ iBldg ] = auxiliar [ iBldg * 15 + 9 ];
+
+				theBuildingsRho_left  [ iBldg ] = auxiliar [ iBldg * 15 + 10 ];
+				theBuildingsRho_right [ iBldg ] = auxiliar [ iBldg * 15 + 11 ];
+				theFoundationsVp      [ iBldg ] = auxiliar [ iBldg * 15 + 12 ];
+				theFoundationsVs      [ iBldg ] = auxiliar [ iBldg * 15 + 13 ];
+				theFoundationsRho     [ iBldg ] = auxiliar [ iBldg * 15 + 14 ];
+			}
+
+			free( auxiliar );
+
 		}
 
-		/* We DO NOT convert physical coordinates into etree coordinates here */
-		for (iBldg = 0; iBldg < numBldgs; iBldg++) {
 
-			theBuildingsXMin   [ iBldg ] = auxiliar [ iBldg * 12      ];
-			theBuildingsXMax   [ iBldg ] = auxiliar [ iBldg * 12 +  1 ];
-			theBuildingsYMin   [ iBldg ] = auxiliar [ iBldg * 12 +  2 ];
-			theBuildingsYMax   [ iBldg ] = auxiliar [ iBldg * 12 +  3 ];
-			theBuildingsDepth  [ iBldg ] = auxiliar [ iBldg * 12 +  4 ];
-			theBuildingsHeight [ iBldg ] = auxiliar [ iBldg * 12 +  5 ];
-			theBuildingsVp     [ iBldg ] = auxiliar [ iBldg * 12 +  6 ];
-			theBuildingsVs     [ iBldg ] = auxiliar [ iBldg * 12 +  7 ];
-			theBuildingsRho    [ iBldg ] = auxiliar [ iBldg * 12 +  8 ];
-			theFoundationsVp   [ iBldg ] = auxiliar [ iBldg * 12 +  9 ];
-			theFoundationsVs   [ iBldg ] = auxiliar [ iBldg * 12 + 10 ];
-			theFoundationsRho  [ iBldg ] = auxiliar [ iBldg * 12 + 11 ];
-		}
-
-		free( auxiliar );
 	}
 
 	if ( numPushDown > 0 ) {
