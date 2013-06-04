@@ -28,6 +28,7 @@
 
 double get_surface_shift();
 noyesflag_t get_fixedbase_flag();
+noyesflag_t get_constrained_slab_flag();
 
 int bldgs_nodesearch ( tick_t x, tick_t y, tick_t z, double ticksize );
 
@@ -55,6 +56,8 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 );
 void bldgs_fixedbase_init ( mesh_t *myMesh, double simTime );
 
 void bldgs_load_fixedbase_disps ( mysolver_t* mySolver, double simDT, int step );
+
+void bldgs_update_constrainedslabs_disps (  mysolver_t* mySolver, double simDT, int step);
 
 void bldgs_init ( int32_t myID, const char *parametersin );
 

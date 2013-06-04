@@ -3984,6 +3984,17 @@ static void solver_load_fixedbase_displacements( mysolver_t* solver, int step )
     Timer_Stop( "Load Fixedbase Disps" );
 }
 
+/**
+ */
+static void solver_update_constrained_slab_displacements( mysolver_t* solver, int step )
+{
+    //Timer_Start( "Load Fixedbase Disps" );
+    if ( get_constrained_slab_flag() == YES ) {
+        bldgs_update_constrainedslabs_disps ( solver, Param.theDeltaT, step);
+    }
+    //Timer_Stop( "Load Fixedbase Disps" );
+}
+
 
 /** Compute the force due to the earthquake source. */
 static void solver_compute_force_source( int step )
@@ -4341,6 +4352,7 @@ static void solver_run()
         solver_compute_displacement( Global.mySolver, Global.myMesh );
         solver_geostatic_fix( step );
         solver_load_fixedbase_displacements( Global.mySolver, step );
+        solver_update_constrained_slab_displacements( Global.mySolver, step );
         Timer_Stop( "Compute Physics" );
 
         Timer_Start( "Communication" );
@@ -7460,10 +7472,13 @@ int main( int argc, char** argv )
     mesh_generate();
 
     if ( Param.includeBuildings == YES ){
-        if ( get_fixedbase_flag() == YES ) {
-            bldgs_fixedbase_init( Global.myMesh, Param.theEndT-Param.theStartT );
-        }
-        bldgs_finalize();
+    	if ( get_fixedbase_flag() == YES ) {
+    		bldgs_fixedbase_init( Global.myMesh, Param.theEndT-Param.theStartT );
+    	}
+    	if ( get_constrained_slab_flag() == YES ) {
+    		constrained_slabs_init( Global.myMesh, Param.theEndT-Param.theStartT );
+    	}
+    	bldgs_finalize();
     }
 
     if ( Param.drmImplement == YES ) {

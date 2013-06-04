@@ -86,12 +86,40 @@ typedef struct basenode_t {
     int    bldg;
 } basenode_t;
 
+
+
+/* rows have information for each node at a given level in a building.
+ * columns have the same type of nodal information for different levels.
+ * l = # of plan-levels in each building
+ * n = # of nodes in each level
+ * matrix L, T and R are constant for each time step.
+ */
+typedef struct constrained_slab_bldg {
+	int l; /* # of plan-levels in each building */
+	int n; /* # of nodes in each level node_x*node_y */
+	int node_x; /* # of nodes in x direction for each building */
+	int node_y; /* # of nodes in y direction for each building */
+	double x_bldg_length; /* length of building in x (m) - NS */
+	double y_bldg_length; /* length of building in y (m) - EW */
+
+	lnid_t**  local_ids_by_level;  /* matrix L - local ids of each point at
+	each plan-level of buildings. dim : l x n */
+	double**  transformation_matrix; /* matrix T - transformation matrix. same
+	 for each level in a building. dim : 3n x 6 */
+	lnid_t**  local_ids_reference_nodes; /* matrix R - local ids of 5 reference
+	 nodes at each plan-level. l x 5 - (center node is also included) */
+
+} constrained_slab_bldg_t;
+
+
 /* -------------------------------------------------------------------------- */
 /*                             Global Variables                               */
 /* -------------------------------------------------------------------------- */
 
 static noyesflag_t  areBaseFixed = 0;
 static noyesflag_t  asymmetricBuildings = 0;
+static noyesflag_t  constrainedSlabs = 0;
+
 
 static char         theBaseFixedDir[256];
 static char         theBaseFixedSufix[64];
@@ -100,6 +128,7 @@ static int          theBaseFixedStartIndex;
 static int32_t      theBaseNodesCount;
 static basenode_t  *theBaseNodes;
 static fvector_t  **theBaseSignals;
+static constrained_slab_bldg_t  *theConstrainedSlab;
 
 /* Permanent */
 
@@ -253,6 +282,9 @@ bounds_t get_pushdownbounds( int i ) {
 	 return thePushdown[i].bounds;
 }
 
+noyesflag_t get_constrained_slab_flag() {
+	 return constrainedSlabs;
+}
 
 cvmpayload_t get_props( int i, double z ) {
 
@@ -917,7 +949,6 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 						location = (y_physical - (theBuilding[i].bounds.ymin + theBuilding[i].bounds.ymax)/2 )/theMinOctSizeMeters;
 						if(location < 0) location++;
 						location = abs(location);
-						printf("\n  increment_Vs = %d  increment_Vs = %d \n",location,location);
 
 						edata->Vp = theBuilding[i].bldgprops_right.Vp - increment_Vp*location - increment_Vp/2 ;
 					    edata->Vs = theBuilding[i].bldgprops_right.Vs - increment_Vs*location - increment_Vs/2 ;
@@ -951,7 +982,7 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 void bldgs_init ( int32_t myID, const char *parametersin )
 {
     int     i;
-    int     int_message[4];
+    int     int_message[5];
     double  double_message[2];
 
     /* Capturing data from file --- only done by PE0 */
@@ -973,9 +1004,10 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     int_message[1]    = areBaseFixed;
 	int_message[2]    = theNumberOfPushdowns;
 	int_message[3]    = asymmetricBuildings;
+	int_message[4]    = constrainedSlabs;
 
     MPI_Bcast(double_message, 2, MPI_DOUBLE, 0, comm_solver);
-    MPI_Bcast(int_message,    4, MPI_INT,    0, comm_solver);
+    MPI_Bcast(int_message,    5, MPI_INT,    0, comm_solver);
 
     theSurfaceShift      = double_message[0];
     theMinOctSizeMeters  = double_message[1];
@@ -983,6 +1015,7 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     areBaseFixed         = int_message[1];
 	theNumberOfPushdowns = int_message[2];
 	asymmetricBuildings  = int_message[3];
+	constrainedSlabs  	 = int_message[4];
 
     /* allocate table of properties for all other PEs */
     if ( theNumberOfBuildings > 0 ) {
@@ -1202,9 +1235,11 @@ buildings_initparameters ( const char *parametersin )
 	double *auxiliar;
 	char    consider_fixed_base[16];
 	char    asymmetric_buildings[16];
+	char    constrained_slabs[16];
 
 	noyesflag_t fixedbase = -1;
 	noyesflag_t asymmetry = -1;
+	noyesflag_t constraint = -1;
 
 	/* Opens parametersin file */
 
@@ -1217,11 +1252,12 @@ buildings_initparameters ( const char *parametersin )
 
 	/* Parses parametersin to capture building single-value parameters */
 
-	if ( ( parsetext(fp, "number_of_buildings", 'i', &numBldgs           ) != 0) ||
+	if ( ( parsetext(fp, "number_of_buildings", 'i', &numBldgs              ) != 0) ||
 			( parsetext(fp, "number_of_pushdowns", 'i', &numPushDown        ) != 0) ||
 			( parsetext(fp, "min_octant_size_m",   'd', &min_oct_size       ) != 0) ||
 			( parsetext(fp, "surface_shift_m",     'd', &surface_shift      ) != 0) ||
 			( parsetext(fp, "consider_fixed_base", 's', &consider_fixed_base) != 0) ||
+			( parsetext(fp, "constrained_slabs",   's', &constrained_slabs  ) != 0) ||
 			( parsetext(fp, "asymmetric_buildings", 's', &asymmetric_buildings) != 0))
 	{
 		fprintf( stderr,
@@ -1283,6 +1319,18 @@ buildings_initparameters ( const char *parametersin )
 				consider_fixed_base );
 	}
 
+
+	if ( strcasecmp(constrained_slabs, "yes") == 0 ) {
+		constraint = YES;
+	} else if ( strcasecmp(constrained_slabs, "no") == 0 ) {
+		constraint = NO;
+	} else {
+		solver_abort( __FUNCTION_NAME, NULL,
+				"Unknown response for constrained slabs"
+				"option (yes or no): %s\n",
+				constraint );
+	}
+
 	/* Initialize the static global variables */
 
 	theNumberOfBuildings = numBldgs;
@@ -1291,6 +1339,7 @@ buildings_initparameters ( const char *parametersin )
 	theSurfaceShift      = surface_shift;
 	areBaseFixed         = fixedbase;
 	asymmetricBuildings  = asymmetry;
+	constrainedSlabs     = constraint;
 
 	/* Detour for fixed base option */
 	if ( areBaseFixed == YES ) {
@@ -1660,6 +1709,272 @@ void bldgs_fixedbase_init ( mesh_t *myMesh, double simTime ) {
     return;
 }
 
+void constrained_slabs_init ( mesh_t *myMesh, double simTime ) {
+
+	int iBldg,i,j;
+	int nodes_x, nodes_y;
+	double ticksize;
+	ticksize = myMesh->ticksize;
+
+	/* Allocate memory for the  theConstrainedSlab */
+	theConstrainedSlab =
+			(constrained_slab_bldg_t*)malloc(sizeof(constrained_slab_bldg_t) * theNumberOfBuildings);
+	if ( theConstrainedSlab == NULL ) {
+		solver_abort ( __FUNCTION_NAME, "NULL from malloc",
+				"Error allocating theConstrainedSlab memory" );
+	}
+
+	/* Fill theConstrainedSlab struct*/
+
+	for (iBldg = 0; iBldg < theNumberOfBuildings; iBldg++) {
+		theConstrainedSlab[iBldg].l = (theBuilding[iBldg].height)/theMinOctSizeMeters + 1;
+		nodes_x = (theBuilding[iBldg].bounds.xmax - theBuilding[iBldg].bounds.xmin)/theMinOctSizeMeters + 1;
+		nodes_y = (theBuilding[iBldg].bounds.ymax - theBuilding[iBldg].bounds.ymin)/theMinOctSizeMeters + 1;
+
+		theConstrainedSlab[iBldg].node_x = nodes_x;
+		theConstrainedSlab[iBldg].node_y = nodes_y;
+		theConstrainedSlab[iBldg].n = nodes_y * nodes_x;
+		theConstrainedSlab[iBldg].x_bldg_length =
+				(theBuilding[iBldg].bounds.xmax - theBuilding[iBldg].bounds.xmin);
+		theConstrainedSlab[iBldg].y_bldg_length =
+				(theBuilding[iBldg].bounds.ymax - theBuilding[iBldg].bounds.ymin);
+
+		printf ("\n\n\nl=%d nodes_x=%d nodes_y=%d n=%d x_bldg_length=%f y_bldg_length=%f \n\n\n ",theConstrainedSlab[iBldg].l, theConstrainedSlab[iBldg].node_x,
+				theConstrainedSlab[iBldg].node_y,theConstrainedSlab[iBldg].n,  theConstrainedSlab[iBldg].x_bldg_length ,  theConstrainedSlab[iBldg].y_bldg_length);
+
+	}
+
+	/* Allocate memory for the two dimensional arrays; L T and R */
+	for (iBldg = 0; iBldg < theNumberOfBuildings; iBldg++) {
+
+		/* Matrix L */
+		theConstrainedSlab[iBldg].local_ids_by_level =
+				(lnid_t**)malloc(theConstrainedSlab[iBldg].l * sizeof(lnid_t*));
+		for ( i = 0; i < theConstrainedSlab[iBldg].l; i++) {
+			theConstrainedSlab[iBldg].local_ids_by_level[i] =
+					(lnid_t*)malloc(theConstrainedSlab[iBldg].n * sizeof(lnid_t));
+		}
+
+		/* Matrix T */
+		theConstrainedSlab[iBldg].transformation_matrix =
+				(double**)malloc(theConstrainedSlab[iBldg].n * 3 * sizeof(double*));
+		for ( i = 0; i < theConstrainedSlab[iBldg].n * 3; i++) {
+			theConstrainedSlab[iBldg].transformation_matrix[i] = (double*)malloc(6 * sizeof(double));
+		}
+
+		/* Matrix R */
+		theConstrainedSlab[iBldg].local_ids_reference_nodes =
+				(lnid_t**)malloc(theConstrainedSlab[iBldg].l * sizeof(lnid_t*));
+		for ( i = 0; i < theConstrainedSlab[iBldg].l; i++) {
+			theConstrainedSlab[iBldg].local_ids_reference_nodes[i] =
+					(lnid_t*)malloc( 5 * sizeof(lnid_t));
+		}
+
+	}
+
+	/* Find local ids of nodes at each level for each building.( level0 -> base ) - matrix L  */
+	/* Find local_ids_reference_nodes matrix for each building and each level. - matrix R  */
+	/* l is from basement to roof */
+
+	for ( iBldg = 0; iBldg < theNumberOfBuildings; iBldg++ ) {
+		int32_t l;
+		tick_t bldg_center_x, bldg_center_y;
+
+		bldg_center_x = (theBuilding[iBldg].bounds.xmax + theBuilding[iBldg].bounds.xmin)/2/ticksize;
+		bldg_center_y = (theBuilding[iBldg].bounds.ymax + theBuilding[iBldg].bounds.ymin)/2/ticksize;
+
+		for ( l = 0; l < theConstrainedSlab[iBldg].l; l++) {
+			tick_t    z_tick, counter = 0;
+			z_tick = (theSurfaceShift - theMinOctSizeMeters*l)/ticksize;
+			for ( i = 0; i <  theConstrainedSlab[iBldg].node_x; i++ ) {
+				for ( j = 0; j <  theConstrainedSlab[iBldg].node_y; j++) {
+
+					int32_t   k ;
+					tick_t    x_tick, y_tick;
+					x_tick = (theBuilding[iBldg].bounds.xmin + theMinOctSizeMeters*i)/ticksize;
+					y_tick = (theBuilding[iBldg].bounds.ymin + theMinOctSizeMeters*j)/ticksize;
+
+					/* Loop each node.
+					 */
+					for ( k = 0; k < myMesh->nharbored; ++k ) {
+						if( myMesh->nodeTable[k].ismine == 1 ) {
+							if ( myMesh->nodeTable[k].z == z_tick) {
+								if ( myMesh->nodeTable[k].x == x_tick) {
+									if ( myMesh->nodeTable[k].y == y_tick) {
+
+										/* Local ids -- matrix L*/
+										theConstrainedSlab[iBldg].local_ids_by_level[l][counter] = k;
+										counter++;
+
+										/* For reference nodes -- matrix R*/
+										/* For reference point 1 (E)*/
+										if ( (y_tick == theBuilding[iBldg].bounds.ymax/ticksize) &&
+												(x_tick == bldg_center_x) ) {
+											theConstrainedSlab[iBldg].local_ids_reference_nodes[l][0] = k;
+											break;
+										}
+										/* For reference point 2 (N)*/
+										if ( (x_tick == theBuilding[iBldg].bounds.xmax/ticksize) &&
+												(y_tick == bldg_center_y) ) {
+											theConstrainedSlab[iBldg].local_ids_reference_nodes[l][1] = k;
+											break;
+										}
+										/* For reference point 3 (W)*/
+										if ( (y_tick == theBuilding[iBldg].bounds.ymin/ticksize) &&
+												(x_tick == bldg_center_x) ) {
+											theConstrainedSlab[iBldg].local_ids_reference_nodes[l][2] = k;
+											break;
+										}
+										/* For reference point 4 (S)*/
+										if ( (x_tick == theBuilding[iBldg].bounds.xmin/ticksize) &&
+												(y_tick == bldg_center_y) ) {
+											theConstrainedSlab[iBldg].local_ids_reference_nodes[l][3] = k;
+											break;
+										}
+										/* For reference point 5 -- center point*/
+										if ( (x_tick == bldg_center_x) &&
+												(y_tick == bldg_center_y) ) {
+											theConstrainedSlab[iBldg].local_ids_reference_nodes[l][4] = k;
+											break;
+										}
+
+										break;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+
+	printf("roof pt1_x_y_z= %f %f %f pt2_x_y_z= %f %f %f pt3_x_y_z= %f %f %f  pt4_x_y_z= %f %f %f pt5_x_y_z= %f %f %f\n\n"
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][0] ].x* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][0] ].y* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][0] ].z* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][1] ].x* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][1] ].y* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][1] ].z* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][2] ].x* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][2] ].y* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][2] ].z* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][3] ].x* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][3] ].y* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][3] ].z* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][4] ].x* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][4] ].y* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][4] ].z* ticksize );
+
+	printf("base pt1_x_y_z= %f %f %f pt2_x_y_z= %f %f %f pt3_x_y_z= %f %f %f  pt4_x_y_z= %f %f %f pt5_x_y_z= %f %f %f\n\n"
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][0] ].x* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][0] ].y* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][0] ].z* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][1] ].x* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][1] ].y* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][1] ].z* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][2] ].x* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][2] ].y* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][2] ].z* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][3] ].x* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][3] ].y* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][3] ].z* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][4] ].x* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][4] ].y* ticksize
+			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][4] ].z* ticksize );
+
+	/* Find transformation matrix for each building. Only calculate for one
+	 * level (level = 1)(constant for each level) - matrix T  */
+
+	for ( iBldg = 0; iBldg < theNumberOfBuildings; iBldg++ ) {
+
+		int counter = 0;
+		double bldg_center_x, bldg_center_y;
+
+		bldg_center_x = (theBuilding[iBldg].bounds.xmax + theBuilding[iBldg].bounds.xmin)/2;
+		bldg_center_y = (theBuilding[iBldg].bounds.ymax + theBuilding[iBldg].bounds.ymin)/2;
+
+		//printf("\n");
+
+		for ( i = 0; i < theConstrainedSlab[iBldg].node_x; i++ ) {
+			for ( j = 0; j < theConstrainedSlab[iBldg].node_y; j++) {
+				lnid_t nindex;
+				/* distance of the node to the geometric center of the building (resistance center)  */
+				double dist_x, dist_y;
+
+				nindex = theConstrainedSlab[iBldg].local_ids_by_level[1][counter];
+				dist_x = myMesh->nodeTable[nindex].x * ticksize - bldg_center_x;
+				dist_y = myMesh->nodeTable[nindex].y * ticksize - bldg_center_y;
+
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3][0] = 1;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3][1] = 0;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3][2] = 0;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3][3] = dist_y;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3][4] = 0;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3][5] = 0;
+
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][0] = 0;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][1] = 1;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][2] = 0;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][3] = -1*dist_x;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][4] = 0;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][5] = 0;
+
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][0] = 0;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][1] = 0;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][2] = 1;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][3] = 0;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][4] = dist_y;
+				theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][5] = -1*dist_x;
+
+				//printf("x = %d y = %d  disx = %f  disy = %f \n",i,j,dist_x,dist_y);
+
+				counter++;
+			}
+		}
+	}
+
+
+	int i_mat, j_mat;
+
+	fprintf(stdout, "\n Transformation Matrix T \n\n");
+	for ( i_mat = 0 ; i_mat < theConstrainedSlab[0].n * 3 ; i_mat++){
+		for ( j_mat = 0; j_mat < 6; j_mat++) {
+			fprintf(stdout, "%3.2f ",
+					theConstrainedSlab[0].transformation_matrix[i_mat][j_mat]);
+		}
+		fprintf(stdout, "\n");
+	}
+
+	fprintf(stdout, "\n\n");
+
+	tick_t nin;
+	fprintf(stdout, "\n Reference Matrix R \n\n");
+	for ( i_mat = 0 ; i_mat < theConstrainedSlab[0].l ; i_mat++){
+		for ( j_mat = 0; j_mat < 4; j_mat++) {
+			nin = theConstrainedSlab[0].local_ids_reference_nodes[i_mat][j_mat];
+			fprintf(stdout, "%3.2f-%3.2f-%3.2f  ",
+					myMesh->nodeTable[nin].x * ticksize,
+					myMesh->nodeTable[nin].y * ticksize,
+					myMesh->nodeTable[nin].z * ticksize);
+		}
+		fprintf(stdout, "\n");
+	}
+	fprintf(stdout, "\n\n");
+
+//	for ( iBldg = 0; iBldg < 4; iBldg++ ) {
+//		static char stationFile[256];
+//		sprintf(stationFile, "%s/station.%d","outputfiles/ref_stations",iBldg);
+//		fp_deneme[iBldg] = hu_fopen( stationFile,"w" );
+//		fputs( "#  Time(s)         X|(m)         Y-(m)         Z.(m)",
+//				fp_deneme[iBldg] );
+//	}
+
+	return;
+}
+
+
 double interpolatedisp ( double low, double high, double frac) {
 
     return low + frac * (high - low);
@@ -1702,6 +2017,86 @@ void bldgs_load_fixedbase_disps ( mysolver_t* solver, double simDT, int step ) {
     }
 
     return;
+}
+
+/* Displacements are calculated using the T * average values(A)  */
+
+void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int step ) {
+
+	int32_t   iBldg, i, j, k, m, l;
+	double    average_values[6]; /*order:  x,y,z,theta_z,theta_x,theta_y*/
+
+	for ( iBldg = 0; iBldg < theNumberOfBuildings; iBldg++ ) {
+		for ( l = 0; l < theConstrainedSlab[iBldg].l; l++) {
+			int 	    counter = 0;
+			lnid_t      ref_index[5];
+			fvector_t*  ref_dis[5];
+
+			for ( m = 0; m < 6; m++) {
+				average_values[m] = 0;
+			}
+
+			/* Fill average displacements vector (A) */
+			for ( k = 0; k < 4; k++) {
+				ref_index[k] =  theConstrainedSlab[iBldg].local_ids_reference_nodes[l][k];
+				ref_dis[k] = solver->tm2 + ref_index[k];
+
+				//				average_values[0] += ref_dis[k]->f[0]/4; /* average x */
+				//				average_values[1] += ref_dis[k]->f[1]/4; /* average y */
+				//				average_values[2] += ref_dis[k]->f[2]/4; /* average z */
+			}
+			// yeni - translationlar centerdan
+
+			ref_index[4] = theConstrainedSlab[iBldg].local_ids_reference_nodes[l][4];
+			ref_dis[4] = solver->tm2 + ref_index[4];
+
+			average_values[0] = ref_dis[4]->f[0]; /* average x */
+			average_values[1] = ref_dis[4]->f[1]; /* average y */
+			average_values[2] = ref_dis[4]->f[2]; /* average z */
+
+
+			average_values[3] = (ref_dis[0]->f[0] - ref_dis[2]->f[0])/2/theConstrainedSlab[iBldg].y_bldg_length +
+					(ref_dis[3]->f[1] - ref_dis[1]->f[1])/2/theConstrainedSlab[iBldg].x_bldg_length; /* average theta_z */
+
+			average_values[4] = (ref_dis[0]->f[2] - ref_dis[2]->f[2])/theConstrainedSlab[iBldg].y_bldg_length;  /* average theta_x */
+
+			average_values[5] = (ref_dis[3]->f[2] - ref_dis[1]->f[2])/theConstrainedSlab[iBldg].x_bldg_length;  /* average theta_y */
+
+			//        double time = simDT * step;
+
+			//			// roof ref disp
+			//			if ( l == theConstrainedSlab[iBldg].l - 1) {
+			//				for ( i = 0; i < 1; i++ ) {
+			//					fprintf( fp_deneme[i],
+			//							"\n%10.6f % 8e % 8e % 8e",
+			//							time, average_values[3], average_values[4], average_values[5] );
+			//					fflush(fp_deneme[i]);
+			//				}
+			//			}
+
+
+			for ( i = 0; i <  theConstrainedSlab[iBldg].node_x ; i++ ) {
+				for ( j = 0; j <  theConstrainedSlab[iBldg].node_y ; j++) {
+					lnid_t  nindex;
+					fvector_t* dis_slab_node;
+
+					nindex = theConstrainedSlab[iBldg].local_ids_by_level[l][counter];
+					dis_slab_node = solver->tm2 + nindex;
+
+					dis_slab_node->f[0] = average_values[0] +
+							theConstrainedSlab[iBldg].transformation_matrix[counter*3][3] * average_values[3]  ;
+					dis_slab_node->f[1] = average_values[1] +
+							theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][3] * average_values[3] ;
+					dis_slab_node->f[2] = average_values[2] +
+							theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][4] * average_values[4] +
+							theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][5] * average_values[5] ;
+					counter++;
+				}
+			}
+		}
+	}
+
+	return;
 }
 
 /* -------------------------------------------------------------------------- */
