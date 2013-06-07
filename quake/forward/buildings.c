@@ -106,9 +106,7 @@ int crossing_rule ( tick_t   tickcoord,
 bounds_t get_bldgbounds( int i );
 
 void get_airprops( octant_t *leaf, double ticksize,
-                   edata_t *edata, etree_t *cvm,
-                   double xoriginm,double yoriginm,
-                   double zoriginm);
+                   edata_t *edata, etree_t *cvm );
 
 int inclusivesearch  ( double x, double y, double z, bounds_t bounds );
 int exclusivesearch  ( double x, double y, double z, bounds_t bounds );
@@ -206,33 +204,31 @@ cvmpayload_t get_props( int i, double z ) {
     }
 }
 
-void get_airprops( octant_t *leaf, double ticksize, edata_t *edata,
-				   etree_t *cvm ,double xoriginm, double yoriginm,
-                   double zoriginm)
+void get_airprops( octant_t *leaf, double ticksize,
+                   edata_t *edata, etree_t *cvm )
 {
-	int    res;
-	double x, y, z;
-	double edgesize;
-	double halfedge;
+    int    res;
+    double x, y, z;
+    double edgesize;
+    double halfedge;
 
-	cvmpayload_t props;
+    cvmpayload_t props;
 
-	edgesize = edata->edgesize;
-	halfedge = edgesize * 0.5;
+    edgesize = edata->edgesize;
+    halfedge = edgesize * 0.5;
 
-	x = ( leaf->lx * ticksize ) + halfedge + xoriginm;
-	y = ( leaf->ly * ticksize ) + halfedge + yoriginm;
-	z = ( leaf->lz * ticksize ) + halfedge + zoriginm;
+    x = ( leaf->lx * ticksize ) + halfedge;
+    y = ( leaf->ly * ticksize ) + halfedge;
+    z = ( leaf->lz * ticksize ) + halfedge;
 
+    /* Get the Vs at that location on the surface (z = 0) */
+    res = cvm_query( cvm, y, x, 0, &props );
 
-	/* Get the Vs at that location on the surface (z = 0) */
-	res = cvm_query( cvm, y, x, 0, &props );
-
-	if ( res != 0 ) {
-		return;
-		solver_abort ( __FUNCTION_NAME, "Error from cvm_query: ",
-				"No properties at east = %f, north = %f", y, x);
-	}
+    if ( res != 0 ) {
+        return;
+        solver_abort ( __FUNCTION_NAME, "Error from cvm_query: ",
+                       "No properties at east = %f, north = %f", y, x);
+    }
 
     /* Increase Vs as it gets far from the surface */
     edata->Vs  = 2.0 * props.Vs * ( theSurfaceShift - z ) / ticksize;
@@ -510,10 +506,8 @@ int bldgs_nodesearch ( tick_t x, tick_t y, tick_t z, double ticksize ) {
  *       as it will be for DRM implementation, one will need to consider
  *       theXForMeshOrigin, theYForMeshOrigin, (and theXForMeshOrigin ?)
  */
-
 int bldgs_setrec ( octant_t *leaf, double ticksize,
-                   edata_t *edata, etree_t *cvm,double xoriginm,
-                   double yoriginm, double zoriginm)
+                   edata_t *edata, etree_t *cvm )
 {
     int          res;
     double       z_m;
@@ -531,7 +525,7 @@ int bldgs_setrec ( octant_t *leaf, double ticksize,
     z_m = leaf->lz * ticksize;
 
     if ( z_m < theSurfaceShift ) {
-        get_airprops( leaf, ticksize, edata, cvm,xoriginm,yoriginm,zoriginm);
+        get_airprops( leaf, ticksize, edata, cvm);
         return 1;
     }
 

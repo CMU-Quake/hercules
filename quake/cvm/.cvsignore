@@ -1,0 +1,11 @@
+dumpcvm
+pickrecord
+querycvm
+scancvm
+showdbctl
+*-bak-00
+*-bak-00?
+*.c-e
+*.h-e
+*.ce
+*.he

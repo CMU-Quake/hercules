@@ -42,6 +42,9 @@
 extern int compute_csi_eta_dzeta( octant_t *octant, vector3D_t pointcoords,
 				  vector3D_t *localcoords, int32_t *localNodeID );
 
+extern int compute_csi_eta_dzeta_quadratic( octant_t *octant, vector3D_t pointcoords,
+				  vector3D_t *localcoords, int32_t *localNodeID );
+
 #define LINESIZE       512
 
 #define STOP_SERVER    10 /* DATA MESSAGE TO STOP IO SERVER */
@@ -50,31 +53,25 @@ extern int compute_csi_eta_dzeta( octant_t *octant, vector3D_t pointcoords,
 /*Could be determined dynmamically but would cost search_point calls*/
 
 
-int  New_planes_print(int32_t myID, mysolver_t* mySolver, int theNumberOfPlanes);
-void New_planes_setup(int32_t myID, int32_t *thePlanePrintRate, int theNumberOfPlanes,
-		      const char *numericalin, double surfaceShift,
-		      double *theSurfaceCornersLong, double *theSurfaceCornersLat,
-		      double theDomainX, double theDomainY, double theDomainZ,
-		      char* planes_input_file);
-void New_planes_close(int32_t myID, int theNumberOfPlanes);
+int  New_planes_print(int32_t myID, mysolver_t* mySolver);
+int  New_planes_print_quadratic(int32_t myID, mysolver_t* mySolver);
+void New_planes_setup(int32_t myID, const char *numericalin, double surfaceShift);
+void New_planes_close(int32_t myID);
 void planes_IO_PES_main(int32_t myID);
-static void New_output_planes_construct_strips(int32_t myID, int theNumberOfPlanes);
+static void New_output_planes_construct_strips();
 
-static void print_planeinfo(int32_t myID, int theNumberOfPlanes);
+static void print_planeinfo(int32_t myID);
 
-int  Old_planes_print(int32_t myID, mysolver_t* mySolver, int theNumberOfPlanes);
-void Old_planes_setup(int32_t myID, int32_t *thePlanePrintRate, int theNumberOfPlanes, 
-		      const char *numericalin, double surfaceShift,
-		      double *theSurfaceCornersLong, double *theSurfaceCornersLat,
-		      double theDomainX, double theDomainY, double theDomainZ,
-		      char* planes_input_file);
-void Old_planes_close(int32_t myID, int theNumberOfPlanes);
-static int  Old_print_plane_displacements(int32_t myID, int ThisPlane);
-static void Old_output_planes_construct_strips(int32_t myID, int theNumberOfPlanes);
+int  Old_planes_print(int32_t myID, mysolver_t* mySolver);
+int  Old_planes_print_quadratic(int32_t myID, mysolver_t* mySolver);
+void Old_planes_setup(int32_t myID, const char *numericalin, double surfaceShift);
+void Old_planes_close();
+static int  Old_print_plane_displacements(int ThisPlane);
+static void Old_output_planes_construct_strips();
 
 typedef struct plane_strip_element_t {
 
-    int32_t nodestointerpolate[8];
+    int32_t nodestointerpolate[27];
     vector3D_t localcoords;  /* csi, eta, dzeta in (-1,1) x (-1,1) x (-1,1)*/
 
 } plane_strip_element_t;
@@ -99,6 +96,13 @@ typedef struct plane_t {
 
 } plane_t;
 
+extern double theSurfaceCornersLong[4], theSurfaceCornersLat[4];
+extern double theDomainX, theDomainY, theDomainZ;
+extern int32_t thePlanePrintRate;
+extern int theNumberOfPlanes;
+extern int IO_pool_pe_count;
+
+static int32_t myID;
 static plane_t* thePlanes;
 static int planes_GlobalLargestStripCount;
 static int planes_LocalLargestStripCount;
@@ -106,49 +110,42 @@ static double* planes_output_buffer;
 static double* planes_stripMPISendBuffer;
 static double* planes_stripMPIRecvBuffer;
 
-/******* Wrapper on routines to maintain backwards compatiblity for single core routines ******/
+/******* Wrapper on routines to maintain backwards compatibility for single core routines ******/
 
-int planes_print(int32_t myID, int IO_pool_pe_count, int theNumberOfPlanes, mysolver_t* mySolver){
-    if (IO_pool_pe_count)
-         New_planes_print(myID, mySolver, theNumberOfPlanes);
-    else
-         Old_planes_print(myID, mySolver, theNumberOfPlanes);
-    return 1;
+int planes_print(int32_t myID, mysolver_t* mySolver){
+	if (IO_pool_pe_count){
+		//	New_planes_print(myID, mySolver);
+		New_planes_print_quadratic(myID, mySolver);
+	}
+	else{
+		//	Old_planes_print(myID, mySolver);
+		Old_planes_print_quadratic(myID, mySolver);
+	}
+	return 1;
 }
 
-void planes_setup(int32_t myID, int32_t *thePlanePrintRate, int IO_pool_pe_count, 
-                  int theNumberOfPlanes, const char *numericalin, double surfaceShift,
-		  double *theSurfaceCornersLong, double *theSurfaceCornersLat,
-		  double theDomainX, double theDomainY, double theDomainZ,
-		  char* planes_input_file){
-
+void planes_setup(int32_t myID, const char *numericalin, double surfaceShift){
     if (IO_pool_pe_count)
-	New_planes_setup(myID, thePlanePrintRate, theNumberOfPlanes, numericalin, surfaceShift,
-			 theSurfaceCornersLong, theSurfaceCornersLat,
-                         theDomainX, theDomainY, theDomainZ,
-                         planes_input_file);
+	New_planes_setup(myID, numericalin, surfaceShift);
     else
-	Old_planes_setup(myID, thePlanePrintRate, theNumberOfPlanes, numericalin, surfaceShift,
-			 theSurfaceCornersLong, theSurfaceCornersLat,
-                         theDomainX, theDomainY, theDomainZ,
-                         planes_input_file);
+	Old_planes_setup(myID, numericalin, surfaceShift);
 }
 
-void planes_close(int32_t myID, int IO_pool_pe_count, int theNumberOfPlanes){
+void planes_close(int32_t myID){
     if (IO_pool_pe_count)
-	New_planes_close(myID, theNumberOfPlanes);
+	New_planes_close(myID);
     else
-	Old_planes_close(myID, theNumberOfPlanes);
+	Old_planes_close();
 }
 
 
-/********************* Old Version To Maintain Backwards Compatbility For One Core ******/
+/********************* Old Version To Maintain Backwards Compatibility For One Core ******/
 
 /**
  * Interpolate the displacenents and communicate strips to printing PE.
  * Bigben version has no control flow, just chugs through planes.
  */
-int Old_planes_print(int32_t myID, mysolver_t* mySolver, int theNumberOfPlanes)
+int Old_planes_print(int32_t PENum, mysolver_t* mySolver)
 {
     int iPlane, iPhi;
     int stripLength;
@@ -166,6 +163,8 @@ int Old_planes_print(int32_t myID, mysolver_t* mySolver, int theNumberOfPlanes)
     MPI_Status  status;
     //    MPI_Request sendstat;
     int recvStripCount, StartLocation;
+
+    myID = PENum;
 
     for (iPlane = 0; iPlane < theNumberOfPlanes ;iPlane++) {
 	for (iStrip = 0; iStrip < thePlanes[iPlane].numberofstripsthisplane;
@@ -240,7 +239,170 @@ int Old_planes_print(int32_t myID, mysolver_t* mySolver, int theNumberOfPlanes)
 	}
 
 	/* do print for just this plane */
-	Old_print_plane_displacements(myID, iPlane );
+	Old_print_plane_displacements( iPlane );
+
+	/* may not be required */
+	MPI_Barrier( comm_solver );
+    } /* for iPlane */
+
+    return 1;
+}
+
+/* HAYDAR QUADRATIC EFFORT */
+
+/**
+ * Interpolate the displacenents and communicate strips to printing PE.
+ * Bigben version has no control flow, just chugs through planes.
+ */
+int Old_planes_print_quadratic(int32_t PENum, mysolver_t* mySolver)
+{
+    int iPlane, iPhi;
+    int stripLength;
+    int iStrip, elemnum, rStrip;
+    /* Auxiliar array to handle shapefunctions in a loop */
+//    double  xi[3][8]={ {-1,  1, -1,  1, -1,  1, -1, 1} ,
+//		       {-1, -1,  1,  1, -1, -1,  1, 1} ,
+//		       {-1, -1, -1, -1,  1,  1,  1, 1} };
+
+    double      phi[27];
+    double      displacementsX, displacementsY, displacementsZ;
+    vector3D_t  localCoords;
+    //    int32_t     howManyDisplacements, iDisplacement;
+    //    vector3D_t* localCoords; /* convinient renaming */
+    //    int32_t*    nodesToInterpolate[8];
+    MPI_Status  status;
+    //    MPI_Request sendstat;
+    int recvStripCount, StartLocation;
+
+    myID = PENum;
+
+    for (iPlane = 0; iPlane < theNumberOfPlanes ;iPlane++) {
+	for (iStrip = 0; iStrip < thePlanes[iPlane].numberofstripsthisplane;
+	     iStrip++) {
+
+	    /* interpolate points directly into send buffer for this strip */
+	    for (elemnum = 0;
+		 elemnum < (thePlanes[iPlane].stripend[iStrip]
+			    -thePlanes[iPlane].stripstart[iStrip]+1);
+		 elemnum++)
+		{
+		    displacementsX = 0;displacementsY = 0;displacementsZ = 0;
+
+		    localCoords.x[0] = thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[0];
+		    localCoords.x[1] = thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[1];
+		    localCoords.x[2] = thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[2];
+
+
+		    for (iPhi = 0; iPhi < 27; iPhi++){
+		    	if(iPhi == 0)
+		    		phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] - 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] - 1.))/8.;
+		    	if(iPhi == 1)
+		    		phi[ iPhi ] = -(localCoords.x[2]*localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] - 1.))/4.;
+		    	if(iPhi == 2)
+		    		phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] + 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] - 1.))/8.;
+		    	if(iPhi == 3)
+		    		phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[2]*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] - 1.)*(localCoords.x[2] - 1.))/4.;
+		    	if(iPhi == 4)
+		    		phi[ iPhi ] = (localCoords.x[2]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[2] - 1.))/2.;
+		    	if(iPhi == 5)
+		    		phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[2]*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] + 1.)*(localCoords.x[2] - 1.))/4.;
+		    	if(iPhi == 6)
+		    		phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] - 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] + 1.))/8.;
+		    	if(iPhi == 7)
+		    		phi[ iPhi ] = -(localCoords.x[2]*localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] + 1.))/4.;
+		    	if(iPhi == 8)
+		    		phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] + 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] + 1.))/8.;
+		    	if(iPhi == 9)
+		    		phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[1]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[0] - 1.)*(localCoords.x[1] - 1.))/4.;
+		    	if(iPhi == 10)
+		    		phi[ iPhi ] = (localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[1] - 1.))/2.;
+		    	if(iPhi == 11)
+		    		phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[1]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[0] + 1.)*(localCoords.x[1] - 1.))/4.;
+		    	if(iPhi == 12)
+		    		phi[ iPhi ] = (localCoords.x[0]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] - 1.))/2.;
+		    	if(iPhi == 13)
+		    		phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[1]*localCoords.x[1] - 1.);
+		    	if(iPhi == 14)
+		    		phi[ iPhi ] = (localCoords.x[0]*(localCoords.x[2]*localCoords.x[2] - 1)*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] + 1.))/2.;
+		    	if(iPhi == 15)
+		    		phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[1]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[0] - 1.)*(localCoords.x[1] + 1.))/4;
+		    	if(iPhi == 16)
+		    		phi[ iPhi ] = (localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[1] + 1.))/2.;
+		    	if(iPhi == 17)
+		    		phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[1]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[0] + 1.)*(localCoords.x[1] + 1.))/4.;
+		    	if(iPhi == 18)
+		    		phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] - 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] - 1.))/8.;
+		    	if(iPhi == 19)
+		    		phi[ iPhi ] = -(localCoords.x[2]*localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] - 1.))/4.;
+		    	if(iPhi == 20)
+		    		phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] + 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] - 1.))/8.;
+		    	if(iPhi == 21)
+		    		phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[2]*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] - 1.)*(localCoords.x[2] + 1.))/4.;
+		    	if(iPhi == 22)
+		    		phi[ iPhi ] = (localCoords.x[2]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[2] + 1.))/2.;
+		    	if(iPhi == 23)
+		    		phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[2]*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] + 1.)*(localCoords.x[2] + 1.))/4.;
+		    	if(iPhi == 24)
+		    		phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] - 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] + 1.))/8.;
+		    	if(iPhi == 25)
+		    		phi[ iPhi ] = -(localCoords.x[2]*localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] + 1.))/4.;
+		    	if(iPhi == 26)
+		    		phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] + 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] + 1.))/8.;
+
+
+			displacementsX += phi[iPhi]*
+			    (mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[iPhi] ].f[0]);
+			displacementsY += phi[iPhi]*
+			    (mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[iPhi] ].f[1]);
+			displacementsZ += phi[iPhi]*
+			    (mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[iPhi] ].f[2]);
+		    }
+
+		    planes_stripMPISendBuffer[elemnum*3]     = (double) (displacementsX);
+		    planes_stripMPISendBuffer[elemnum*3 + 1] = (double) (displacementsY);
+		    planes_stripMPISendBuffer[elemnum*3 + 2] = (double) (displacementsZ);
+
+		}
+
+	    /* add start location as last element, add .1 to insure
+	       int-float conversion (yes, bad form)*/
+            stripLength = thePlanes[iPlane].stripend[iStrip]
+		- thePlanes[iPlane].stripstart[iStrip] + 1;
+
+            planes_stripMPISendBuffer[stripLength*3]
+		= (double) (thePlanes[iPlane].stripstart[iStrip] + 0.1);
+
+            if (myID==0) { /* don't try to send to same PE, just memcopy */
+		memcpy( &(planes_output_buffer[ thePlanes[iPlane].stripstart[iStrip]*3 ] ), planes_stripMPISendBuffer,
+			stripLength*3*sizeof(double) );
+            }
+            else {
+		MPI_Send( planes_stripMPISendBuffer, (stripLength*3)+1,
+			  MPI_DOUBLE, 0 , iPlane, comm_solver );
+            }
+	} /*for iStrips*/
+
+	/* IO PE recieves for this plane */
+	if(myID == 0){
+	    /* Recv all strips not directly memory copied above */
+	    for (rStrip = 0;
+		 rStrip < (thePlanes[iPlane].globalnumberofstripsthisplane
+			   - thePlanes[iPlane].numberofstripsthisplane);
+		 rStrip++) {
+
+		MPI_Recv( planes_stripMPIRecvBuffer,
+			  planes_GlobalLargestStripCount * 3 + 1, MPI_DOUBLE,
+			  MPI_ANY_SOURCE, iPlane, comm_solver, &status );
+		MPI_Get_count(&status, MPI_DOUBLE, &recvStripCount);
+		StartLocation = (int)planes_stripMPIRecvBuffer[recvStripCount-1];
+		memcpy( &(planes_output_buffer[StartLocation * 3]),
+			planes_stripMPIRecvBuffer,
+			(recvStripCount-1)*sizeof(double) );
+	    }
+	}
+
+	/* do print for just this plane */
+	Old_print_plane_displacements( iPlane );
 
 	/* may not be required */
 	MPI_Barrier( comm_solver );
@@ -250,7 +412,8 @@ int Old_planes_print(int32_t myID, mysolver_t* mySolver, int theNumberOfPlanes)
 }
 
 
-static int Old_print_plane_displacements(int32_t myID, int ThisPlane)
+
+static int Old_print_plane_displacements(int ThisPlane)
 {
     int ret;
 
@@ -278,13 +441,10 @@ static int Old_print_plane_displacements(int32_t myID, int ThisPlane)
  * 2. It does not have a strip size limit.
  */
 
-void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
-			int theNumberOfPlanes,
+void Old_planes_setup ( int32_t     PENum,
                         const char *numericalin,
-                        double      surfaceShift,
-			double *theSurfaceCornersLong, double *theSurfaceCornersLat,
-			double theDomainX, double theDomainY, double theDomainZ,
-			char* planes_input_file) {
+                        double      surfaceShift )
+{
 
     char thePlaneDirOut[256];
     static const char* fname = "output_planes_setup()";
@@ -292,19 +452,19 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
     char       planedisplacementsout[1024], planecoordsfile[1024];
     int        iPlane, iCorner;
     vector3D_t originPlaneCoords;
-    int        largestplanesize;
+    int largestplanesize;
     FILE*      fp;
-    FILE*      fp_planes;
+
+    myID=PENum;
 
     if (myID == 0) {
-
-	/* obtain the general planes specifications in parameter file */
+	/* obtain the planes specifications */
 	if ( (fp = fopen ( numericalin, "r")) == NULL ) {
 	    solver_abort (fname, numericalin,
-			  "Error opening parameters configuration file");
+			  "Error opening numerical.in configuration file");
 	}
 	if ( (parsetext(fp, "output_planes_print_rate", 'i',
-			thePlanePrintRate) != 0) )
+			&thePlanePrintRate) != 0) )
 	    {
 		solver_abort (fname, NULL, "Error parsing output_planes_print_rate field from %s\n",
 			      numericalin);
@@ -332,15 +492,9 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
 	    solver_abort( fname, "Allocating memory for planes array",
 			  "Unable to create plane information arrays" );
 	}
-	fclose(fp);
 
-
-	/* read in the individual planes coords in planes file */
-	if ( (fp_planes = fopen ( planes_input_file, "r")) == NULL ) {
-	    solver_abort (fname, planes_input_file,
-			  "Error opening planes configuration file");
-	}
-
+	/* locate line where output_planes indicator is and read array */
+	rewind (fp);
 	int found=0;
 	while (!found) {
 	    char line[LINESIZE];
@@ -359,7 +513,7 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
 		    int fret0, fret1;
 		    FILE* fp0;
 		    FILE* fp1;
-		    fret0 = fscanf( fp_planes," %lf %lf %lf",
+		    fret0 = fscanf( fp," %lf %lf %lf",
 				    &thePlanes[iPlane].origincoords.x[0],
 				    &thePlanes[iPlane].origincoords.x[1],
 				    &thePlanes[iPlane].origincoords.x[2] );
@@ -371,7 +525,7 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
 		    if (fret0 == 0) {
 			solver_abort (fname, NULL,
 				      "Unable to read planes origin in %s",
-				      planes_input_file);
+				      numericalin);
 		    }
 		    /* convert to cartesian refered to the mesh */
                     originPlaneCoords =
@@ -385,7 +539,7 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
                     thePlanes[iPlane].origincoords.x[0]=originPlaneCoords.x[0];
                     thePlanes[iPlane].origincoords.x[1]=originPlaneCoords.x[1];
 
-                    fret1 = fscanf(fp_planes," %lf %d %lf %d %lf %lf",
+                    fret1 = fscanf(fp," %lf %d %lf %d %lf %lf",
                                    &thePlanes[iPlane].stepalongstrike,
                                    &thePlanes[iPlane].numberofstepsalongstrike,
                                    &thePlanes[iPlane].stepdowndip,
@@ -404,7 +558,7 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
                     if (fret1 == 0) {
 			solver_abort(fname, NULL,
 				     "Unable to read plane specification in %s",
-				     planes_input_file);
+				     numericalin);
                     }
 
                     /* open displacement output files */
@@ -420,14 +574,11 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
 		} /* for */
 	    } /* if ( (name != NULL) ... ) */
 	} /* while */
-
-	fclose(fp_planes);
-
     } /* if (myID == 0) */
 
     /* broadcast plane info */
     MPI_Bcast( &theNumberOfPlanes, 1, MPI_INT, 0, comm_solver );
-    MPI_Bcast( thePlanePrintRate, 1, MPI_INT, 0, comm_solver );
+    MPI_Bcast( &thePlanePrintRate, 1, MPI_INT, 0, comm_solver );
 
     /* initialize the local structures */
     if (myID != 0) {
@@ -450,7 +601,7 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
 	MPI_Barrier(comm_solver);
     }
 
-    Old_output_planes_construct_strips(myID, theNumberOfPlanes);
+    Old_output_planes_construct_strips();
 
     /* master allocates largest plane */
     if (myID == 0) {
@@ -462,7 +613,7 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
 	}
     }
 
-    print_planeinfo(myID, theNumberOfPlanes);
+    print_planeinfo(myID);
 
     return;
 }
@@ -472,7 +623,7 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
  * version does not have strip size limits
  */
 
-static void Old_output_planes_construct_strips(int32_t myID, int theNumberOfPlanes)
+static void Old_output_planes_construct_strips()
 {
 
     //    int iNode, iPlane, iStrike, iDownDip;
@@ -611,7 +762,9 @@ static void Old_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 						      thePlanes[ iPlane ].dip, 0,
 						      thePlanes[ iPlane ].strike );
 			if (search_point( pointGlobal, &octant) == 1) {
-			    compute_csi_eta_dzeta( octant, pointGlobal,
+
+				/* HAYDAR QUADRATIC EFFORT */
+			    compute_csi_eta_dzeta_quadratic( octant, pointGlobal,
 						   &(thePlanes[ iPlane ].strip[stripnum][elemnum].localcoords),
 						   thePlanes[ iPlane ].strip[stripnum][elemnum].nodestointerpolate);
 			}
@@ -650,20 +803,19 @@ static void Old_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 }
 
 /** Close planes files. */
-void Old_planes_close(int32_t myID, int theNumberOfPlanes)
+void Old_planes_close()
 {
     int iPlane;
 
     if (myID==0){
 	for (iPlane = 0; iPlane < theNumberOfPlanes ;iPlane++) {
 	    fclose( thePlanes[iPlane].fpoutputfile );
-	    fclose( thePlanes[iPlane].fpplanecoordsfile );
 	}
     }
 }
 
 /** Print Plane Stats, and possibly old version plane coords file. */
-void print_planeinfo(int32_t myID, int theNumberOfPlanes)
+void print_planeinfo(int32_t myID)
 {
     int iPlane;
     int MaxStrip;
@@ -705,13 +857,10 @@ void print_planeinfo(int32_t myID, int theNumberOfPlanes)
 /**************************************************************************/
 
 
-void New_planes_setup( int32_t     PENum, int32_t *thePlanePrintRate,
-		       int theNumberOfPlanes,
+void New_planes_setup( int32_t     PENum,
                        const char *numericalin,
-                       double      surfaceShift,
-		       double *theSurfaceCornersLong, double *theSurfaceCornersLat,
-		       double theDomainX, double theDomainY, double theDomainZ,
-                       char* planes_input_file) {
+                       double      surfaceShift )
+{
 
     static const char* fname = "new_output_planes_setup()";
     double     *auxiliar;
@@ -720,17 +869,15 @@ void New_planes_setup( int32_t     PENum, int32_t *thePlanePrintRate,
     vector3D_t originPlaneCoords;
     int largestplanesize;
     FILE*      fp;
-    FILE*      fp_planes;
 
     if (PENum == 0) {
-
-        /* obtain the general planes specifications in parameter file */
+	/* obtain the planes specifications */
 	if ( (fp = fopen ( numericalin, "r")) == NULL ) {
 	    solver_abort (fname, numericalin,
-			  "Error opening parameters configuration file");
+			  "Error opening numerical.in configuration file");
 	}
 	if ( (parsetext(fp, "output_planes_print_rate", 'i',
-			thePlanePrintRate) != 0) )
+			&thePlanePrintRate) != 0) )
 	    {
 		solver_abort (fname, NULL, "Error parsing output_planes_print_rate field from %s\n",
 			      numericalin);
@@ -758,14 +905,9 @@ void New_planes_setup( int32_t     PENum, int32_t *thePlanePrintRate,
 	    solver_abort( fname, "Allocating memory for planes array",
 			  "Unable to create plane information arrays" );
 	}
-	fclose(fp);
 
-        /* read in the individual planes coords in planes file */
-        if ( (fp_planes = fopen ( planes_input_file, "r")) == NULL ) {
-            solver_abort (fname, planes_input_file,
-                          "Error opening planes configuration file");
-        }
-
+	/* locate line where output_planes indicator is and read array */
+	rewind (fp);
 	int found=0;
 	while (!found) {
 	    char line[LINESIZE];
@@ -782,7 +924,7 @@ void New_planes_setup( int32_t     PENum, int32_t *thePlanePrintRate,
 		found = 1;
 		for ( iPlane = 0; iPlane < theNumberOfPlanes; iPlane++ ) {
 		    int fret0, fret1;
-		    fret0 = fscanf( fp_planes," %lf %lf %lf",
+		    fret0 = fscanf( fp," %lf %lf %lf",
 				    &thePlanes[iPlane].origincoords.x[0],
 				    &thePlanes[iPlane].origincoords.x[1],
 				    &thePlanes[iPlane].origincoords.x[2] );
@@ -794,7 +936,7 @@ void New_planes_setup( int32_t     PENum, int32_t *thePlanePrintRate,
 		    if (fret0 == 0) {
 			solver_abort (fname, NULL,
 				      "Unable to read planes origin in %s",
-				      planes_input_file);
+				      numericalin);
 		    }
 		    /* convert to cartesian refered to the mesh */
                     originPlaneCoords =
@@ -808,7 +950,7 @@ void New_planes_setup( int32_t     PENum, int32_t *thePlanePrintRate,
                     thePlanes[iPlane].origincoords.x[0]=originPlaneCoords.x[0];
                     thePlanes[iPlane].origincoords.x[1]=originPlaneCoords.x[1];
 
-                    fret1 = fscanf(fp_planes," %lf %d %lf %d %lf %lf",
+                    fret1 = fscanf(fp," %lf %d %lf %d %lf %lf",
                                    &thePlanes[iPlane].stepalongstrike,
                                    &thePlanes[iPlane].numberofstepsalongstrike,
                                    &thePlanes[iPlane].stepdowndip,
@@ -827,20 +969,17 @@ void New_planes_setup( int32_t     PENum, int32_t *thePlanePrintRate,
                     if (fret1 == 0) {
 			solver_abort(fname, NULL,
 				     "Unable to read plane specification in %s",
-				     planes_input_file);
+				     numericalin);
                     }
 
 		} /* for */
 	    } /* if ( (name != NULL) ... ) */
 	} /* while */
-
-	fclose(fp_planes);
-
     } /* if (PENum == 0) */
 
     /* broadcast plane info to whole IO group */
     MPI_Bcast( &theNumberOfPlanes, 1, MPI_INT, 0, comm_IO );
-    MPI_Bcast( thePlanePrintRate, 1, MPI_INT, 0, comm_IO );
+    MPI_Bcast( &thePlanePrintRate, 1, MPI_INT, 0, comm_IO );
     MPI_Bcast( &largestplanesize, 1, MPI_INT, 0, comm_IO );
     MPI_Bcast( thePlaneDirOut, 256, MPI_CHAR, 0, comm_IO );
 
@@ -875,9 +1014,9 @@ void New_planes_setup( int32_t     PENum, int32_t *thePlanePrintRate,
 	thePlanes[iPlane].IO_PE_num = IO_Group_Size-1;
     }
 
-    New_output_planes_construct_strips(PENum, theNumberOfPlanes);
+    New_output_planes_construct_strips();
 
-    print_planeinfo(PENum, theNumberOfPlanes);
+    print_planeinfo(PENum);
 
     return;
 }
@@ -886,7 +1025,7 @@ void New_planes_setup( int32_t     PENum, int32_t *thePlanePrintRate,
 /* This builds all of the strips used in the planes output. XT5
    version does not have strip size limits */
 
-static void New_output_planes_construct_strips(int32_t myID, int theNumberOfPlanes)
+static void New_output_planes_construct_strips()
 {
 
     int iPlane, iStrike, iDownDip;
@@ -1024,7 +1163,8 @@ static void New_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 						      thePlanes[ iPlane ].dip, 0,
 						      thePlanes[ iPlane ].strike );
 			if (search_point( pointGlobal, &octant) == 1) {
-			    compute_csi_eta_dzeta( octant, pointGlobal,
+				/* HAYDAR QUADRATIC EFFORT */
+			    compute_csi_eta_dzeta_quadratic( octant, pointGlobal,
 						   &(thePlanes[ iPlane ].strip[stripnum][elemnum].localcoords),
 						   thePlanes[ iPlane ].strip[stripnum][elemnum].nodestointerpolate);
 			}
@@ -1054,7 +1194,7 @@ static void New_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
  * Interpolate the displacenents and communicate strips to printing PE.
  * Bigben version has no control flow, just chugs through planes.
  */
-int New_planes_print(int32_t PENum, mysolver_t* mySolver, int theNumberOfPlanes)
+int New_planes_print(int32_t PENum, mysolver_t* mySolver)
 {
     int iPlane, iPhi;
     int stripLength;
@@ -1124,8 +1264,138 @@ int New_planes_print(int32_t PENum, mysolver_t* mySolver, int theNumberOfPlanes)
 }
 
 
+/* HAYDAR QUADRATIC EFFORT */
+
+/**
+ * Interpolate the displacenents and communicate strips to printing PE.
+ * Bigben version has no control flow, just chugs through planes.
+ */
+int New_planes_print_quadratic(int32_t PENum, mysolver_t* mySolver)
+{
+    int iPlane, iPhi;
+    int stripLength;
+    int iStrip, elemnum;
+
+//    /* Auxiliar array to handle shapefunctions in a loop */
+//    double  xi[3][8]={ {-1,  1, -1,  1, -1,  1, -1, 1} ,
+//		       {-1, -1,  1,  1, -1, -1,  1, 1} ,
+//		       {-1, -1, -1, -1,  1,  1,  1, 1} };
+
+    double      phi[27];
+    double      displacementsX, displacementsY, displacementsZ;
+    vector3D_t  localCoords;
+
+    for (iPlane = 0; iPlane < theNumberOfPlanes ;iPlane++) {
+	for (iStrip = 0; iStrip < thePlanes[iPlane].numberofstripsthisplane;
+	     iStrip++) {
+
+	    /* interpolate points directly into send buffer for this strip */
+		for (elemnum = 0;
+				elemnum < (thePlanes[iPlane].stripend[iStrip]
+				                                      -thePlanes[iPlane].stripstart[iStrip]+1);
+				elemnum++){
+			displacementsX = 0;displacementsY = 0;displacementsZ = 0;
+
+			localCoords.x[0] = thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[0];
+			localCoords.x[1] = thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[1];
+			localCoords.x[2] = thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[2];
+
+		/* Interpolate the element */
+		for (iPhi = 0; iPhi < 27; iPhi++){
+			if(iPhi == 0)
+				phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] - 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] - 1.))/8.;
+			if(iPhi == 1)
+				phi[ iPhi ] = -(localCoords.x[2]*localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] - 1.))/4.;
+			if(iPhi == 2)
+				phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] + 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] - 1.))/8.;
+			if(iPhi == 3)
+				phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[2]*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] - 1.)*(localCoords.x[2] - 1.))/4.;
+			if(iPhi == 4)
+				phi[ iPhi ] = (localCoords.x[2]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[2] - 1.))/2.;
+			if(iPhi == 5)
+				phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[2]*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] + 1.)*(localCoords.x[2] - 1.))/4.;
+			if(iPhi == 6)
+				phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] - 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] + 1.))/8.;
+			if(iPhi == 7)
+				phi[ iPhi ] = -(localCoords.x[2]*localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] + 1.))/4.;
+			if(iPhi == 8)
+				phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] + 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] + 1.))/8.;
+			if(iPhi == 9)
+				phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[1]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[0] - 1.)*(localCoords.x[1] - 1.))/4.;
+			if(iPhi == 10)
+				phi[ iPhi ] = (localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[1] - 1.))/2.;
+			if(iPhi == 11)
+				phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[1]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[0] + 1.)*(localCoords.x[1] - 1.))/4.;
+			if(iPhi == 12)
+				phi[ iPhi ] = (localCoords.x[0]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] - 1.))/2.;
+			if(iPhi == 13)
+				phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[1]*localCoords.x[1] - 1.);
+			if(iPhi == 14)
+				phi[ iPhi ] = (localCoords.x[0]*(localCoords.x[2]*localCoords.x[2] - 1)*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] + 1.))/2.;
+			if(iPhi == 15)
+				phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[1]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[0] - 1.)*(localCoords.x[1] + 1.))/4;
+			if(iPhi == 16)
+				phi[ iPhi ] = (localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[1] + 1.))/2.;
+			if(iPhi == 17)
+				phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[1]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[0] + 1.)*(localCoords.x[1] + 1.))/4.;
+			if(iPhi == 18)
+				phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] - 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] - 1.))/8.;
+			if(iPhi == 19)
+				phi[ iPhi ] = -(localCoords.x[2]*localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] - 1.))/4.;
+			if(iPhi == 20)
+				phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] + 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] - 1.))/8.;
+			if(iPhi == 21)
+				phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[2]*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] - 1.)*(localCoords.x[2] + 1.))/4.;
+			if(iPhi == 22)
+				phi[ iPhi ] = (localCoords.x[2]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[2] + 1.))/2.;
+			if(iPhi == 23)
+				phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[2]*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] + 1.)*(localCoords.x[2] + 1.))/4.;
+			if(iPhi == 24)
+				phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] - 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] + 1.))/8.;
+			if(iPhi == 25)
+				phi[ iPhi ] = -(localCoords.x[2]*localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] + 1.))/4.;
+			if(iPhi == 26)
+				phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] + 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] + 1.))/8.;
+
+		    displacementsX += phi[iPhi]*
+			(mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[iPhi] ].f[0]);
+		    displacementsY += phi[iPhi]*
+			(mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[iPhi] ].f[1]);
+		    displacementsZ += phi[iPhi]*
+			(mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[iPhi] ].f[2]);
+		}
+
+		planes_stripMPISendBuffer[elemnum*3]     = (double) (displacementsX);
+		planes_stripMPISendBuffer[elemnum*3 + 1] = (double) (displacementsY);
+		planes_stripMPISendBuffer[elemnum*3 + 2] = (double) (displacementsZ);
+
+	    } /*for elemnum*/
+
+	    /* add start location as last element, add .1 to insure int-float conversion (yes, bad form)*/
+	    stripLength = thePlanes[iPlane].stripend[iStrip]
+		- thePlanes[iPlane].stripstart[iStrip] + 1;
+
+	    planes_stripMPISendBuffer[stripLength*3]
+		= (double) (thePlanes[iPlane].stripstart[iStrip] + 0.1);
+
+	    MPI_Send( planes_stripMPISendBuffer, (stripLength*3)+1,
+		      MPI_DOUBLE, thePlanes[iPlane].IO_PE_num, iPlane, comm_IO );
+
+	} /*for iStrips*/
+
+
+	MPI_Barrier( comm_solver ); /* may not be required */
+
+
+    } /* for iPlane */
+
+    return 1;
+}
+
+
+
 /** Close planes files. */
-void New_planes_close(int32_t PEnum, int theNumberOfPlanes){
+void New_planes_close(int32_t PEnum){
 
     int IO_Server_PE, iPlane;
 
@@ -1148,8 +1418,6 @@ void planes_IO_PES_main(int32_t PEnum){
     MPI_Status status;
     char       thePlaneDirOut[256], planedisplacementsout[1024];
     FILE*      fp0;
-    int32_t    thePlanePrintRate;
-    int        theNumberOfPlanes;
 
     /* Get basic planes parameters */
     MPI_Bcast( &theNumberOfPlanes, 1, MPI_INT, 0, comm_IO );

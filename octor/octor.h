@@ -31,8 +31,6 @@
 #include <inttypes.h> 
 #include <mpi.h>
 
-#include "ocutil.h"
-
 #define TOTALLEVEL       31
 #define PIXELLEVEL       30
 
@@ -62,6 +60,10 @@ typedef int32_t tick_t;
 #define LOCAL      0xFF
 #define REMOTE     0x00
 #define GLOBAL     0xcc
+
+typedef enum {
+    ELINEAR = 0, EQUADRATIC
+} element_type_t;
 
 typedef struct octant_t {
     /* structural information */
@@ -122,6 +124,7 @@ typedef struct elem_t{
 typedef struct int32link_t {
     int32_t id;
     struct int32link_t *next;    
+    double weight;
 } int32link_t;
 
    
@@ -134,6 +137,8 @@ typedef struct node_t {
     tick_t x, y, z;        /* Coordinate of the node */
     int8_t ismine;         /* Whether this node is owned by me */
     int8_t isanchored;     /* 1 if anchored, 0 otherwise */
+
+    int32_t qleid;         /* Local element id (0:7) within the quadratic element */
 
     int64_t gnid;          /* Global node id */
 
@@ -155,6 +160,8 @@ typedef struct dnode_t {
     uint32_t deps;            /* Number of dependences, 2 or 4 */
     int32link_t *lanid;     /* Local node id list of the anchored nodes
                                which are depended on */
+
+    int32_t qleid;         /* Local element id (0:7) within the quadratic element */
 } dnode_t; 
     
     
@@ -288,13 +295,6 @@ octor_getmaxleaflevel(const octree_t* octree, int where);
 extern int32_t
 octor_getminleaflevel(const octree_t* octree, int where);
 
-extern int64_t
-octor_getleavescount(const octree_t* octree, int where);
-extern int64_t
-octor_getminleavescount(const octree_t* octree, int where);
-extern int64_t
-octor_getmaxleavescount(const octree_t* octree, int where);
-
 /*************************/
 /* Tree-level operations */
 /*************************/
@@ -310,11 +310,16 @@ octor_deletetree(octree_t * octree);
 extern int32_t 
 octor_refinetree(octree_t *octree, toexpand_t *toexpand, setrec_t *setrec);
 
+/* HAYDAR QUADRATIC EFFORT */
+
+extern int32_t
+octor_quadratic_refinetree(octree_t *octree, setrec_t *setrec);
+
 extern int32_t 
 octor_coarsentree(octree_t *octree, toshrink_t *toshrink, setrec_t *setrec);
 
 extern int32_t 
-octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor);
+octor_balancetree(octree_t *octree, setrec_t *setrec);
 
 extern void
 octor_carvebuildings(octree_t *octree, int flag,
@@ -325,6 +330,9 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch);
 
 extern mesh_t *
 octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch);
+
+extern mesh_t *
+octor_extractmesh_quadratic(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch);
 
 extern void
 octor_deletemesh(mesh_t *mesh);

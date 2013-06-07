@@ -413,6 +413,284 @@ compute_source_function (ptsrc_t* pointSource)
 //}
 
 
+/*
+ * HAYDAR QUADRATIC EFFORT
+ *
+ * Original Method is modified for the implementation of quadratic elements
+ */
+
+/**
+ * Initialize the weighting force vector for an element due to a point
+ * source.
+ */
+static void source_initnodalforce_quadratic ( ptsrc_t *sourcePtr )
+{
+    /* Normal vector n, tangent vector t, moment tensor v*/
+    double n[3], t[3], v[3][3];
+
+    /* Auxiliar array to handle shapefunctions in a loop */
+//    double  xi[3][8]={ {-1,  1, -1,  1, -1,  1, -1, 1} ,
+//		       {-1, -1,  1,  1, -1, -1,  1, 1} ,
+//		       {-1, -1, -1, -1,  1,  1,  1, 1} };
+
+    /*
+     * HAYDAR QUADRATIC EFFORT
+     *
+     * Change the coordinate distribution for quadratic element
+     * Although it is not necessary, it may be a guide in the future. Therefore, it is kept here as a comment.
+     */
+
+//    double  xi[3][27]={ {-1, 0, 1, -1, 0, 1, -1, 0, 1, -1,  0, 1, -1, 0, 1, -1, 0, 1, -1, 0, 1, -1, 0, 1, -1, 0, 1} ,
+// 		       {-1, -1, -1, 0, 0, 0, 1, 1, 1, -1, -1, -1, 0, 0, 0, 1, 1, 1, -1, -1, -1, 0, 0, 0, 1, 1, 1} ,
+// 		       {-1, -1, -1, -1, -1, -1, -1, -1, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1} };
+
+    /* various convenient variables */
+    int j, k;
+    double dx, dy, dz;
+    double s = sourcePtr->strike / 180.0 * PI;
+    double d = sourcePtr->dip / 180.0 * PI;
+    double r = sourcePtr->rake / 180.0 * PI;
+
+    /*
+     * HAYDAR QUADRATIC EFFORT
+     *
+     * The edgesize of the elements used in the expression following are for the linear elements.
+     * We consider the difference between quadratic element edgesize and linear elements in the calculation process...
+     */
+    double h = sourcePtr->edgesize;
+
+    double quad_x = sourcePtr->quad_x * 2. / (2. * h);  // By multiplying each value by 2 / (2*h), we get the local coordinates value at the source location for quadratic hexahedral elements.
+    double quad_y = sourcePtr->quad_y * 2. / (2. * h);
+    double quad_z = sourcePtr->quad_z * 2. / (2. * h);
+
+    /* the fault normal unit vector */
+    n[0] = - sin(s) * sin(d);
+    n[1] =   cos(s) * sin(d);
+    n[2] = - cos(d);
+
+    /* the fault tangential unit vector */
+    t[0] =   cos(r) * sin(PI / 2 - s) + sin(r) * sin(s) * cos(d);
+    t[1] =   cos(r) * sin(s) - sin(r) * cos(s) * cos(d);
+    t[2] = - sin(r) * sin(d);
+
+    for (j = 0; j < 3; j++) {
+	for ( k = 0; k < 3; k++) {
+	    v[j][k] = n[j] * t[k] + n[k] * t[j];
+	}
+    }
+
+    /*
+     * HAYDAR QUADRATIC EFFORT
+     *
+     * Change the derivatives of the shape functions
+     */
+
+    /* calculate equivalent force on each node */
+
+    for (j = 0; j < 27 ; j++) {
+
+    	if(j == 0){
+    		dx= (quad_z*quad_y*(2.*quad_x - 1.)*(quad_z - 1.)*(quad_y - 1.))/8.;
+    		dy= (quad_x*quad_z*(2.*quad_y - 1.)*(quad_x - 1.)*(quad_z - 1.))/8.;
+    		dz= (quad_x*quad_y*(2.*quad_z - 1.)*(quad_x - 1.)*(quad_y - 1.))/8.;
+    	}
+    	if(j == 1){
+    		dx= -(quad_x*quad_z*quad_y*(quad_z - 1.)*(quad_y - 1.))/2.;
+    		dy= -(quad_z*(quad_x*quad_x - 1.)*(2.*quad_y - 1.)*(quad_z - 1.))/4.;
+    		dz= -(quad_y*(quad_x*quad_x - 1.)*(2.*quad_z - 1.)*(quad_y - 1.))/4.;
+    	}
+    	if(j == 2){
+    		dx= (quad_z*quad_y*(2.*quad_x + 1.)*(quad_z - 1.)*(quad_y - 1.))/8.;
+    		dy= (quad_x*quad_z*(2.*quad_y - 1.)*(quad_x + 1.)*(quad_z - 1.))/8.;
+    		dz= (quad_x*quad_y*(2.*quad_z - 1.)*(quad_x + 1.)*(quad_y - 1.))/8.;
+    	}
+    	if(j == 3){
+    		dx= -(quad_z*(2.*quad_x - 1.)*(quad_y*quad_y - 1.)*(quad_z - 1.))/4.;
+    		dy= -(quad_x*quad_z*quad_y*(quad_x - 1.)*(quad_z - 1.))/2.;
+    		dz= -(quad_x*(2.*quad_z - 1.)*(quad_y*quad_y - 1.)*(quad_x - 1.))/4.;
+    	}
+    	if(j == 4){
+    		dx= quad_x*quad_z*(quad_y*quad_y - 1.)*(quad_z - 1.);
+    		dy= quad_z*quad_y*(quad_x*quad_x - 1.)*(quad_z - 1.);
+    		dz= ((quad_x*quad_x - 1.)*(2.*quad_z - 1.)*(quad_y*quad_y - 1.))/2.;
+    	}
+    	if(j == 5){
+    		dx= -(quad_z*(2.*quad_x + 1.)*(quad_y*quad_y - 1.)*(quad_z - 1.))/4.;
+    		dy= -(quad_x*quad_z*quad_y*(quad_x + 1.)*(quad_z - 1.))/2.;
+    		dz= -(quad_x*(2.*quad_z - 1.)*(quad_y*quad_y - 1.)*(quad_x + 1.))/4.;
+    	}
+    	if(j == 6){
+    		dx= (quad_z*quad_y*(2.*quad_x - 1.)*(quad_z - 1.)*(quad_y + 1.))/8.;
+    		dy= (quad_x*quad_z*(2.*quad_y + 1.)*(quad_x - 1.)*(quad_z - 1.))/8.;
+    		dz= (quad_x*quad_y*(2.*quad_z - 1.)*(quad_x - 1.)*(quad_y + 1.))/8.;
+    	}
+    	if(j == 7){
+    		dx= -(quad_x*quad_z*quad_y*(quad_z - 1.)*(quad_y + 1.))/2.;
+    		dy= -(quad_z*(quad_x *quad_x - 1)*(2.*quad_y + 1.)*(quad_z - 1.))/4.;
+    		dz= -(quad_y*(quad_x * quad_x - 1.)*(2.*quad_z - 1.)*(quad_y + 1.))/4.;
+    	}
+    	if(j == 8){
+    		dx= (quad_z*quad_y*(2.*quad_x + 1.)*(quad_z - 1.)*(quad_y + 1.))/8.;
+    		dy= (quad_x*quad_z*(2.*quad_y + 1.)*(quad_x + 1.)*(quad_z - 1.))/8.;
+    		dz= (quad_x*quad_y*(2.*quad_z - 1.)*(quad_x + 1.)*(quad_y + 1.))/8.;
+    	}
+    	if(j == 9){
+    		dx= -(quad_y*(2.*quad_x - 1.)*(quad_z*quad_z - 1.)*(quad_y - 1.))/4.;
+    		dy= -(quad_x*(quad_z*quad_z - 1.)*(2.*quad_y - 1.)*(quad_x - 1.))/4.;
+    		dz= -(quad_x*quad_z*quad_y*(quad_x - 1.)*(quad_y - 1.))/2.;
+    	}
+    	if(j == 10){
+    		dx= quad_x*quad_y*(quad_z*quad_z - 1.)*(quad_y - 1.);
+    		dy= ((quad_x*quad_x - 1.)*(quad_z*quad_z - 1.)*(2.*quad_y - 1.))/2.;
+    		dz= quad_z*quad_y*(quad_x*quad_x - 1.)*(quad_y - 1.);
+    	}
+    	if(j == 11){
+    		dx= -(quad_y*(2.*quad_x + 1.)*(quad_z*quad_z - 1.)*(quad_y - 1.))/4.;
+    		dy= -(quad_x*(quad_z*quad_z - 1.)*(2.*quad_y - 1.)*(quad_x + 1.))/4.;
+    		dz= -(quad_x*quad_z*quad_y*(quad_x + 1.)*(quad_y - 1.))/2.;
+    	}
+    	if(j == 12){
+    		dx= ((2.*quad_x - 1.)*(quad_z*quad_z - 1.)*(quad_y*quad_y - 1.))/2.;
+    		dy= quad_x*quad_y*(quad_z*quad_z - 1.)*(quad_x - 1.);
+    		dz= quad_x*quad_z*(quad_y*quad_y - 1.)*(quad_x - 1.);
+    	}
+    	if(j == 13){
+    		dx= -2.*quad_x*(quad_z*quad_z - 1.)*(quad_y*quad_y - 1.);
+    		dy= -2*quad_y*(quad_x*quad_x - 1.)*(quad_z*quad_z - 1.);
+    		dz= -2*quad_z*(quad_x*quad_x - 1.)*(quad_y*quad_y - 1.);
+    	}
+    	if(j == 14){
+    		dx= ((2.*quad_x + 1.)*(quad_z*quad_z - 1.)*(quad_y*quad_y - 1.))/2.;
+    		dy= quad_x*quad_y*(quad_z*quad_z - 1.)*(quad_x + 1.);
+    		dz= quad_x*quad_z*(quad_y*quad_y - 1.)*(quad_x + 1.);
+    	}
+    	if(j == 15){
+    		dx= -(quad_y*(2.*quad_x - 1.)*(quad_z*quad_z - 1.)*(quad_y + 1.))/4.;
+    		dy= -(quad_x*(quad_z*quad_z - 1.)*(2.*quad_y + 1.)*(quad_x - 1.))/4.;
+    		dz= -(quad_x*quad_z*quad_y*(quad_x - 1.)*(quad_y + 1.))/2.;
+    	}
+    	if(j == 16){
+    		dx= quad_x*quad_y*(quad_z*quad_z - 1.)*(quad_y + 1.);
+    		dy= ((quad_x*quad_x - 1.)*(quad_z*quad_z - 1.)*(2.*quad_y + 1.))/2.;
+    		dz= quad_z*quad_y*(quad_x*quad_x - 1.)*(quad_y + 1.);
+    	}
+    	if(j == 17){
+    		dx= -(quad_y*(2.*quad_x + 1.)*(quad_z*quad_z - 1.)*(quad_y + 1.))/4.;
+    		dy= -(quad_x*(quad_z*quad_z - 1.)*(2.*quad_y + 1.)*(quad_x + 1.))/4.;
+    		dz= -(quad_x*quad_z*quad_y*(quad_x + 1.)*(quad_y + 1.))/2.;
+    	}
+    	if(j == 18){
+    		dx= (quad_z*quad_y*(2.*quad_x - 1.)*(quad_z + 1.)*(quad_y - 1.))/8.;
+    		dy= (quad_x*quad_z*(2.*quad_y - 1.)*(quad_x - 1.)*(quad_z + 1.))/8.;
+    		dz= (quad_x*quad_y*(2.*quad_z + 1.)*(quad_x - 1.)*(quad_y - 1.))/8.;
+    	}
+    	if(j == 19){
+    		dx= -(quad_x*quad_z*quad_y*(quad_z + 1.)*(quad_y - 1.))/2.;
+    		dy= -(quad_z*(quad_x*quad_x - 1.)*(2.*quad_y - 1.)*(quad_z + 1.))/4.;
+    		dz= -(quad_y*(quad_x*quad_x - 1.)*(2.*quad_z + 1.)*(quad_y - 1.))/4.;
+    	}
+    	if(j == 20){
+    		dx= (quad_z*quad_y*(2.*quad_x + 1.)*(quad_z + 1.)*(quad_y - 1.))/8.;
+    		dy= (quad_x*quad_z*(2.*quad_y - 1.)*(quad_x + 1.)*(quad_z + 1.))/8.;
+    		dz= (quad_x*quad_y*(2.*quad_z + 1.)*(quad_x + 1.)*(quad_y - 1.))/8.;
+    	}
+    	if(j == 21){
+    		dx= -(quad_z*(2.*quad_x - 1.)*(quad_y*quad_y - 1.)*(quad_z + 1.))/4.;
+    		dy= -(quad_x*quad_z*quad_y*(quad_x - 1.)*(quad_z + 1.))/2.;
+    		dz= -(quad_x*(2.*quad_z + 1.)*(quad_y*quad_y - 1.)*(quad_x - 1.))/4.;
+    	}
+    	if(j == 22){
+    		dx= quad_x*quad_z*(quad_y*quad_y - 1.)*(quad_z + 1.);
+    		dy= quad_z*quad_y*(quad_x*quad_x - 1.)*(quad_z + 1.);
+    		dz= ((quad_x*quad_x - 1)*(2*quad_z + 1.)*(quad_y*quad_y - 1.))/2.;
+    	}
+    	if(j == 23){
+    		dx= -(quad_z*(2.*quad_x + 1.)*(quad_y*quad_y - 1.)*(quad_z + 1.))/4.;
+    		dy= -(quad_x*quad_z*quad_y*(quad_x + 1.)*(quad_z + 1.))/2.;
+    		dz= -(quad_x*(2.*quad_z + 1.)*(quad_y*quad_y - 1.)*(quad_x + 1.))/4.;
+    	}
+    	if(j == 24){
+    		dx= (quad_z*quad_y*(2.*quad_x - 1.)*(quad_z + 1.)*(quad_y + 1.))/8.;
+    		dy= (quad_x*quad_z*(2.*quad_y + 1.)*(quad_x - 1.)*(quad_z + 1.))/8.;
+    		dz= (quad_x*quad_y*(2.*quad_z + 1.)*(quad_x - 1.)*(quad_y + 1.))/8.;
+    	}
+    	if(j == 25){
+    		dx= -(quad_x*quad_z*quad_y*(quad_z + 1.)*(quad_y + 1.))/2.;
+    		dy= -(quad_z*(quad_x*quad_x - 1.)*(2.*quad_y + 1.)*(quad_z + 1.))/4.;
+    		dz= -(quad_y*(quad_x*quad_x - 1.)*(2.*quad_z + 1.)*(quad_y + 1.))/4.;
+    	}
+    	if(j == 26){
+    		dx= (quad_z*quad_y*(2.*quad_x + 1.)*(quad_z + 1.)*(quad_y + 1.))/8.;
+    		dy= (quad_x*quad_z*(2.*quad_y + 1.)*(quad_x + 1.)*(quad_z + 1.))/8.;
+    		dz= (quad_x*quad_y*(2.*quad_z + 1.)*(quad_x + 1.)*(quad_y + 1.))/8.;
+    	}
+
+//    	dx = dy = dz = 0;
+//
+//    	if(j==0){
+//    		 dx = -0.128000;
+//    		  dy = -0.128000;
+//    		  dz = -0.128000;
+//    	}
+//
+//    	if(j==1){
+//    		dx = 0.128000;
+//    		  dy = -0.000000;
+//    		  dz = -0.000000;
+//    	}
+//
+//    	if(j==3){
+//    		 dx = -0.000000;
+//    		  dy = 0.128000;
+//    		  dz = -0.000000;
+//    	}
+//
+//    	if(j==4){
+//    		 dx = 0.000000;
+//    		  dy = 0.000000;
+//    		  dz = -0.000000;
+//    	}
+//
+//    	if(j==9){
+//    		 dx = -0.000000;
+//    		  dy = -0.000000;
+//    		  dz = 0.128000;
+//    	}
+//
+//    	if(j==10){
+//    		 dx = 0.000000;
+//    		  dy = -0.000000;
+//    		  dz = 0.000000;
+//    	}
+//
+//    	if(j==12){
+//    		 dx = -0.000000;
+//    		  dy = 0.000000;
+//    		  dz = 0.000000;
+//    	}
+//
+//    	if(j==13){
+//    		 dx = -0.000000;
+//    		  dy = 0.000000;
+//    		  dz = 0.000000;
+//    	}
+
+    	dx = dx / h;
+    	dy = dy / h;
+    	dz = dz / h;
+
+	sourcePtr->nodalForce[j][0] = v[0][0]*dx + v[0][1]*dy + v[0][2]*dz;
+	sourcePtr->nodalForce[j][1] = v[1][0]*dx + v[1][1]*dy + v[1][2]*dz;
+	sourcePtr->nodalForce[j][2] = v[2][0]*dx + v[2][1]*dy + v[2][2]*dz;
+
+//	printf("%d\n dx = %lf; dy = %lf; dz = %lf;...\n",j,dx,dy,dz);
+
+    }
+
+    return;
+}
+
+
 /**
  * Initialize the wighting force vector for an element due to a point
  * source.
@@ -1253,6 +1531,251 @@ load_myForces_with_point_source(
     return 1;
 }
 
+/*
+ * HAYDAR QUADRATIC EFFORT
+ * Original method is modified for quadratic element implementation
+ */
+
+/**
+ * Computes the force vector for a point source and updates myForces
+ * vector.
+ *
+ *   input: octant where the source is located
+ *          the pointer of the displacement array (time dependant)
+ *  output: 0 fails 1 success
+ */
+static int
+load_myForces_with_point_source_quadratic(
+	octant_t* octant,
+	ptsrc_t*  pointSource,
+	char*     is_force_in_processor,
+	int32_t   cycle,
+	int32_t   iForce
+	)
+{
+
+    int32_t eindex;
+    int j,iTime, iCoord, iNode;
+
+    double mu, center_x, center_y, center_z, center_quad_x, center_quad_y, center_quad_z;
+
+    double nodalForceArea;
+
+    elem_t *elemp;
+    edata_t *edata;
+    tick_t edgeticks;
+    edgeticks = (tick_t)1 << (PIXELLEVEL - octant->level);
+
+    /* calculate the center coordinate of the element */
+    center_x = myMesh->ticksize * (octant->lx + edgeticks / 2);
+    center_y = myMesh->ticksize * (octant->ly + edgeticks / 2);
+    center_z = myMesh->ticksize * (octant->lz + edgeticks / 2);
+
+    /* go through my local elements to find which one matches the
+     * containing octant. I should have a better solution than this.
+     */
+    for (eindex = 0; eindex < myMesh->lenum; eindex++) {
+
+    	int32_t lnid0;
+    	lnid0 = myMesh->elemTable[eindex].lnid[0];
+
+    	if ( ( myMesh->nodeTable[lnid0].x == octant->lx ) &&
+    			( myMesh->nodeTable[lnid0].y == octant->ly ) &&
+    			( myMesh->nodeTable[lnid0].z == octant->lz ) ) {
+
+    		/* sanity check */
+    		if (myMesh->elemTable[eindex].level != octant->level) {
+    			fprintf(stderr, "Thread %d: source_init: error\n",myID);
+    			MPI_Abort(MPI_COMM_WORLD, ERROR);
+    			exit(1);
+    		}
+
+    		/*
+    		 * HAYDAR QUADRATIC EFFORT
+    		 * Organize local node ids for neighboring 8 elements constituting one quadratic element
+    		 */
+
+    		int parent_node_order[8][8] = {{0,1,3,4,9,10,12,13},{1,2,4,5,10,11,13,14},{3,4,6,7,12,13,15,16},{4,5,7,8,13,14,16,17},
+    				{9,10,12,13,18,19,21,22},{10,11,13,14,19,20,22,23},{12,13,15,16,21,22,24,25},{13,14,16,17,22,23,25,26}};
+
+    		int child_picked_nodes[8][8] = {{0,1,2,3,4,5,6,7},{1,3,5,7,-1,-1,-1,-1},{2,3,6,7,-1,-1,-1,-1},
+    				{3,7,-1,-1,-1,-1,-1,-1},{4,5,6,7,-1,-1,-1,-1},{5,7,-1,-1,-1,-1,-1,-1},{6,7,-1,-1,-1,-1,-1,-1},
+    				{7,-1,-1,-1,-1,-1,-1,-1}};
+
+    		int lim[8] = {8,4,4,2,4,2,2,1};
+
+    		int32_t quad_nid_list[27];
+
+    		int32_t child_no = eindex % 8;
+
+    		pointSource->leid = child_no;
+
+//    		printf("\n\n\n\n\nchild no : %d\n\n\n\n",child_no);
+
+    		int32_t ecounter = eindex - child_no;
+    		int el,j;
+
+    		for(el = 0; el < 8; el++){
+
+    			elem_t *elemp;
+    			elemp  = &myMesh->elemTable[ecounter + el];
+
+    			for (j = 0; j < lim[el]; j++){
+
+    				int child_nid   = child_picked_nodes[el][j];
+    				int32_t nodeJ   = elemp->lnid[child_nid];
+
+    				int parent_nid = parent_node_order[el][child_nid];
+
+    				quad_nid_list[parent_nid] = nodeJ;
+
+    			}
+    		}
+
+    		/* Fill in the local node ids of the containing element */
+
+    		memcpy( pointSource->lnid, quad_nid_list, sizeof(int32_t) * 27 );
+
+    		break;
+    	}
+    }  /* for all the local elements */
+
+    if (eindex == myMesh->lenum) {
+	fprintf ( stderr, "Thread %d: source_init: ", myID );
+	fprintf ( stderr, "No element matches the containing octant.\n" );
+	MPI_Abort(MPI_COMM_WORLD, ERROR );
+	exit(1);
+    }
+
+    /*
+     * HAYDAR QUADRATIC EFFORT
+     *
+     * Get the local coordinate with respect to the center of quadratic element
+     */
+
+    if(pointSource->leid == 1 || pointSource->leid == 3 || pointSource->leid == 5 || pointSource->leid == 7)
+    	center_quad_x = center_x - myMesh->ticksize * (edgeticks / 2);
+    else
+    	center_quad_x = center_x + myMesh->ticksize * (edgeticks / 2);
+
+    if(pointSource->leid == 2 || pointSource->leid == 3 || pointSource->leid == 6 || pointSource->leid == 7)
+    	center_quad_y = center_y - myMesh->ticksize * (edgeticks / 2);
+    else
+    	center_quad_y = center_y + myMesh->ticksize * (edgeticks / 2);
+
+    if(pointSource->leid == 4 || pointSource->leid == 5 || pointSource->leid == 6 || pointSource->leid == 7)
+    	center_quad_z = center_z - myMesh->ticksize * (edgeticks / 2);
+    else
+    	center_quad_z = center_z + myMesh->ticksize * (edgeticks / 2);
+
+    /*
+     * HAYDAR QUADRATIC EFFORT
+     *
+     * Local coordinates within the quadratic element are calculated and stored
+     */
+
+    pointSource->quad_x = pointSource->domainCoords.x[ 0 ] - center_quad_x;
+    pointSource->quad_y = pointSource->domainCoords.x[ 1 ] - center_quad_y;
+    pointSource->quad_z = pointSource->domainCoords.x[ 2 ] - center_quad_z;
+
+
+    /*
+     * HAYDAR QUADRATIC EFFORT
+     *
+     * Read the properties only for the first (0th) element within the quadratic element
+     */
+
+    /* obtain the value of mu to get the moment in the case of extended fault*/
+    elemp = &myMesh->elemTable[eindex-pointSource->leid];
+    edata = (edata_t*)elemp->data;
+    mu    = edata->rho * edata->Vs * edata->Vs;
+
+
+    if (theTypeOfSource == POINT) {
+	if (pointSource->M0 == 0) {
+	    pointSource->M0 = pow( 10, 1.5 * theMomentMagnitude + 9.1);
+	}
+
+	myM0		     += pointSource->M0;
+	pointSource->muArea   = pointSource->M0;
+	/* notice that this is a fake slip to obtain the M0 given as data */
+	pointSource->maxSlip  = 1;
+    }
+    else{
+	pointSource->muArea =  mu * pointSource->area;
+
+	if(cycle == 0) {
+	    myM0 += fabs( pointSource->muArea * pointSource->maxSlip );
+	}
+    }
+
+    pointSource->edgesize = myMesh->ticksize * edgeticks;
+
+    /* set the nodal forces */
+    source_initnodalforce_quadratic( pointSource );  /* get the weight for each node within quadratic element*/
+
+    int isinprocessor = 0; /* if 8 will update the search */
+
+    /*
+     * HAYDAR QUADRATIC EFFORT
+     *
+     * Change the number of nodes from 8 to 27
+     */
+
+    for (iNode = 0; iNode < 27; iNode++) {
+	j = pointSource -> lnid [ iNode ];
+
+	if ( myForces [ j ] == NULL  && myForcesCycle[j] == cycle){
+	    myForces [ j ] =
+		( vector3D_t * ) malloc ( sizeof ( vector3D_t ) *
+					  theNumberOfTimeSteps);
+	    myNumberOfNodesLoaded +=1;
+	    myMemoryAllocated +=  sizeof ( vector3D_t ) * theNumberOfTimeSteps;
+
+	    if ( myForces [ j ] == NULL ) {
+		fprintf(stderr,"Thread %d: load_myForces...: out of mem\n",
+			myID);
+		MPI_Abort(MPI_COMM_WORLD, ERROR);
+		exit(1);
+	    }
+
+	    for (iCoord = 0; iCoord < 3; iCoord++) {
+		for (iTime = 0; iTime < theNumberOfTimeSteps; iTime++) {
+		    myForces [j][iTime].x[iCoord]=0;
+		}
+	    }
+	    isinprocessor+=1;
+	}
+    }
+
+    /*
+         * HAYDAR QUADRATIC EFFORT
+         *
+         * Change the number for isinprocessor from 8 to 27
+         */
+
+    if (isinprocessor == 27) {
+	update_forceinprocessor( iForce, is_force_in_processor, 0 );
+    }
+
+    for (iNode = 0; iNode < 27; iNode++) {
+	j = pointSource -> lnid[iNode];
+	if (myForcesCycle[j] == cycle) {
+	    for (iCoord = 0; iCoord < 3; iCoord++) {
+		nodalForceArea = pointSource->nodalForce[iNode][iCoord]
+		    * pointSource->muArea;
+		/* shifted the loops */
+		for ( iTime = 0; iTime < theNumberOfTimeSteps; iTime++) {
+		    myForces [j][iTime].x[iCoord] +=
+			pointSource->displacement[iTime] * nodalForceArea;
+		}
+	    }
+	}
+    }
+
+    return 1;
+}
+
 
 /*
  * update_point_source: updates a source in the context of an extended
@@ -1620,7 +2143,7 @@ static double compute_strike_planewithkinks(vector3D_t point){
 /**
  * tag_myForcesCycle: it assigns a number to each element of
  *                    myForces in myForcesCycle. myForcesCycle
- *                    will be modified to choose in wich cycle
+ *                    will be modified to choose in which cycle
  *                    it should be written.
  *
  *  *   input: octant where the source is located
@@ -1679,6 +2202,121 @@ static int tag_myForcesCycle(octant_t *octant, ptsrc_t *pointSource){
   return 1;
 
 }
+
+/*
+ * HAYDAR QUADRATIC EFFORT
+ *
+ * Nodes are tagged for quadratic application. The method is a modified version of the original one.
+ */
+
+/**
+ * tag_myForcesCycle: it assigns a number to each element of
+ *                    myForces in myForcesCycle. myForcesCycle
+ *                    will be modified to choose in which cycle
+ *                    it should be written.
+ *
+ *  *   input: octant where the source is located
+ *             the pointer of the displacement array (time dependant)
+ *  output: -1 fails 1 success
+ *
+ */
+static int tag_myForcesCycle_quadratic(octant_t *octant, ptsrc_t *pointSource){
+
+  int32_t eindex;
+
+  int j, iNode;
+
+  tick_t edgeticks;
+  edgeticks = (tick_t)1 << (PIXELLEVEL - octant->level);
+
+  /* Go through my local elements to find which one matches the
+     containing octant.*/
+  for ( eindex = 0; eindex < myMesh->lenum; eindex++ ) {
+    int32_t lnid0;
+    lnid0 = myMesh->elemTable[eindex].lnid[0];
+    if ( ( myMesh->nodeTable[lnid0].x == octant->lx ) &&
+	 ( myMesh->nodeTable[lnid0].y == octant->ly ) &&
+	 ( myMesh->nodeTable[lnid0].z == octant->lz ) ) {
+      /* Sanity check */
+      if ( myMesh->elemTable[eindex].level != octant->level ) {
+	fprintf(stderr, "Thread %d: source_init: internal error\n",
+		myID);
+	MPI_Abort(MPI_COMM_WORLD, ERROR);
+	exit(1);
+      }
+
+      /* Fill in the local node ids of the containing element */
+
+      /*
+       * HAYDAR QUADRATIC EFFORT
+       * Organize local node ids for neighboring 8 elements constituting one quadratic element
+       */
+
+      int parent_node_order[8][8] = {{0,1,3,4,9,10,12,13},{1,2,4,5,10,11,13,14},{3,4,6,7,12,13,15,16},{4,5,7,8,13,14,16,17},
+    		  {9,10,12,13,18,19,21,22},{10,11,13,14,19,20,22,23},{12,13,15,16,21,22,24,25},{13,14,16,17,22,23,25,26}};
+
+      int child_picked_nodes[8][8] = {{0,1,2,3,4,5,6,7},{1,3,5,7,-1,-1,-1,-1},{2,3,6,7,-1,-1,-1,-1},
+    		  {3,7,-1,-1,-1,-1,-1,-1},{4,5,6,7,-1,-1,-1,-1},{5,7,-1,-1,-1,-1,-1,-1},{6,7,-1,-1,-1,-1,-1,-1},
+    		  {7,-1,-1,-1,-1,-1,-1,-1}};
+
+      int lim[8] = {8,4,4,2,4,2,2,1};
+
+      int32_t quad_nid_list[27];
+
+      int32_t child_no = eindex % 8;
+
+      pointSource->leid = child_no;
+
+//      printf("\n\n\n\n\nchild no : %d\n\n\n\n",child_no);
+
+      int32_t ecounter = eindex - child_no;
+      int el,k;
+
+      for(el = 0; el < 8; el++){
+
+    	  elem_t *elemp;
+    	  elemp  = &myMesh->elemTable[ecounter + el];
+
+    	  for (k = 0; k < lim[el]; k++){
+
+    		  int child_nid   = child_picked_nodes[el][k];
+    		  int32_t nodeJ   = elemp->lnid[child_nid];
+
+    		  int parent_nid = parent_node_order[el][child_nid];
+
+    		  quad_nid_list[parent_nid] = nodeJ;
+
+    	  }
+      }
+
+      /* Fill in the local node ids of the containing element */
+
+      memcpy( pointSource->lnid, quad_nid_list, sizeof(int32_t) * 27 );
+
+      break;
+    }
+
+  }  /* for all the local elements */
+
+  if ( eindex == myMesh->lenum ) {
+    fprintf ( stderr, "Thread %d: source_init: ", myID );
+    fprintf ( stderr, "No element matches the containing octant.\n" );
+    return -1;
+  }
+
+  for ( iNode = 0; iNode < 27; iNode++){
+    j = pointSource -> lnid [ iNode ];
+    if ( myForcesCycle [ j ] == -1 ){
+      myForcesCycle [ j ] = 1;
+      myNumberOfNodesLoaded +=1;
+    }
+
+  }
+
+  return 1;
+
+}
+
 
 void update_forceinprocessor(int32_t iForce, char *inoutprocessor, int onoff){
 
@@ -3283,7 +3921,7 @@ compute_myForces_point( const char* physicsin )
  *
  *                return -1 fail 1 ok
  */
-static int  compute_myForces_srfh(const char *physicsin){
+static int  compute_myForces_srfh(const char *physicsin, element_type_t element_type){
 
   int32_t iSrc,iForce=0;
   octant_t *octant;
@@ -3348,7 +3986,12 @@ static int  compute_myForces_srfh(const char *physicsin){
 
     /* Check if this force is contained in this processor */
     if ( search_point( pntSrc.domainCoords, &octant ) == 1){
-	tag_myForcesCycle ( octant, &pntSrc );
+
+    	if(element_type == ELINEAR)
+    		tag_myForcesCycle ( octant, &pntSrc );
+    	else if(element_type == EQUADRATIC)
+    		tag_myForcesCycle_quadratic ( octant, &pntSrc );
+
 	update_forceinprocessor( iForce, is_force_in_processor, 1);
 	myNumberOfForces +=1;
     }
@@ -3428,8 +4071,13 @@ static int  compute_myForces_srfh(const char *physicsin){
 	if ( search_point( pntSrc.domainCoords, &octant ) == 1){
 
 	  update_point_source_srfh( &pntSrc,iSrc);
+
+	  if(element_type == ELINEAR)
 	  load_myForces_with_point_source(octant, &pntSrc,
 					  is_force_in_processor, iCycle, iSrc);
+	  else if(element_type == EQUADRATIC)
+		  load_myForces_with_point_source_quadratic(octant, &pntSrc,
+		  					  is_force_in_processor, iCycle, iSrc);
 
 	  if (myID == 0 && iCycle == 0) {
 	      /* useful just with one processor */
@@ -4004,7 +4652,7 @@ int
 compute_print_source( const char *physicsin, octree_t *myoctree,
 		      mesh_t *mymesh, numerics_info_t numericsinformation,
 		      mpi_info_t mpiinformation, double globalDealyT,
-		      double surfaceShift )
+		      double surfaceShift, element_type_t element_type )
 {
     /*Mesh related */
     myOctree = myoctree;
@@ -4055,7 +4703,7 @@ compute_print_source( const char *physicsin, octree_t *myoctree,
 
     /* Standard Rupture Fault Hercules, variation of SRF by Graves */
     if(  theTypeOfSource == SRFH )
-	if( compute_myForces_srfh(physicsin )==-1){
+	if( compute_myForces_srfh(physicsin, element_type )==-1){
 	    fprintf(stdout,"Err compute_myForces_srfh failed");
 	    ABORTEXIT;
 	}

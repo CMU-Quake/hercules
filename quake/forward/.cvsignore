@@ -1,0 +1,13 @@
+psolve
+qmesh
+single_query
+cxx_repository
+q4showmeta
+q4node
+q4showmeta-linux
+*-bak-00
+*-bak-00?
+*.c-e
+*.h-e
+*.ce
+*.he

@@ -55,11 +55,8 @@
 #include "damping.h"
 #include "quake_util.h"
 #include "buildings.h"
-#include "drm.h"
 #include "meshformatlab.h"
 
-
-/* ONLY GLOBAL VARIABLES ALLOWED OUTSIDE OF PARAM. and GLOBAL. IN ALL OF PSOLVE!! */
 MPI_Comm comm_solver;
 MPI_Comm comm_IO;
 
@@ -92,34 +89,70 @@ MPI_Comm comm_IO;
 #define DISTRIBUTION    903  /**< Dangling nodes to anchored nodes */
 #define ASSIGNMENT      904  /**< Anchored nodes to dangling nodes */
 
+static double the4DOutSize   = 0;
+
+/**
+ * Some flags
+ */
+static int    theMeshOutFlag = DO_OUTPUT;
+
+/** Global: parameters for writting the 4D output */
+static output_parameters_t theOutputParameters;
+static int    theTimingBarriersFlag = 0;
+
 
 /*---------------Initialization and cleanup routines----------------------*/
-static void    read_parameters(int argc, char **argv);
-static int32_t parse_parameters(const char *numericalin);
+
+static void    local_init(int argc, char **argv);
 static void    local_finalize(void);
+static int32_t initparameters(const char *numericalin);
+
 
 /*---------------- Mesh generation data structures -----------------------*/
+
 #ifdef USECVMDB
 
 #ifndef CVMBUFSIZE
 #define CVMBUFSIZE      100
 #endif
 
+//static off_t    theDBSize;
+//static double   theDBReplicateTime = 0;
+
+static etree_t* theCVMEp;
+static int32_t  theCVMQueryStage; /* 0: refinement; 1: balance */
+//static int64_t  theCVMQueryCount_Refinement = 0, theCVMQueryCount_Balance = 0;
+static double   theXForMeshOrigin, theYForMeshOrigin, theZForMeshOrigin;
+
 static void     replicateDB(const char *dbname);
-static void     open_cvmdb(void);
+static void     openDB(const char *dbname);
 
 #else
+
+static double theSliceCVMTime;
+
+/**
+ * cvmrecord_t: cvm record.
+ *
+ */
+typedef struct cvmrecord_t {
+    char key[12];
+    float Vp, Vs, density;
+} cvmrecord_t;
+
+
+static char theCVMFlatFile[128];
+static const int theCVMRecordSize = sizeof(cvmrecord_t);
+static int theCVMRecordCount;
+static cvmrecord_t * theCVMRecord;
 
 static int32_t zsearch(void *base, int32_t count, int32_t recordsize,
 		       const point_t *searchpt);
 static cvmrecord_t *sliceCVM(const char *cvm_flatfile);
 
 #endif
-/** cvmrecord_t: cvm record.  Onlye used if USECVMDB not defined **/
-typedef struct cvmrecord_t {
-    char key[12];
-    float Vp, Vs, density;
-} cvmrecord_t;
+
+
 
 /**
  * mrecord_t: Complete mesh database record
@@ -133,12 +166,15 @@ typedef struct mrecord_t {
 /* Mesh generation related routines */
 static int32_t toexpand(octant_t *leaf, double ticksize, const void *data);
 static void    setrec(octant_t *leaf, double ticksize, void *data);
+
 static void    mesh_generate(void);
 static int32_t bulkload(etree_t *mep, mrecord_t *partTable, int32_t count);
 static void    mesh_output(void);
 static void    mesh_correct_properties( etree_t* cvm );
+static void    mesh_correct_properties_quadratic( etree_t* cvm );
 
 static void    solver_init(void);
+static void    solver_init_quadratic(void);
 static void    solver_printstat(mysolver_t* solver);
 static void    solver_delete(void);
 static void    solver_run(void);
@@ -154,9 +190,11 @@ static void    schedule_delete(schedule_t *sched);
 static void    schedule_prepare(schedule_t *sched, int32_t c_outsize,
 				int32_t c_insize, int32_t s_outsize,
 				int32_t s_insize);
+
 static void    schedule_senddata(schedule_t *sched, void *valuetable,
 				 int32_t itemsperentry, int32_t direction,
 				 int32_t msgtag);
+
 static int     schedule_print( schedule_t *sched, char type, FILE* out );
 static int     schedule_print_detail(schedule_t* sched, char type, FILE* out);
 static int     schedule_print_messenger_list( schedule_t* sched,
@@ -169,7 +207,9 @@ static void    messenger_set(messenger_t *messenger, int32_t outsize,
 			     int32_t insize);
 static int32_t messenger_countnodes(messenger_t *first);
 
+
 static void    compute_K(void);
+static void    get_K_quadratic(void);
 static void constract_Quality_Factor_Table(void);
 
 #ifdef BOUNDARY
@@ -180,40 +220,48 @@ static void    compute_setboundary(float size, float Vp, float Vs,
 #endif /* BOUNDARY */
 
 static void    compute_setab(double freq, double *aBasePtr, double *bBasePtr);
+
 static void    compute_addforce_s(int32_t timestep);
+
 static void    compute_adjust(void *valuetable, int32_t itemsperentry,
 			      int32_t how);
 
-static int     interpolate_station_displacements(int32_t step);
+static void    compute_adjust_quadratic(void *valuetable, int32_t itemsperentry,
+			                     int32_t how);
 
+static int     interpolate_station_displacements(int32_t step);
+static int     interpolate_station_displacements_quadratic(int32_t step);
+
+/* -----Global Variables - Should be moved to a structure in Parser -----*/
+int IO_pool_pe_count;
+int theNumberOfPlanes;
+int32_t thePlanePrintRate;
+double theSurfaceCornersLong[4], theSurfaceCornersLat[4];
+double theDomainX, theDomainY, theDomainZ; /* Domain size */
+double theRegionLong, theRegionLat, theRegionDepth;
 
 /* ---------- Static global variables ------------------------------------ */
 
-/* These are all of the input parameters - add new ones here */
 static struct Param_t {
-    char  FourDOutFile[256]; 
-    FILE*  FourDOutFp;
-    FILE*  theMonitorFileFp;
-    char*  theMonitorFileName;
-    char  parameters_input_file[256];
-    char  cvmdb_input_file[256];
-    char  mesh_etree_output_file[256];
-    char  planes_input_file[256];
-    double  theVsCut;
-    double  theFactor;
-    double  theFreq;
-    double  theFreq_Vel;
-    double  theDeltaT;
-    double  theDeltaTSquared;
-    double  theEndT;
-    double  theStartT;
-    double  theDomainAzimuth;
+    char *theMEtree;
+    char *theOutFile;
+    FILE *theOutFp;
+    FILE *theMonitorFileFp;
+    char *theMonitorFileName;
+    double theVsCut;
+    double theFactor;
+    double theFreq;
+    double theFreq_Vel;
+    double theDeltaT;
+    double theDeltaTSquared;
+    double theEndT;
+    double theStartT;
+    double theDomainAzimuth;
     int    monitor_stats_rate;
-    double  theSofteningFactor;
-    int     theStepMeshingFactor;
-    int32_t  theTotalSteps;
-    int32_t  theRate;
-    damping_type_t  theTypeOfDamping;
+    double theSofteningFactor;
+    int32_t theTotalSteps;
+    int32_t theRate;
+    damping_type_t theTypeOfDamping;
     double	theThresholdDamping;
     double	theThresholdVpVs;
     int	   theDampingStatisticsFlag;
@@ -223,100 +271,83 @@ static struct Param_t {
     char*  theSchedulePrintFilename;
     char*	theScheduleStatFilename;
     char*       theMeshStatFilename;
-    noyesflag_t  printStationVelocities;
-    noyesflag_t  printK;
-    noyesflag_t  printStationAccelerations;
-    noyesflag_t  includeBuildings;
-    noyesflag_t  includeNonlinearAnalysis;
-    noyesflag_t  useInfQk;
-    int  theTimingBarriersFlag;
+    noyesflag_t printStationVelocities;
+    noyesflag_t printK;
+    noyesflag_t printStationAccelerations;
+    noyesflag_t includeBuildings;
+    noyesflag_t includeNonlinearAnalysis;
     stiffness_type_t   theStiffness;
+    element_type_t theElement;
     int      theStationsPrintRate;
-    double*  theStationX;
-    double*  theStationY;
-    double*  theStationZ;
+    double* theStationX;
+    double* theStationY;
+    double* theStationZ;
     int32_t  theNumberOfStations;
     int32_t  myNumberOfStations;
-    int      IO_pool_pe_count;
-    int32_t  thePlanePrintRate;
-    int      theNumberOfPlanes;
     char     theStationsDirOut[256];
-    station_t*  myStations;
-    int  theCheckPointingRate;
+    station_t  *myStations;
+    int theCheckPointingRate;
     int    theUseCheckPoint;
-    char   theCheckPointingDirOut[256];
+    char theCheckPointingDirOut[256];
     noyesflag_t  storeMeshCoordinatesForMatlab;
-    double  the4DOutSize;
-    int    theMeshOutFlag;
-    char  theCVMFlatFile[128];
-    output_parameters_t  theOutputParameters;
-    double  theRegionLong;
-    double  theRegionLat; 
-    double  theRegionDepth;
-    double  region_depth_deep_m;
-    double  theSurfaceCornersLong[4];
-    double  theSurfaceCornersLat[4];
-    double  theDomainX;
-    double  theDomainY;
-    double  theDomainZ;
-    noyesflag_t  drmImplement;
-    drm_part_t   theDrmPart;
-
 } Param = {
-    .FourDOutFp = NULL,
+    .theMEtree = NULL,
+    .theOutFile = NULL,
+    .theOutFp = NULL,
     .theMonitorFileFp = NULL,
     .theMonitorFileName = NULL,
+    .theVsCut = 0,
+    .theFactor = 0,
+    .theFreq = 0,
     .theFreq_Vel = 0,
+    .theDeltaT = 0,
+    .theDeltaTSquared = 0,
+    .theEndT = 0,
+    .theStartT = 0,
+    .theDomainAzimuth = 0,
     .monitor_stats_rate = 50,
+    .theSofteningFactor = 0,
+    .theTotalSteps = 0,
+    .theRate =0 ,
+    .theThresholdDamping = 0,
+    .theThresholdVpVs =0 ,
+    .theDampingStatisticsFlag = 0,
     .theSchedulePrintErrorCheckFlag = 0,
     .theSchedulePrintToStdout = 0,
     .theSchedulePrintToFile = 0,
     .theSchedulePrintFilename = "schedule_info.txt",
     .theScheduleStatFilename = NULL,
     .theMeshStatFilename = NULL,
-    .theSofteningFactor = 0,
-    .theStepMeshingFactor = 0,
     .myNumberOfStations = 0,
-    .theUseCheckPoint =0,
-    .theTimingBarriersFlag = 0,
-    .the4DOutSize   = 0,
-    .theMeshOutFlag = DO_OUTPUT
+    .theUseCheckPoint =0
 };
 
-/* These are all of the remaining global variables - this list should not grow */
 static struct Global_t {
-    int32_t  myID;
-    int32_t  theGroupSize;
-    octree_t*  myOctree;
-    mesh_t*  myMesh;
-    int64_t  theETotal;
-    int64_t  theNTotal;
-    mysolver_t*  mySolver;
-    fvector_t*  myVelocityTable;
-    fmatrix_t  theK1[8][8];
-    fmatrix_t  theK2[8][8];
-    fmatrix_t  theK3[8][8];
-    double  theQTABLE[26][6];
-    double  theABase;
-    double  theBBase;
-    double  theCriticalT;
-    double  fastestTimeSteps;
-    double  slowestTimeSteps;
-    numerics_info_t  theNumericsInformation;
-    mpi_info_t  theMPIInformation;
-    int32_t  theNodesLoaded;
-    int32_t*  theNodesLoadedList;
-    vector3D_t*  myForces;
-    FILE*  fpsource;
-    etree_t*  theCVMEp;
-    int32_t  theCVMQueryStage;
-    double  theXForMeshOrigin;
-    double  theYForMeshOrigin;
-    double  theZForMeshOrigin;
-    cvmrecord_t*  theCVMRecord;
-    int  theCVMRecordSize;
-    int  theCVMRecordCount;
-
+    int32_t myID;
+    int32_t theGroupSize;
+    octree_t *myOctree;
+    mesh_t *myMesh;
+    int64_t theETotal;
+    int64_t theNTotal;
+    mysolver_t* mySolver;
+    fvector_t *myVelocityTable;
+    fmatrix_t theK1[8][8];
+    fmatrix_t theK2[8][8];
+    fmatrix_t theK3[8][8];
+    double theK1_quad[81][81];
+    double theK2_quad[81][81];
+    double theQTABLE[26][6];
+    double theABase;
+    double theBBase;
+    double theCriticalT;
+    double fastestTimeSteps;
+    double slowestTimeSteps;
+    numerics_info_t theNumericsInformation;
+    mpi_info_t theMPIInformation;
+    int32_t     theNodesLoaded;
+    int32_t*    theNodesLoadedList;
+    vector3D_t* myForces;
+    FILE*	fpsource;
 } Global = {
     .myID = -1,
     .theGroupSize = -1,
@@ -326,17 +357,19 @@ static struct Global_t {
     .theNTotal = 0,
     .mySolver = NULL,
     .myVelocityTable = NULL,
+    .theABase = 0,
+    .theBBase = 0,
     .theCriticalT = 0,
     .fastestTimeSteps = 10000000,
     .slowestTimeSteps = 0,
     .theNodesLoaded = -1,
     .theNodesLoadedList = NULL,
     .myForces = NULL,
-    .fpsource = NULL,
-    .theCVMRecordSize = sizeof(cvmrecord_t)
+    .fpsource = NULL
 };
 
-/* ------------------------------End of declarations------------------------------ */
+
+/* ------------------------------------------------------------------------- */
 
 static inline int
 monitor_print( const char* format, ... )
@@ -362,28 +395,100 @@ monitor_print( const char* format, ... )
 
 
 
-/*-----------Parameter input routines---------------------------------*/
+/*-----------Parameter parsing routines---------------------------------*/
 
-static void read_parameters( int argc, char** argv ){
+/**
+ * Initialize parameters, replicate database and open database.
+ *
+ * \param argc Argument count (as in \c main).
+ * \param argv Argument character array (as in \c main).
+ */
+static void
+local_init( int argc, char** argv )
+{
+/* workaround for brain-dead compilers that cannot figure out the size
+ * of an array from a 'static const int'
+ */ 
+#define LOCAL_INIT_INT_MESSAGE_LENGTH 18
+#define LOCAL_INIT_DOUBLE_MESSAGE_LENGTH 15
 
-#define LOCAL_INIT_DOUBLE_MESSAGE_LENGTH 18  /* Must adjust this if adding double params */
-#define LOCAL_INIT_INT_MESSAGE_LENGTH 20     /* Must adjust this if adding int params */
-
+    int32_t namelen[2];
     double  double_message[LOCAL_INIT_DOUBLE_MESSAGE_LENGTH];
     int     int_message[LOCAL_INIT_INT_MESSAGE_LENGTH];
 
-    strcpy(Param.parameters_input_file, argv[1]);
+    Global.myOctree = NULL;
+    Global.myMesh   = NULL;
+    Global.mySolver = NULL;
 
-    /* PE 0 reads all params from disk */
-    if (Global.myID == 0) {
-        if (parse_parameters(Param.parameters_input_file) != 0) {
-            fprintf(stderr, "Thread 0: Problem reading parameters!\n");
-            MPI_Abort(MPI_COMM_WORLD, ERROR);
-            exit(1);
-        }
+    /* Show usage if the number of parameters is wrong */
+
+    if (argc != 5) {
+	if (Global.myID == 0) {
+	    fputs ( "Usage: psolve <cvmdb> <parameters.in> "
+		    "<meshetree> <4D-output>\n"
+		    "  cvmdb:        path to a CVM etree or a flat file.\n"
+		    "  physics.in:   path to parameters.in.\n"
+		    "  meshetree:    path to the output mesh etree.\n"
+		    "  4D-output:    path to the 4D simulation results.\n\n",
+		    stderr);
+	}
+
+	MPI_Finalize();
+	exit(1);
     }
 
-    /*Broadcast all double params*/
+    /* Broadcast the names of the output etree and 4-d output file */
+    if (Global.myID == 0) {
+	/* string len + trailing null */
+	namelen[0] = strlen(argv[3]) + 1;
+	namelen[1] = strlen(argv[4]) + 1;
+    }
+
+    MPI_Bcast( namelen, 2, MPI_INT, 0, comm_solver );
+
+    Param.theMEtree = (char *)calloc(namelen[0], 1);
+    if (Param.theMEtree == NULL) {
+	fprintf( stderr, "Thread %d: local_init: out of memory\n", Global.myID );
+	MPI_Abort( MPI_COMM_WORLD, ERROR );
+	exit(1);
+    }
+
+    Param.theOutFile = (char *)calloc(namelen[1], 1);
+    if (Param.theOutFile == NULL) {
+	fprintf(stderr, "Thread %d: local_init: out of memory\n", Global.myID);
+	MPI_Abort(MPI_COMM_WORLD, ERROR);
+	exit(1);
+    }
+
+    if (Global.myID == 0) {
+	strcpy(Param.theMEtree, argv[3]);
+	strcpy(Param.theOutFile, argv[4]);
+    }
+
+    MPI_Bcast(Param.theMEtree, namelen[0], MPI_CHAR, 0, comm_solver);
+    MPI_Bcast(Param.theOutFile, namelen[1], MPI_CHAR, 0, comm_solver);
+
+    /* Mark 4d output file as unopened */
+    Param.theOutFp = NULL;
+
+#ifdef USECVMDB
+    MPI_Barrier(comm_solver);
+    replicateDB(argv[1]);
+    MPI_Barrier(comm_solver);
+    openDB(argv[1]);
+#else
+    strcpy(theCVMFlatFile, argv[1]);
+#endif
+
+    if (Global.myID == 0) {
+	if (initparameters(argv[2]) != 0) {
+	    fprintf(stderr, "Thread 0: local_init: error initparameters\n");
+	    MPI_Abort(MPI_COMM_WORLD, ERROR);
+	    exit(1);
+	}
+	/* read simulation output parameters */
+    }
+
     double_message[0]  = Param.theVsCut;
     double_message[1]  = Param.theFactor;
     double_message[2]  = Param.theFreq;
@@ -391,18 +496,14 @@ static void read_parameters( int argc, char** argv ){
     double_message[4]  = Param.theDeltaTSquared;
     double_message[5]  = Param.theEndT;
     double_message[6]  = Param.theStartT;
-    double_message[7]  = Param.theDomainX;
-    double_message[8]  = Param.theDomainY;
-    double_message[9]  = Param.theDomainZ;
+    double_message[7]  = theDomainX;
+    double_message[8]  = theDomainY;
+    double_message[9]  = theDomainZ;
     double_message[10] = Param.theDomainAzimuth;
     double_message[11] = Param.theThresholdDamping;
     double_message[12] = Param.theThresholdVpVs;
     double_message[13] = Param.theSofteningFactor;
     double_message[14] = Param.theFreq_Vel;
-    double_message[15] = Param.theRegionLat;
-    double_message[16] = Param.theRegionLong;
-    double_message[17] = Param.theRegionDepth;
-
 
     MPI_Bcast(double_message, LOCAL_INIT_DOUBLE_MESSAGE_LENGTH, MPI_DOUBLE, 0, comm_solver);
 
@@ -413,26 +514,38 @@ static void read_parameters( int argc, char** argv ){
     Param.theDeltaTSquared    = double_message[4];
     Param.theEndT             = double_message[5];
     Param.theStartT           = double_message[6];
-    Param.theDomainX          = double_message[7];
-    Param.theDomainY          = double_message[8];
-    Param.theDomainZ          = double_message[9];
+    theDomainX          = double_message[7];
+    theDomainY          = double_message[8];
+    theDomainZ          = double_message[9];
     Param.theDomainAzimuth	= double_message[10];
     Param.theThresholdDamping = double_message[11];
     Param.theThresholdVpVs    = double_message[12];
     Param.theSofteningFactor  = double_message[13];
     Param.theFreq_Vel		= double_message[14];
-    Param.theRegionLat		= double_message[15];
-    Param.theRegionLong		= double_message[16];
-    Param.theRegionDepth    = double_message[17];
 
-    /*Broadcast all integer params*/
+#ifdef USECVMDB
+
+    double  double_message_extra[3];
+
+    double_message_extra[0] = theXForMeshOrigin;
+    double_message_extra[1] = theYForMeshOrigin;
+    double_message_extra[2] = theZForMeshOrigin;
+
+    MPI_Bcast(double_message_extra, 3, MPI_DOUBLE, 0, comm_solver);
+
+    theXForMeshOrigin = double_message_extra[0];
+    theYForMeshOrigin = double_message_extra[1];
+    theZForMeshOrigin = double_message_extra[2];
+
+#endif
+
     int_message[0]  = Param.theTotalSteps;
     int_message[1]  = Param.theRate;
-    int_message[2]  = Param.theNumberOfPlanes;
+    int_message[2]  = theNumberOfPlanes;
     int_message[3]  = Param.theNumberOfStations;
     int_message[4]  = (int)Param.theTypeOfDamping;
     int_message[5]  = Param.theDampingStatisticsFlag;
-    int_message[6]  = Param.theMeshOutFlag;
+    int_message[6]  = theMeshOutFlag;
     int_message[7]  = Param.theCheckPointingRate;
     int_message[8]  = Param.theUseCheckPoint;
     int_message[9]  = (int)Param.includeNonlinearAnalysis;
@@ -440,23 +553,20 @@ static void read_parameters( int argc, char** argv ){
     int_message[11] = (int)Param.printK;
     int_message[12] = (int)Param.printStationVelocities;
     int_message[13] = (int)Param.printStationAccelerations;
-    int_message[14] = Param.theTimingBarriersFlag;
+    int_message[14] = theTimingBarriersFlag;
     int_message[15] = (int)Param.includeBuildings;
     int_message[16] = (int)Param.storeMeshCoordinatesForMatlab;
-    int_message[17] = (int)Param.drmImplement;
-    int_message[18] = (int)Param.useInfQk;
-    int_message[19] = Param.theStepMeshingFactor;
-
+    int_message[17] = (int)Param.theElement;
 
     MPI_Bcast(int_message, LOCAL_INIT_INT_MESSAGE_LENGTH, MPI_INT, 0, comm_solver);
 
     Param.theTotalSteps            = int_message[0];
     Param.theRate                  = int_message[1];
-    Param.theNumberOfPlanes              = int_message[2];
+    theNumberOfPlanes              = int_message[2];
     Param.theNumberOfStations            = int_message[3];
     Param.theTypeOfDamping         = int_message[4];
     Param.theDampingStatisticsFlag = int_message[5];
-    Param.theMeshOutFlag                 = int_message[6];
+    theMeshOutFlag                 = int_message[6];
     Param.theCheckPointingRate           = int_message[7];
     Param.theUseCheckPoint               = int_message[8];
     Param.includeNonlinearAnalysis       = int_message[9];
@@ -464,20 +574,13 @@ static void read_parameters( int argc, char** argv ){
     Param.printK                         = int_message[11];
     Param.printStationVelocities         = int_message[12];
     Param.printStationAccelerations      = int_message[13];
-    Param.theTimingBarriersFlag          = int_message[14];
+    theTimingBarriersFlag          = int_message[14];
     Param.includeBuildings               = int_message[15];
     Param.storeMeshCoordinatesForMatlab  = int_message[16];
-    Param.drmImplement                   = int_message[17];
-    Param.useInfQk                       = int_message[18];
-    Param.theStepMeshingFactor           = int_message[19];
+    Param.theElement					 = int_message[17];
 
-    /*Broadcast all string params*/
-    MPI_Bcast (Param.parameters_input_file,  256, MPI_CHAR, 0, comm_solver);
+
     MPI_Bcast (Param.theCheckPointingDirOut, 256, MPI_CHAR, 0, comm_solver);
-    MPI_Bcast (Param.FourDOutFile,           256, MPI_CHAR, 0, comm_solver);
-    MPI_Bcast (Param.cvmdb_input_file,       256, MPI_CHAR, 0, comm_solver);
-    MPI_Bcast (Param.mesh_etree_output_file, 256, MPI_CHAR, 0, comm_solver);
-    MPI_Bcast (Param.planes_input_file,      256, MPI_CHAR, 0, comm_solver);
 
     return;
 }
@@ -487,6 +590,14 @@ static void read_parameters( int argc, char** argv ){
 static void
 local_finalize()
 {
+    /* Free memory held by file name strings */
+    if (Param.theMEtree != NULL) {
+	free(Param.theMEtree);
+    }
+
+    if (Param.theOutFile != NULL) {
+	free(Param.theOutFile);
+    }
 
     /* Free memory associated with the octree and mesh */
     octor_deletetree(Global.myOctree);
@@ -500,6 +611,9 @@ local_finalize()
 
     /* Free memory associated with the solver */
     solver_delete();
+
+    /* Free memory associated with output planes */
+    /* MISSING */
 
     return;
 }
@@ -637,7 +751,7 @@ read_config_string (FILE* fp, const char* key, char* value_ptr, size_t size)
  *
  * \return 0 if OK, -1 on error.
  */
-static int32_t parse_parameters( const char* numericalin )
+static int32_t initparameters( const char* numericalin )
 {
     FILE* fp;
 
@@ -649,8 +763,7 @@ static int32_t parse_parameters( const char* numericalin )
 
     int32_t   samples, rate;
     int       number_output_planes, number_output_stations,
-              damping_statistics, use_checkpoint, checkpointing_rate,
-              step_meshing;
+              damping_statistics, use_checkpoint, checkpointing_rate;
 
     double    freq, vscut,
               region_origin_latitude_deg, region_origin_longitude_deg,
@@ -660,16 +773,15 @@ static int32_t parse_parameters( const char* numericalin )
               startT, endT, deltaT, softening_factor,
               threshold_damping, threshold_VpVs, freq_vel;
     char      type_of_damping[64],
-	      	  checkpoint_path[256],
+              checkpoint_path[256],
               include_buildings[64],
               include_nonlinear_analysis[64],
               stiffness_calculation_method[64],
               print_matrix_k[64],
               print_station_velocities[64],
               print_station_accelerations[64],
-	      	  mesh_coordinates_for_matlab[64],
-    		  implement_drm[64],
-    		  use_infinite_qk[64];
+              mesh_coordinates_for_matlab[64],
+              element_type[64];
 
     damping_type_t   typeOfDamping     = -1;
     stiffness_type_t stiffness_method  = -1;
@@ -678,11 +790,14 @@ static int32_t parse_parameters( const char* numericalin )
     noyesflag_t      printMatrixK      = -1;
     noyesflag_t      printStationVels  = -1;
     noyesflag_t      printStationAccs  = -1;
-    noyesflag_t      useInfQk          = -1;
 
     noyesflag_t      meshCoordinatesForMatlab  = -1;
-    noyesflag_t      implementdrm  = -1;
 
+    element_type_t   elem_type         = -1;
+
+#ifdef USECVMDB
+    dbctl_t  *myctl;
+#endif
 
     /* Obtain the specification of the simulation */
     if ((fp = fopen(physicsin, "r")) == NULL)
@@ -752,7 +867,6 @@ static int32_t parse_parameters( const char* numericalin )
         (parsetext(fp, "simulation_end_time_sec",        'd', &endT                        ) != 0) ||
         (parsetext(fp, "simulation_delta_time_sec",      'd', &deltaT                      ) != 0) ||
         (parsetext(fp, "softening_factor",               'd', &softening_factor            ) != 0) ||
-        (parsetext(fp, "use_progressive_meshing",        'i', &step_meshing                ) != 0) ||
         (parsetext(fp, "simulation_output_rate",         'i', &rate                        ) != 0) ||
         (parsetext(fp, "number_output_planes",           'i', &number_output_planes        ) != 0) ||
         (parsetext(fp, "number_output_stations",         'i', &number_output_stations      ) != 0) ||
@@ -762,10 +876,6 @@ static int32_t parse_parameters( const char* numericalin )
         (parsetext(fp, "use_checkpoint",                 'i', &use_checkpoint              ) != 0) ||
         (parsetext(fp, "checkpointing_rate",             'i', &checkpointing_rate          ) != 0) ||
         (parsetext(fp, "checkpoint_path",                's', &checkpoint_path             ) != 0) ||
-        (parsetext(fp, "4D_output_file",                 's', &Param.FourDOutFile          ) != 0) ||
-        (parsetext(fp, "cvmdb_input_file",               's', &Param.cvmdb_input_file      ) != 0) ||
-        (parsetext(fp, "mesh_etree_output_file",         's', &Param.mesh_etree_output_file) != 0) ||
-        (parsetext(fp, "planes_input_file",              's', &Param.planes_input_file     ) != 0) ||
         (parsetext(fp, "include_nonlinear_analysis",     's', &include_nonlinear_analysis  ) != 0) ||
         (parsetext(fp, "stiffness_calculation_method",   's', &stiffness_calculation_method) != 0) ||
         (parsetext(fp, "print_matrix_k",                 's', &print_matrix_k              ) != 0) ||
@@ -773,17 +883,16 @@ static int32_t parse_parameters( const char* numericalin )
         (parsetext(fp, "print_station_accelerations",    's', &print_station_accelerations ) != 0) ||
         (parsetext(fp, "include_buildings",              's', &include_buildings           ) != 0) ||
         (parsetext(fp, "mesh_coordinates_for_matlab",    's', &mesh_coordinates_for_matlab ) != 0) ||
-        (parsetext(fp, "implement_drm",    				 's', &implement_drm               ) != 0) ||
-        (parsetext(fp, "simulation_velocity_profile_freq_hz",'d', &freq_vel                ) != 0) ||
-        (parsetext(fp, "use_infinite_qk",                's', &use_infinite_qk             ) != 0) )
+        (parsetext(fp, "simulation_velocity_profile_freq_hz",    'd', &freq_vel      	   ) != 0) ||
+        (parsetext(fp, "the_element_type",                   's', &element_type      	       ) != 0))
     {
         fprintf( stderr, "Error parsing simulation parameters from %s\n",
                 numericalin );
         return -1;
     }
 
-    hu_config_get_int_opt(fp, "output_mesh", &Param.theMeshOutFlag );
-    hu_config_get_int_opt(fp, "enable_timing_barriers",&Param.theTimingBarriersFlag);
+    hu_config_get_int_opt(fp, "output_mesh", &theMeshOutFlag );
+    hu_config_get_int_opt(fp, "enable_timing_barriers",&theTimingBarriersFlag);
     hu_config_get_int_opt(fp, "forces_buffer_size", &theForcesBufferSize );
     hu_config_get_int_opt(fp, "schedule_print_file", &Param.theSchedulePrintToFile );
 
@@ -799,6 +908,7 @@ static int32_t parse_parameters( const char* numericalin )
     size_t mesh_stat_len = 0;
     hu_config_get_string_def( fp, "stat_mesh_filename", &Param.theMeshStatFilename,
 			      &mesh_stat_len, "stat-mesh.txt" );
+
 
     fclose( fp );
 
@@ -835,11 +945,6 @@ static int32_t parse_parameters( const char* numericalin )
 
     if ( (softening_factor <= 1) && (softening_factor != 0) ) {
         fprintf(stderr, "Illegal softening factor %f\n", softening_factor);
-        return -1;
-    }
-
-    if (step_meshing < 0) {
-        fprintf(stderr, "Illegal progressive meshing factor %d\n", step_meshing);
         return -1;
     }
 
@@ -911,6 +1016,16 @@ static int32_t parse_parameters( const char* numericalin )
                 stiffness_calculation_method );
     }
 
+    if ( strcasecmp(element_type, "linear") == 0 ) {
+        elem_type = ELINEAR;
+    } else if ( strcasecmp(element_type, "quadratic") == 0 ) {
+        elem_type = EQUADRATIC;
+    } else {
+        solver_abort( __FUNCTION_NAME, NULL, "Unknown response for element_type"
+                " (linear or quadratic): %s\n",
+                element_type );
+    }
+
     if ( strcasecmp(print_matrix_k, "yes") == 0 ) {
         printMatrixK = YES;
     } else if ( strcasecmp(print_matrix_k, "no") == 0 ) {
@@ -964,31 +1079,47 @@ static int32_t parse_parameters( const char* numericalin )
                 include_buildings );
     }
 
-    if ( strcasecmp(implement_drm, "yes") == 0 ) {
-        implementdrm = YES;
-    } else if ( strcasecmp(implement_drm, "no") == 0 ) {
-        implementdrm = NO;
-    } else {
-        solver_abort( __FUNCTION_NAME, NULL,
-                "Unknown response for impelement_drm (yes or no): %s\n",
-                implement_drm );
+#ifdef USECVMDB
+    /* Obtain the material database application control/meta data */
+    if ((myctl = cvm_getdbctl(theCVMEp)) == NULL) {
+	fprintf(stderr, "Error reading CVM etree control data\n");
+	return -1;
     }
 
-    if ( strcasecmp(use_infinite_qk, "yes") == 0 ) {
-        useInfQk = YES;
-    } else if ( strcasecmp(use_infinite_qk, "no") == 0 ) {
-        useInfQk = NO;
-    } else {
-        solver_abort( __FUNCTION_NAME, NULL,
-            "Unknown response using infinite Qk (yes or no): %s\n",
-                use_infinite_qk);
+    /* Check the ranges of the mesh and the scope of the CVM etree */
+    if ((region_origin_latitude_deg < myctl->region_origin_latitude_deg) ||
+	(region_origin_longitude_deg < myctl->region_origin_longitude_deg) ||
+	(region_depth_shallow_m < myctl->region_depth_shallow_m) ||
+	(region_depth_deep_m > myctl->region_depth_deep_m) ||
+	(region_origin_latitude_deg + region_length_north_m / DIST1LAT
+	 > myctl->region_origin_latitude_deg
+	 + myctl->region_length_north_m / DIST1LAT) ||
+	(region_origin_longitude_deg + region_length_east_m / DIST1LON
+	 > myctl->region_origin_longitude_deg +
+	 myctl->region_length_east_m / DIST1LON)) {
+	fprintf(stderr, "Mesh area out of the CVM etree\n");
+	return -1;
     }
+
+    /* Compute the coordinates of the origin of the mesh coordinate
+       system in the CVM etree domain coordinate system */
+    theXForMeshOrigin = (region_origin_latitude_deg
+			 - myctl->region_origin_latitude_deg) * DIST1LAT;
+    theYForMeshOrigin = (region_origin_longitude_deg
+			 - myctl->region_origin_longitude_deg) * DIST1LON;
+    theZForMeshOrigin = region_depth_shallow_m - myctl->region_depth_shallow_m;
+
+
+    /* Free memory used by myctl */
+    cvm_freedbctl(myctl);
+
+#endif
 
     /* Init the static global variables */
 
-    Param.theRegionLat      = region_origin_latitude_deg;
-    Param.theRegionLong     = region_origin_longitude_deg ;
-    Param.theRegionDepth    = region_depth_shallow_m ;
+    theRegionLat      = region_origin_latitude_deg;
+    theRegionLong     = region_origin_longitude_deg ;
+    theRegionDepth    = region_depth_shallow_m ;
 
     Param.theVsCut	      = vscut;
     Param.theFactor	      = freq * samples;
@@ -1000,21 +1131,18 @@ static int32_t parse_parameters( const char* numericalin )
     Param.theEndT           = endT;
     Param.theTotalSteps     = (int)(((endT - startT) / deltaT));
 
-    Param.theDomainX	      = region_length_north_m;
-    Param.theDomainY	      = region_length_east_m;
-    Param.region_depth_deep_m = region_depth_deep_m;
-    Param.theDomainZ	      = region_depth_deep_m - region_depth_shallow_m;
+    theDomainX	      = region_length_north_m;
+    theDomainY	      = region_length_east_m;
+    theDomainZ	      = region_depth_deep_m - region_depth_shallow_m;
     Param.theDomainAzimuth  = region_azimuth_leftface_deg;
     Param.theTypeOfDamping  = typeOfDamping;
-    Param.useInfQk          = useInfQk;
 
     Param.theRate           = rate;
 
-    Param.theNumberOfPlanes	      = number_output_planes;
+    theNumberOfPlanes	      = number_output_planes;
     Param.theNumberOfStations	      = number_output_stations;
 
     Param.theSofteningFactor        = softening_factor;
-    Param.theStepMeshingFactor     = step_meshing;
     Param.theThresholdDamping	      = threshold_damping;
     Param.theThresholdVpVs	      = threshold_VpVs;
     Param.theDampingStatisticsFlag  = damping_statistics;
@@ -1024,6 +1152,7 @@ static int32_t parse_parameters( const char* numericalin )
 
     Param.includeNonlinearAnalysis  = includeNonlinear;
     Param.theStiffness              = stiffness_method;
+    Param.theElement				= elem_type;
 
     Param.printK                    = printMatrixK;
     Param.printStationVelocities    = printStationVels;
@@ -1033,23 +1162,19 @@ static int32_t parse_parameters( const char* numericalin )
 
     Param.storeMeshCoordinatesForMatlab  = meshCoordinatesForMatlab;
 
-    Param.drmImplement              = implementdrm;
-
     strcpy( Param.theCheckPointingDirOut, checkpoint_path );
 
     monitor_print("\n\n---------------- Some Input Data ----------------\n\n");
     monitor_print("Vs cut:                             %f\n", Param.theVsCut);
     monitor_print("Softening factor:                   %f\n", Param.theSofteningFactor);
     monitor_print("Number of stations:                 %d\n", Param.theNumberOfStations);
-    monitor_print("Number of planes:                   %d\n", Param.theNumberOfPlanes);
+    monitor_print("Number of planes:                   %d\n", theNumberOfPlanes);
     monitor_print("Stiffness calculation method:       %s\n", stiffness_calculation_method);
     monitor_print("Include buildings:                  %s\n", include_buildings);
     monitor_print("Include nonlinear analysis:         %s\n", include_nonlinear_analysis);
     monitor_print("Printing velocities on stations:    %s\n", print_station_velocities);
     monitor_print("Printing accelerations on stations: %s\n", print_station_accelerations);
     monitor_print("Mesh Coordinates For Matlab:        %s\n", mesh_coordinates_for_matlab);
-    monitor_print("cvmdb_input_file:                   %s\n", Param.cvmdb_input_file);
-    monitor_print("Implement drm:      	               %s\n", implement_drm);
     monitor_print("\n-------------------------------------------------\n\n");
 
     fflush(Param.theMonitorFileFp);
@@ -1060,77 +1185,6 @@ static int32_t parse_parameters( const char* numericalin )
 
 
 /*-----------Mesh generation related routines------------------------------*/
-
-static void  open_cvmdb(void){
-
-#ifdef USECVMDB
-
-    MPI_Barrier(comm_solver);
-    replicateDB(Param.cvmdb_input_file);
-
-    MPI_Barrier(comm_solver);
-    Global.theCVMEp = etree_open(Param.cvmdb_input_file, O_RDONLY, CVMBUFSIZE, 0, 0 );
-
-    if (Global.theCVMEp == NULL) {
-	fprintf( stderr, "Thread %d: open_cvmdb: error opening CVM etree %s\n",
-		 Global.myID, Param.cvmdb_input_file );
-	MPI_Abort(MPI_COMM_WORLD, ERROR );
-	exit( 1 );
-    }
-
-    dbctl_t  *myctl;
-    /* Obtain the material database application control/meta data */
-    if ((myctl = cvm_getdbctl(Global.theCVMEp)) == NULL) {
-    	fprintf(stderr, "Error reading CVM etree control data\n");
-    	MPI_Abort(MPI_COMM_WORLD, ERROR );
-    	exit( 1 );
-    }
-
-    /* Check the ranges of the mesh and the scope of the CVM etree */
-    if ((Param.theRegionLat < myctl->region_origin_latitude_deg) ||
-        (Param.theRegionLong < myctl->region_origin_longitude_deg) ||
-        (Param.theRegionDepth < myctl->region_depth_shallow_m) ||
-        (Param.region_depth_deep_m > myctl->region_depth_deep_m) ||
-        (Param.theRegionLat + Param.theDomainX / DIST1LAT
-         > myctl->region_origin_latitude_deg
-         + myctl->region_length_north_m / DIST1LAT) ||
-        (Param.theRegionLong + Param.theDomainY / DIST1LON
-         > myctl->region_origin_longitude_deg +
-         myctl->region_length_east_m / DIST1LON)) {
-        fprintf(stderr, "Mesh area out of the CVM etree\n");
-        MPI_Abort(MPI_COMM_WORLD, ERROR );
-    	exit( 1 );
-    }
-
-    /* Compute the coordinates of the origin of the mesh coordinate
-       system in the CVM etree domain coordinate system */
-    Global.theXForMeshOrigin = (Param.theRegionLat
-				- myctl->region_origin_latitude_deg) * DIST1LAT;
-    Global.theYForMeshOrigin = (Param.theRegionLong
-				- myctl->region_origin_longitude_deg) * DIST1LON;
-    Global.theZForMeshOrigin = Param.theRegionDepth - myctl->region_depth_shallow_m;
-
-    /* Free memory used by myctl */
-    cvm_freedbctl(myctl);
-
-    double  double_message_extra[3];
-
-    double_message_extra[0] = Global.theXForMeshOrigin;
-    double_message_extra[1] = Global.theYForMeshOrigin;
-    double_message_extra[2] = Global.theZForMeshOrigin;
-
-    MPI_Bcast(double_message_extra, 3, MPI_DOUBLE, 0, comm_solver);
-
-    Global.theXForMeshOrigin = double_message_extra[0];
-    Global.theYForMeshOrigin = double_message_extra[1];
-    Global.theZForMeshOrigin = double_message_extra[2];
-
-#else
-    strcpy(Param.theCVMFlatFile, cvmdb_input_file);
-#endif
-
-}
-
 
 
 #ifdef USECVMDB
@@ -1298,6 +1352,27 @@ replicateDB(const char *dbname)
 }
 
 
+/**
+ * Open my local copy of the material database.
+ * \todo Add a check that the schema matches to our idea of the record,
+ * and check record sizes.
+ * \todo Make this function part of the CVM module.
+ */
+static void
+openDB( const char* dbname )
+{
+    theCVMEp = etree_open( dbname, O_RDONLY, CVMBUFSIZE, 0, 0 );
+
+    if (theCVMEp == NULL) {
+	fprintf( stderr, "Thread %d: openDB: error opening CVM etree %s\n",
+		 Global.myID, dbname );
+	MPI_Abort(MPI_COMM_WORLD, ERROR );
+	exit( 1 );
+    }
+
+    return;
+}
+
 
 /**
  * Assign values (material properties) to a leaf octant specified by
@@ -1315,6 +1390,12 @@ setrec( octant_t* leaf, double ticksize, void* data )
     int i_x, i_y, i_z, n_points = 3;
     double points[3];
 
+    // INTRODUCE BKT MODEL
+
+    double Qs, Qp, Qk, L, vs_vp_Ratio, vs, vksquared, w, shear_vel_corr_factor, kappa_vel_corr_factor;
+    int index_Qs, index_Qk;
+    int QTable_Size = (int)(sizeof(Global.theQTABLE)/( 6 * sizeof(double)));
+
     int res = 0;
     edata_t* edata = (edata_t*)data;
 
@@ -1327,7 +1408,7 @@ setrec( octant_t* leaf, double ticksize, void* data )
 
     /* Check for buildings and proceed according to the buildings setrec */
     if ( Param.includeBuildings == YES ) {
-		if ( bldgs_setrec( leaf, ticksize, edata, Global.theCVMEp,Global.theXForMeshOrigin,Global.theYForMeshOrigin,Global.theZForMeshOrigin ) ) {
+        if ( bldgs_setrec( leaf, ticksize, edata, theCVMEp ) ) {
             return;
         }
     }
@@ -1338,17 +1419,17 @@ setrec( octant_t* leaf, double ticksize, void* data )
 
     for ( i_x = 0; i_x < n_points; i_x++ ) {
 
-	x_m = (Global.theXForMeshOrigin
+	x_m = (theXForMeshOrigin
 	       + (leaf->lx + points[i_x] * halfticks) * ticksize);
 
 	for ( i_y = 0; i_y < n_points; i_y++ ) {
 
-	    y_m  = Global.theYForMeshOrigin
+	    y_m  = theYForMeshOrigin
 		+ (leaf->ly + points[i_y] * halfticks) * ticksize;
 
 	    for ( i_z = 0; i_z < n_points; i_z++) {
 
-		z_m = Global.theZForMeshOrigin
+		z_m = theZForMeshOrigin
 		    + (leaf->lz +  points[i_z] * halfticks) * ticksize;
 
 		/* Shift the domain if buildings are considered */
@@ -1356,7 +1437,7 @@ setrec( octant_t* leaf, double ticksize, void* data )
                     z_m -= get_surface_shift();
 		}
 
-		res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
+		res = cvm_query( theCVMEp, y_m, x_m, z_m, &g_props );
 
 		if (res != 0) {
 		    continue;
@@ -1391,6 +1472,92 @@ setrec( octant_t* leaf, double ticksize, void* data )
 
 	edata->Vs = Param.theVsCut;
 	edata->Vp = Param.theVsCut * VpVsRatio;
+    }
+
+    // IMPLEMENT BKT MODEL
+
+    /* CALCULATE QUALITY FACTOR VALUES AND READ CORRESPONDING VISCOELASTICITY COEFFICIENTS FROM THE TABLE */
+
+    	/* L IS THE COEFFICIENT DEFINED BY "SHEARER-2009" TO RELATE QK, QS AND QP */
+
+    if(Param.theTypeOfDamping == BKT)
+    {
+
+        vksquared = edata->Vp * edata->Vp - 4. / 3. * edata->Vs * edata->Vs;
+    	vs_vp_Ratio = edata->Vs / edata->Vp;
+    	vs = edata->Vs * 0.001;
+    	L = 4. / 3. * vs_vp_Ratio * vs_vp_Ratio;
+
+      	//Qs = 0.02 * edata->Vs;
+
+    	// Ricardo's Formula based on Brocher's paper (2008) on the subject. In the paper Qp = 2*Qs is given.
+    	//TODO : Make sure Qp Qs relation is correct...
+
+    	Qs = 10.5 + vs * (-16. + vs * (153. + vs * (-103. + vs * (34.7 + vs * (-5.29 + vs * 0.31)))));
+    	Qp = 2. * Qs;
+
+    	Qk = (1. - L) / (1. / Qp - L / Qs);
+
+    	index_Qs = Search_Quality_Table(Qs, &(Global.theQTABLE[0][0]), QTable_Size);
+
+    	if(index_Qs == -2 || index_Qk >= QTable_Size)
+    	{
+    		fprintf(stderr,"Problem with the Quality Factor Table\n");
+    		exit(1);
+    	}
+    	else if(index_Qs == -1)
+    	{
+    		edata->a0_shear = 0.;
+    		edata->a1_shear = 0.;
+    		edata->g0_shear = 0.;
+    		edata->g1_shear = 0.;
+    		edata->b_shear  = 0.;
+    	}
+    	else
+    	{
+    		edata->a0_shear = Global.theQTABLE[index_Qs][1];
+    		edata->a1_shear = Global.theQTABLE[index_Qs][2];
+    		edata->g0_shear = Global.theQTABLE[index_Qs][3];
+    		edata->g1_shear = Global.theQTABLE[index_Qs][4];
+    		edata->b_shear  = Global.theQTABLE[index_Qs][5];
+    	}
+
+    	index_Qk = Search_Quality_Table(Qk, &(Global.theQTABLE[0][0]), QTable_Size);
+
+    	if(index_Qk == -2 || index_Qk >= QTable_Size)
+    	{
+    		fprintf(stderr,"Problem with the Quality Factor Table\n");
+    		exit(1);
+    	}
+    	else if(index_Qk == -1)
+    	{
+    		edata->a0_kappa = 0.;
+    		edata->a1_kappa = 0.;
+    		edata->g0_kappa = 0.;
+    		edata->g1_kappa = 0.;
+    		edata->b_kappa  = 0.;
+    	}
+    	else
+    	{
+    		edata->a0_kappa = Global.theQTABLE[index_Qk][1];
+    		edata->a1_kappa = Global.theQTABLE[index_Qk][2];
+    		edata->g0_kappa = Global.theQTABLE[index_Qk][3];
+    		edata->g1_kappa = Global.theQTABLE[index_Qk][4];
+    		edata->b_kappa  = Global.theQTABLE[index_Qk][5];
+    	}
+
+    	if(Param.theFreq_Vel != 0.)
+    	{
+    		w = Param.theFreq_Vel / Param.theFreq;
+
+    		shear_vel_corr_factor = sqrt(1. - (edata->a0_shear * edata->g0_shear * edata->g0_shear / (edata->g0_shear * edata->g0_shear + w * w) + edata->a1_shear * edata->g1_shear * edata->g1_shear / (edata->g1_shear * edata->g1_shear + w * w)));
+
+    		kappa_vel_corr_factor = sqrt(1. - (edata->a0_kappa * edata->g0_kappa * edata->g0_kappa / (edata->g0_kappa * edata->g0_kappa + w * w) + edata->a1_kappa * edata->g1_kappa * edata->g1_kappa / (edata->g1_kappa * edata->g1_kappa + w * w)));
+
+    		edata->Vs = shear_vel_corr_factor * edata->Vs;
+    		edata->Vp = sqrt(kappa_vel_corr_factor * kappa_vel_corr_factor * vksquared + 4. / 3. * edata->Vs * edata->Vs);
+    	}
+
     }
 
     return;
@@ -1532,7 +1699,7 @@ static cvmrecord_t *sliceCVM(const char *cvm_flatfile)
 		searchpoint.y = intervaltable[procid + 1].y << 1;
 		searchpoint.z = intervaltable[procid + 1].z << 1;
 
-		offset = zsearch(cvmrecord, recordcount, Global.theCVMRecordSize,
+		offset = zsearch(cvmrecord, recordcount, theCVMRecordSize,
 				 &searchpoint);
 
 		point = (point_t *)(cvmrecord + offset);
@@ -1657,8 +1824,8 @@ static cvmrecord_t *sliceCVM(const char *cvm_flatfile)
     }
 
     /* Every processor should set these parameters correctly */
-    Global.theCVMRecordCount = bytecount / sizeof(cvmrecord_t);
-    if (Global.theCVMRecordCount * sizeof(cvmrecord_t) != (size_t)bytecount) {
+    theCVMRecordCount = bytecount / sizeof(cvmrecord_t);
+    if (theCVMRecordCount * sizeof(cvmrecord_t) != (size_t)bytecount) {
 	fprintf(stderr, "Thread %d: received corrupted CVM data\n",
 		Global.myID);
 	MPI_Abort(MPI_COMM_WORLD, ERROR);
@@ -1745,7 +1912,7 @@ static cvmrecord_t *sliceCVM_old(const char *cvm_flatfile)
 		searchpoint.y = intervaltable[procid + 1].y << 1;
 		searchpoint.z = intervaltable[procid + 1].z << 1;
 
-		offset = zsearch(cvmrecord, recordcount, Global.theCVMRecordSize,
+		offset = zsearch(cvmrecord, recordcount, theCVMRecordSize,
 				 &searchpoint);
 
 		point = (point_t *)(cvmrecord + offset);
@@ -1840,8 +2007,8 @@ static cvmrecord_t *sliceCVM_old(const char *cvm_flatfile)
     }
 
     /* Every processor should set these parameters correctly */
-    Global.theCVMRecordCount = bytecount / sizeof(cvmrecord_t);
-    if (Global.theCVMRecordCount * sizeof(cvmrecord_t) != (size_t)bytecount) {
+    theCVMRecordCount = bytecount / sizeof(cvmrecord_t);
+    if (theCVMRecordCount * sizeof(cvmrecord_t) != (size_t)bytecount) {
 	fprintf(stderr, "Thread %d: received corrupted CVM data\n",
 		Global.myID);
 	MPI_Abort(MPI_COMM_WORLD, ERROR);
@@ -1876,9 +2043,9 @@ void setrec(octant_t *leaf, double ticksize, void *data)
     searchpoint.y = y = leaf->ly + halfticks;
     searchpoint.z = z = leaf->lz + halfticks;
 
-    if ((x * ticksize >= Param.theDomainX) ||
-	(y * ticksize >= Param.theDomainY) ||
-	(z * ticksize >= Param.theDomainZ)) {
+    if ((x * ticksize >= theDomainX) ||
+	(y * ticksize >= theDomainY) ||
+	(z * ticksize >= theDomainZ)) {
 	/* Center point out the bound. Set Vs to force split */
 	edata->Vs = Param.theFactor * edata->edgesize / 2;
     } else {
@@ -1891,7 +2058,7 @@ void setrec(octant_t *leaf, double ticksize, void *data)
 	searchpoint.z = z << 1;
 
 	/* Inbound */
-	offset = zsearch(Global.theCVMRecord, Global.theCVMRecordCount, Global.theCVMRecordSize,
+	offset = zsearch(theCVMRecord, theCVMRecordCount, theCVMRecordSize,
 			 &searchpoint);
 	if (offset < 0) {
 	    fprintf(stderr, "setrec: fatal error\n");
@@ -1899,7 +2066,7 @@ void setrec(octant_t *leaf, double ticksize, void *data)
 	    exit(1);
 	}
 
-	agghit = Global.theCVMRecord + offset;
+	agghit = theCVMRecord + offset;
 	edata->Vs = agghit->Vs;
 	edata->Vp = agghit->Vp;
 	edata->rho = agghit->density;
@@ -1921,76 +2088,48 @@ static void
 mesh_generate()
 {
 
-    int mstep, step = 1;
-    double originalFactor = Param.theFactor;
-    double ppwl = Param.theFactor / Param.theFreq;
-    double prevtref = 0, prevtbal = 0, prevtpar = 0;
-    int64_t tote, mine, maxe;
-
-    if (Global.myID == 0) {
-        fprintf(stdout, "Meshing: ");
-        if (Param.theStepMeshingFactor == 0) {
-            fprintf(stdout, "Conventional\n\n");
-        } else {
-            fprintf(stdout, "Progressive\n\n");
-        }
-        fprintf(stdout, "Stage %14s Min %7s Max %5s Total    Time(s)","","","");
-        if (Param.theStepMeshingFactor == 0) {
-            fprintf(stdout, "\n\n");
-        } else {
-            fprintf(stdout, "   Step  f(Hz)\n\n");
-        }
-    }
-
     /*----  Generate and partition an unstructured octree mesh ----*/
     MPI_Barrier(comm_solver);
     Timer_Start("Octor Newtree");
     if (Global.myID == 0) {
-        fprintf(stdout, "New tree %41s","");
+	fprintf(stdout, "octor_newtree            ... ");
     }
-    Global.myOctree = octor_newtree( Param.theDomainX, Param.theDomainY, Param.theDomainZ,
-            sizeof(edata_t), Global.myID, Global.theGroupSize,
-            comm_solver, get_surface_shift());
+    Global.myOctree = octor_newtree( theDomainX, theDomainY, theDomainZ,
+			      sizeof(edata_t), Global.myID, Global.theGroupSize,
+			      comm_solver, get_surface_shift());
 
-    /* NOTE:
-     * If you want to see the carving process, replace by:
-     *     Global.myOctree = octor_newtree(
-     *             Param.theDomainX, Param.theDomainY, Param.theDomainZ,
-     *             sizeof(edata_t), Global.myID, Global.theGroupSize,
-     *             comm_solver, 0);
+    /* NOTE: If you want to see the carving process, replace by:
+        Global.myOctree = octor_newtree( theDomainX, theDomainY, theDomainZ,
+                                  sizeof(edata_t), Global.myID, Global.theGroupSize,
+                                  comm_solver, 0);
      */
 
     if (Global.myOctree == NULL) {
-        fprintf(stderr, "Thread %d: mesh_generate: fail to create octree\n",
-                Global.myID);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
+	fprintf(stderr, "Thread %d: mesh_generate: fail to create octree\n",
+		Global.myID);
+	MPI_Abort(MPI_COMM_WORLD, ERROR);
+	exit(1);
     }
     MPI_Barrier(comm_solver);
     Timer_Stop("Octor Newtree");
     if (Global.myID == 0) {
-        fprintf(stdout, "%9.2f\n\n", Timer_Value("Octor Newtree", 0) );
-    }
-
-    /* Essential for DRM implementation */
-    if (Param.drmImplement == YES) {
-        drm_fix_coordinates(Global.myOctree->ticksize);
+	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Octor Newtree", 0) );
     }
 
 #ifdef USECVMDB
-    Global.theCVMQueryStage = 0; /* Query CVM database to refine the mesh */
+    theCVMQueryStage = 0; /* Query CVM database to refine the mesh */
 #else
      /* Use flat data record file and distibute the data in memories */
     if (Global.myID == 0) {
 	fprintf(stdout, "slicing CVMDB ...");
     }
     Timer_Start("Slice CVM");
-    Global.theCVMRecord = sliceCVM(Param.theCVMFlatFile);
+    theCVMRecord = sliceCVM(theCVMFlatFile);
     MPI_Barrier(comm_solver);
     Timer_Stop("Slice CVM");
-    if (Global.theCVMRecord == NULL) {
+    if (theCVMRecord == NULL) {
 	fprintf(stderr, "Thread %d: Error obtaining the CVM records from %s\n",
-		Global.myID, Param.theCVMFlatFile);
+		Global.myID, theCVMFlatFile);
 	MPI_Abort(MPI_COMM_WORLD, ERROR);
 	exit(1);
     };
@@ -1999,179 +2138,162 @@ mesh_generate()
     }
 #endif
 
-    for ( mstep = Param.theStepMeshingFactor; mstep >= 0; mstep-- ) {
-
-        double myFactor = (double)(1 << mstep); // 2^mstep
-        Param.theFactor = originalFactor / myFactor;
-
-        /* Refinement */
-        Timer_Start("Octor Refinetree");
-        if (Global.myID == 0) {
-            fprintf(stdout, "Refining     ");
-            fflush(stdout);
-        }
-        if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
-            fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
-            MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
-        }
-        MPI_Barrier(comm_solver);
-        tote = octor_getleavescount(Global.myOctree, GLOBAL);
-        mine = octor_getminleavescount(Global.myOctree, GLOBAL);
-        maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
-        if (Global.myID == 0) {
-            fprintf(stdout, "%11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
-            fflush(stdout);
-        }
-        Timer_Stop("Octor Refinetree");
-        if (Global.myID == 0) {
-            fprintf(stdout, "%11.2f", Timer_Value("Octor Refinetree", 0) - prevtref);
-            if (Param.theStepMeshingFactor == 0 ) {
-                fprintf(stdout, "\n");
-            } else {
-                fprintf(stdout, "   %4d %6.2f\n", step, Param.theFactor/ppwl);
-            }
-            prevtref = Timer_Value("Octor Refinetree", 0);
-            fflush(stdout);
-        }
-
-        /* Balancing */
-        Timer_Start("Octor Balancetree");
-        if (Global.myID == 0) {
-            fprintf(stdout, "Balancing    ");
-            fflush(stdout);
-        }
-        if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
-            fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
-            MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
-        }
-        MPI_Barrier(comm_solver);
-        tote = octor_getleavescount(Global.myOctree, GLOBAL);
-        mine = octor_getminleavescount(Global.myOctree, GLOBAL);
-        maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
-        if (Global.myID == 0) {
-            fprintf(stdout, "%11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
-            fflush(stdout);
-        }
-        Timer_Stop("Octor Balancetree");
-        if (Global.myID == 0) {
-            fprintf(stdout, "%11.2f\n", Timer_Value("Octor Balancetree", 0) - prevtbal);
-            prevtbal = Timer_Value("Octor Balancetree", 0);
-            fflush(stdout);
-        }
-
-        /* Partitioning */
-        Timer_Start("Octor Partitiontree");
-        if (Global.myID == 0) {
-            fprintf(stdout, "Partitioning ");
-            fflush(stdout);
-        }
-        if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
-            fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",Global.myID);
-            MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
-        }
-        MPI_Barrier(comm_solver);
-        tote = octor_getleavescount(Global.myOctree, GLOBAL);
-        mine = octor_getminleavescount(Global.myOctree, GLOBAL);
-        maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
-        if (Global.myID == 0) {
-            fprintf(stdout, "%11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
-            fflush(stdout);
-        }
-        Timer_Stop("Octor Partitiontree");
-        if (Global.myID == 0) {
-            fprintf(stdout, "%11.2f\n\n", Timer_Value("Octor Partitiontree", 0) - prevtpar);
-            prevtpar = Timer_Value("Octor Partitiontree", 0);
-            fflush(stdout);
-        }
-
-        step++;
-        fflush(stdout);
-        MPI_Barrier(comm_solver);
+    Timer_Start("Octor Refinetree");
+    if (Global.myID == 0) {
+	fprintf(stdout, "octor_refinetree         ... ");
+    }
+    if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
+	fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",
+		Global.myID);
+	MPI_Abort(MPI_COMM_WORLD, ERROR);
+	exit(1);
+    }
+    MPI_Barrier(comm_solver);
+    Timer_Stop("Octor Refinetree");
+    if (Global.myID == 0) {
+	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Octor Refinetree", 0));
     }
 
-    /* Buildings Carving */
+    Timer_Start("Octor Balancetree");
+    if (Global.myID == 0) {
+	fprintf(stdout, "octor_balancetree        ... ");
+    }
+#ifdef USECVMDB
+    theCVMQueryStage = 1; /* Query CVM database for balance operation */
+#endif
+    if (octor_balancetree(Global.myOctree, setrec) != 0) {
+	fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",
+		Global.myID);
+	MPI_Abort(MPI_COMM_WORLD, ERROR);
+	exit(1);
+    }
+    MPI_Barrier(comm_solver);
+    Timer_Stop("Octor Balancetree");
+    if (Global.myID == 0) {
+	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Octor Balancetree", 0));
+    }
+
+    /**
+     * Carve buildings:
+     * First pass may leave the first-leaf as an air element */
     if ( Param.includeBuildings == YES ) {
-
-        Timer_Start("Carve Buildings");
+        Timer_Start("First Carve Buildings");
         if (Global.myID == 0) {
-            fprintf(stdout, "Carving buildings");
-            fflush(stdout);
+            fprintf(stdout, "octor_carvebuildings 1   ... ");
         }
-
         /* NOTE: If you want to see the carving process, comment next line */
         octor_carvebuildings(Global.myOctree, 1, bldgs_nodesearch);
         MPI_Barrier(comm_solver);
-        Timer_Stop("Carve Buildings");
+        Timer_Stop("First Carve Buildings");
         if (Global.myID == 0) {
-            fprintf(stdout, "%9.2f\n", Timer_Value("Carve Buildings", 0) );
-            fflush(stdout);
+            fprintf( stdout, "done : %9.2f seconds\n",
+                     Timer_Value("First Carve Buildings", 0) );
         }
+    }
 
-        Timer_Start("Octor Partitiontree");
+    Timer_Start("Octor Partitiontree");
+    if (Global.myID == 0) {
+	fprintf(stdout, "octor_partitiontree      ... ");
+    }
+    if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
+	fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",
+		Global.myID);
+	MPI_Abort(MPI_COMM_WORLD, ERROR);
+	exit(1);
+    }
+    MPI_Barrier(comm_solver);
+    Timer_Stop("Octor Partitiontree");
+    if (Global.myID == 0) {
+	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Octor Partitiontree", 0));
+    }
+
+    /**
+     * Carve buildings:
+     * Second pass to eliminate elements left behind in the first pass */
+    if ( Param.includeBuildings == YES ) {
+        Timer_Start("Second Carve Buildings");
         if (Global.myID == 0) {
-            fprintf(stdout, "Repartitioning");
-            fflush(stdout);
+            fprintf(stdout, "octor_carvebuildings 2   ... ");
         }
-        if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
-            fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",
-                    Global.myID);
-            MPI_Abort(MPI_COMM_WORLD, ERROR);
-            exit(1);
-        }
+        /* NOTE: If you want to see the carving process, comment next line */
+        octor_carvebuildings(Global.myOctree, 0, bldgs_nodesearch);
         MPI_Barrier(comm_solver);
-        Timer_Stop("Octor Partitiontree");
+        Timer_Stop("Second Carve Buildings");
         if (Global.myID == 0) {
-            fprintf(stdout, "%9.2f\n", Timer_Value("Octor Partitiontree", 0));
-            fflush(stdout);
+            fprintf( stdout, "done : %9.2f seconds\n",
+                     Timer_Value("Second Carve Buildings", 0) );
         }
     }
+    
+    if(Param.theElement == EQUADRATIC){
+    	Timer_Start("Octor Refinetree Quadratic");
 
-    if ( Global.myID == 0 && Param.theStepMeshingFactor !=0 ) {
-        fprintf(stdout, "Total refine    %33s %9.2f\n", "", Timer_Value("Octor Refinetree", 0));
-        fprintf(stdout, "Total balance   %33s %9.2f\n", "", Timer_Value("Octor Balancetree", 0));
-        fprintf(stdout, "Total partition %33s %9.2f\n\n", "", Timer_Value("Octor Partitiontree", 0));
-        fflush(stdout);
+    	if (Global.myID == 0) {
+    		fprintf(stdout, "octor_refinetree_quadratic         ... ");
+    	}
+    	if (octor_quadratic_refinetree(Global.myOctree, setrec) != 0) {
+    		fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",
+    				Global.myID);
+    		MPI_Abort(MPI_COMM_WORLD, ERROR);
+    		exit(1);
+    	}
+    	if (octor_quadratic_refinetree(Global.myOctree, setrec) != 0) {
+    		fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",
+    				Global.myID);
+    		MPI_Abort(MPI_COMM_WORLD, ERROR);
+    		exit(1);
+    	}
+    	MPI_Barrier(comm_solver);
+    	Timer_Stop("Octor Refinetree Quadratic");
+    	if (Global.myID == 0) {
+    		fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Octor Refinetree Quadratic", 0));
+    	}
     }
+        
 
     Timer_Start("Octor Extractmesh");
     if (Global.myID == 0) {
-        fprintf(stdout, "Extracting the mesh %30s","");
-        fflush(stdout);
+	fprintf(stdout, "octor_extractmesh        ... ");
     }
+
+    if(Param.theElement == ELINEAR)
     Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch);
+    else if (Param.theElement == EQUADRATIC)
+    Global.myMesh = octor_extractmesh_quadratic(Global.myOctree, bldgs_nodesearch);
+
     if (Global.myMesh == NULL) {
-        fprintf(stderr, "Thread %d: mesh_generate: fail to extract mesh\n",
-                Global.myID);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
+	fprintf(stderr, "Thread %d: mesh_generate: fail to extract mesh\n",
+		Global.myID);
+	MPI_Abort(MPI_COMM_WORLD, ERROR);
+	exit(1);
     }
     MPI_Barrier(comm_solver);
     Timer_Stop("Octor Extractmesh");
     if (Global.myID == 0) {
-        fprintf(stdout, "%9.2f\n", Timer_Value("Octor Partitiontree", 0));
+	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Octor Extractmesh", 0));
     }
 
     Timer_Start( "Mesh correct properties" );
     /* Re-populates the mesh with actual values from the CVM-etree */
-    if (Global.myID == 0) {
-        fprintf(stdout,"Correcting mesh properties %23s","");
-        fflush(stdout);
-    }
 
-    mesh_correct_properties( Global.theCVMEp );
+    if(Param.theElement == ELINEAR)
+    	mesh_correct_properties( theCVMEp );
+    else if(Param.theElement == EQUADRATIC)
+    	mesh_correct_properties_quadratic( theCVMEp );
 
     MPI_Barrier( comm_solver );
     Timer_Stop( "Mesh correct properties" );
     if (Global.myID == 0) {
-        fprintf(stdout, "%9.2f\n\n",Timer_Value( "Mesh correct properties", 0 ) );
-        fflush(stdout);
+	fprintf( stdout, " : %9.2f seconds\n",
+		 Timer_Value( "Mesh correct properties", 0 ) );
     }
+
 
 #ifdef USECVMDB
     /* Close the material database */
-    etree_close(Global.theCVMEp);
+    etree_close(theCVMEp);
 #else
-    free(Global.theCVMRecord);
+    free(theCVMRecord);
 #endif /* USECVMDB */
 }
 
@@ -2184,29 +2306,21 @@ mesh_generate()
 static int32_t
 toexpand(octant_t *leaf, double ticksize, const void *data) {
 
-	if ( data == NULL ) {
-		return 1;
-	}
+    if ( data == NULL ) {
+        return 1;
+    }
 
-	int      res;
-	edata_t *edata = (edata_t *)data;
+    int      res;
+    edata_t *edata = (edata_t *)data;
 
-	if ( Param.includeBuildings == YES ) {
-		res = bldgs_toexpand( leaf, ticksize, edata, Param.theFactor );
-		if ( res != -1 ) {
-			return res;
-		}
-	}
+    if ( Param.includeBuildings == YES ) {
+        res = bldgs_toexpand( leaf, ticksize, edata, Param.theFactor );
+        if ( res != -1 ) {
+            return res;
+        }
+    }
 
-	if ( Param.drmImplement == YES) {
-		//if( Param.drmImplement == YES && Param.theDrmPart != PART1 ) {
-		res = drm_toexpand( leaf, ticksize, edata );
-		if ( res != -1 ) {
-			return res;
-		}
-	}
-
-	return vsrule( edata, Param.theFactor );
+    return vsrule( edata, Param.theFactor );
 }
 
 /**
@@ -2282,10 +2396,10 @@ mesh_print_stat_imp( int32_t* st, int group_size, FILE* out )
 
 
     /* output aggregate information to the monitor file / stdout */
-    monitor_print(
-		   "Total elements:                      %11"INT64_FMT"\n"
-		   "Total nodes:                         %11"INT64_FMT"\n"
-		   "Total dangling nodes:                %11"INT64_FMT"\n\n",
+    monitor_print( "\nMesh information\n"
+		   "Total number of elements:       %11"INT64_FMT"\n"
+		   "Total number of nodes:          %11"INT64_FMT"\n"
+		   "Total number of dangling nodes: %11"INT64_FMT"\n",
 		   total_count[ELEMENT_COUNT], total_count[NODE_COUNT],
 		   total_count[DANGLING_COUNT] );
 }
@@ -2383,7 +2497,7 @@ mesh_output()
 
 	printf("mesh_output ... ");
 
-	mep = etree_open(Param.mesh_etree_output_file, O_CREAT|O_RDWR|O_TRUNC, 0,
+	mep = etree_open(Param.theMEtree, O_CREAT|O_RDWR|O_TRUNC, 0,
 			 sizeof(mdata_t),3);
 	if (mep == NULL) {
 	    fprintf(stderr, "Thread 0: mesh_output: ");
@@ -2858,7 +2972,6 @@ static void solver_set_critical_T()
 	/* Old formula for damping */
 	/* zeta	       = (edata->Vs < 1500) ? 25 / edata->Vs : 5 / edata->Vs; */
 	/* New formula acording to Graves */
-
 	zeta	    = 10 / edata->Vs;
 
 	omega	    = 3.46410161514 / ratio;
@@ -3224,7 +3337,21 @@ print_K_stdoutput()
     fprintf(stdout, "\n\n");
 }
 
+/* HAYDAR QUADRATIC EFFORT */
 
+static void
+print_K_stdoutput_quadratic()
+{
+	int i,j;
+	for(i=0; i<81; i++)
+	{
+		for(j=0; j<81; j++)
+			fprintf(stdout,"%10.2e ", Global.theK2_quad[i][j]);
+		fprintf(stdout,"\n");
+
+	}
+	return;
+}
 
 /**
  * mu_and_lambda: Calculates mu and lambda according to the element values
@@ -3314,15 +3441,30 @@ static void solver_init()
     }
 
     /* Allocate memory */
-    Global.mySolver->eTable = (e_t *)calloc(Global.myMesh->lenum, sizeof(e_t));
-    Global.mySolver->nTable = (n_t *)calloc(Global.myMesh->nharbored, sizeof(n_t));
-    Global.mySolver->tm1    = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
-    Global.mySolver->tm2    = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
-    Global.mySolver->force  = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
-    Global.mySolver->conv_shear_1 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
-    Global.mySolver->conv_shear_2 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
-    Global.mySolver->conv_kappa_1 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
-    Global.mySolver->conv_kappa_2 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
+        Global.mySolver->eTable = (e_t *)calloc(Global.myMesh->lenum, sizeof(e_t));
+        Global.mySolver->nTable = (n_t *)calloc(Global.myMesh->nharbored, sizeof(n_t));
+        Global.mySolver->tm1    = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
+        Global.mySolver->tm2    = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
+        Global.mySolver->force  = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
+
+        /* Allocate memory for convolution vectors only if the type of damping is BKT */
+
+        if(Param.theTypeOfDamping == BKT){
+        	Global.mySolver->conv_shear_1 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
+        	Global.mySolver->conv_shear_2 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
+        	Global.mySolver->conv_kappa_1 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
+        	Global.mySolver->conv_kappa_2 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
+
+        	if( (Global.mySolver->conv_shear_1 == NULL) ||
+        	    (Global.mySolver->conv_shear_2 == NULL) ||
+        	    (Global.mySolver->conv_kappa_1 == NULL) ||
+        	    (Global.mySolver->conv_kappa_2 == NULL) ){
+
+        		fprintf(stderr, "Thread %d: solver_init: out of memory\n", Global.myID);
+        		        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        		        exit(1);
+        	}
+        }
 
     Global.mySolver->dn_sched = schedule_new();
     Global.mySolver->an_sched = schedule_new();
@@ -3331,11 +3473,7 @@ static void solver_init()
          (Global.mySolver->nTable == NULL) ||
          (Global.mySolver->tm1    == NULL) ||
          (Global.mySolver->tm2    == NULL) ||
-         (Global.mySolver->force  == NULL) ||
-         (Global.mySolver->conv_shear_1 == NULL) ||
-         (Global.mySolver->conv_shear_2 == NULL) ||
-         (Global.mySolver->conv_kappa_1 == NULL) ||
-         (Global.mySolver->conv_kappa_2 == NULL) ) {
+         (Global.mySolver->force  == NULL) ) {
 
         fprintf(stderr, "Thread %d: solver_init: out of memory\n", Global.myID);
         MPI_Abort(MPI_COMM_WORLD, ERROR);
@@ -3394,10 +3532,10 @@ static void solver_init()
         /* zeta = (edata->Vs < 1500) ? 25 / edata->Vs : 5 / edata->Vs; */
 
         /* New formula for damping according to Graves */
-        	zeta = 10 / edata->Vs;
+        zeta = 10 / edata->Vs;
 
         if ( zeta > Param.theThresholdDamping ) {
-        	zeta = Param.theThresholdDamping;
+            zeta = Param.theThresholdDamping;
         }
 
         /* the a,b coefficients */
@@ -3498,9 +3636,10 @@ static void solver_init()
     schedule_senddata(Global.mySolver->dn_sched, Global.mySolver->nTable,
 	      sizeof(n_t) / sizeof(solver_float), CONTRIBUTION, DN_MASS_MSG);
 
+
     /* Distribute the mass from dangling nodes to anchored nodes. (local) */
     compute_adjust(Global.mySolver->nTable, sizeof(n_t) / sizeof(solver_float),
-		   DISTRIBUTION);
+    		   DISTRIBUTION);
 
     /* Send mass information of anchored nodes to their owner processors*/
     schedule_senddata(Global.mySolver->an_sched, Global.mySolver->nTable,
@@ -3509,6 +3648,340 @@ static void solver_init()
     return;
 }
 
+/**
+ * Init matrices and constants, build comm schedule, allocate/init space
+ * for the solver.
+ */
+static void solver_init_quadratic()
+{
+    /* local variables */
+    int32_t ecounter;
+    int32_t c_outsize, c_insize, s_outsize, s_insize;
+
+    /* compute the damping parameters a/zeta and b/zeta */
+    compute_setab(Param.theFreq, &Global.theABase, &Global.theBBase);
+
+    /* find out the critical delta T of the current simulation */
+    /* and goes for the damping statistics if falg is == 1     */
+    MPI_Barrier( comm_solver );
+    solver_set_critical_T();
+
+    /* find the minimum edge size */
+
+    get_minimum_edge();
+
+    /* Init stiffness matrices and other constants */
+//    compute_K();  \\ NO NEED IN QUADRATIC METHOD
+    get_K_quadratic();
+
+    /* For debugging */
+    if ( ( Param.printK == YES ) && ( Global.myID == 0 ) ) {
+        //print_K_stdoutput(); \\ NO NEED IN QUADRATIC METHOD
+        print_K_stdoutput_quadratic();
+    }
+
+    compute_setab(Param.theFreq, &Global.theABase, &Global.theBBase);
+
+    /* allocation of memory */
+    Global.mySolver = (mysolver_t *)malloc(sizeof(mysolver_t));
+    if (Global.mySolver == NULL) {
+        fprintf(stderr, "Thread %d: solver_init: out of memory\n", Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
+    /* Allocate memory */
+    Global.mySolver->eTable = (e_t *)calloc(Global.myMesh->lenum, sizeof(e_t));
+    Global.mySolver->nTable = (n_t *)calloc(Global.myMesh->nharbored, sizeof(n_t));
+    Global.mySolver->tm1    = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
+    Global.mySolver->tm2    = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
+    Global.mySolver->force  = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
+    Global.mySolver->conv_shear_1 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
+    Global.mySolver->conv_shear_2 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
+    Global.mySolver->conv_kappa_1 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
+    Global.mySolver->conv_kappa_2 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
+
+    Global.mySolver->dn_sched = schedule_new();
+    Global.mySolver->an_sched = schedule_new();
+
+    if ( (Global.mySolver->eTable == NULL) ||
+         (Global.mySolver->nTable == NULL) ||
+         (Global.mySolver->tm1    == NULL) ||
+         (Global.mySolver->tm2    == NULL) ||
+         (Global.mySolver->force  == NULL) ||
+         (Global.mySolver->conv_shear_1 == NULL) ||
+         (Global.mySolver->conv_shear_2 == NULL) ||
+         (Global.mySolver->conv_kappa_1 == NULL) ||
+         (Global.mySolver->conv_kappa_2 == NULL) ) {
+
+        fprintf(stderr, "Thread %d: solver_init: out of memory\n", Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
+    if ( Param.printStationAccelerations == YES ) {
+
+        Global.mySolver->tm3 = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
+
+        if ( Global.mySolver->tm3 == NULL ) {
+
+            fprintf(stderr, "Thread %d: solver_init: out of memory for accs\n", Global.myID);
+            MPI_Abort(MPI_COMM_WORLD, ERROR);
+            exit(1);
+        }
+    }
+
+    /* For each element:
+     * Initialize the data structures. tm1, tm2 and force have
+     * already been initialized to 0 by calloc(). */
+    for (ecounter = 0; ecounter < Global.myMesh->lenum; ecounter = ecounter + 8)
+    {
+    	double   mu, lambda;
+    	int32_t eindex;
+
+    	for (eindex = ecounter; eindex < ecounter + 8; eindex++)
+    	{
+    		elem_t  *elemp; /* pointer to the mesh database */
+    		edata_t *edata;
+    		e_t     *ep;    /* pointer to the element constant table */
+    		n_t * nTable;
+    		double   mass;
+
+#ifdef BOUNDARY
+    		tick_t  edgeticks;
+    		tick_t  ldb[3], ruf[3];
+    		int32_t lnid0;
+    		char    flag;
+    		double  dashpot[8][3];
+#endif
+
+    		double zeta, a, b;
+
+    		/* Note the difference between the two tables */
+    		elemp = &Global.myMesh->elemTable[eindex];
+    		edata = (edata_t *)elemp->data;
+    		ep    = &Global.mySolver->eTable[eindex];
+    		nTable = Global.mySolver->nTable;
+
+    		/*
+    		 * HAYDAR QUADRATIC EFFORT
+    		 * The material properties are read from the first element within the 8 neighboring elements forming the structure for quadratic one.
+    		 *
+    		 * With mesh_correct_properties_quadratic, this shouldn't be a problem any more.
+    		 */
+
+    		/*
+    		 * TODO : Assign an average value for the material properties within the quadratic element to the first element.
+    		 */
+
+    		if(eindex == ecounter)
+    			mu_and_lambda(&mu, &lambda, edata, eindex);
+
+    		/* coefficients for term (deltaT_squared * Ke * Ut) */
+//    		ep->c1 = Param.theDeltaTSquared * edata->edgesize * mu / 9;    \\NOT NECESSARY FOR QUADRATIC ELEMENTS
+//    		ep->c2 = Param.theDeltaTSquared * edata->edgesize * lambda / 9;
+
+    		/*
+    		 * HAYDAR QUADRATIC EFFORT
+    		 * The edgesize is valid for the linear elements which is half of the edgesize of the quadratic element. This is considered in the calculation
+    		 * of variables rather than changing it directly due to other usages of it.
+    		 */
+
+    		ep->c1_quad = Param.theDeltaTSquared * edata->edgesize * mu;
+    		ep->c2_quad = Param.theDeltaTSquared * edata->edgesize * lambda;
+
+    		/* coefficients for term (b * deltaT * Ke_off * (Ut-1 - Ut)) */
+    		/* Anelastic attenuation (material damping) */
+
+    		/* Old formula for damping */
+    		/* zeta = (edata->Vs < 1500) ? 25 / edata->Vs : 5 / edata->Vs; */
+
+    		/* New formula for damping according to Graves */
+    		zeta = 10 / edata->Vs;
+
+    		if ( zeta > Param.theThresholdDamping ) {
+    			zeta = Param.theThresholdDamping;
+    		}
+
+    		/* the a,b coefficients */
+    		a = zeta * Global.theABase;
+    		b = zeta * Global.theBBase;
+
+    		/* coefficients for term (b * deltaT * Ke_off * (Ut-1 - Ut)) */
+//    		ep->c3 = b * Param.theDeltaT * edata->edgesize * mu / 9;         \\NOT NECESSARY FOR QUADRATIC ELEMENTS
+//    		ep->c4 = b * Param.theDeltaT * edata->edgesize * lambda / 9;
+
+#ifdef BOUNDARY
+
+    		/* Set the flag for the element */
+    		lnid0 = elemp->lnid[0];
+
+    		ldb[0] = Global.myMesh->nodeTable[lnid0].x;
+    		ldb[1] = Global.myMesh->nodeTable[lnid0].y;
+    		ldb[2] = Global.myMesh->nodeTable[lnid0].z;
+
+    		edgeticks = (tick_t)1 << (PIXELLEVEL - elemp->level);
+    		ruf[0] = ldb[0] + edgeticks;
+    		ruf[1] = ldb[1] + edgeticks;
+    		ruf[2] = ldb[2] + edgeticks;
+
+    		flag = compute_setflag(ldb, ruf, Global.myOctree->nearendp,
+    				Global.myOctree->farendp);
+    		if (flag != 13) {
+    			compute_setboundary(edata->edgesize, edata->Vp, edata->Vs,
+    					edata->rho, flag, dashpot);
+    		}
+#endif /* BOUNDARY */
+
+/* Assign the element mass to its vertices */
+    		/* mass is the total mass of the element   */
+    		/* and M is the mass assigned to each node */
+    		mass = edata->rho * edata->edgesize * edata->edgesize *edata->edgesize * 8.;   // Total mass of the quadratic element
+    		assign_mass_to_nodes(elemp, edata, ep, nTable, a, dashpot, flag, mass, eindex-ecounter);
+
+    	} /* eindex for neighboring 8 elements */
+    } /* ecounter for all elements */
+
+    /* Build the communication schedules */
+    schedule_build(Global.myMesh, Global.mySolver->dn_sched, Global.mySolver->an_sched);
+
+#ifdef DEBUG
+    /* For debug purpose, add gnid into the data field. */
+    c_outsize = sizeof(n_t) + sizeof(int64_t);
+    c_insize  = sizeof(n_t) + sizeof(int64_t);
+    s_outsize = sizeof(n_t) + sizeof(int64_t);
+    s_insize  = sizeof(n_t) + sizeof(int64_t);
+#else
+    c_outsize = sizeof(n_t);
+    c_insize  = sizeof(n_t);
+    s_outsize = sizeof(n_t);
+    s_insize  = sizeof(n_t);
+#endif /* DEBUG */
+
+    schedule_prepare(Global.mySolver->dn_sched, c_outsize, c_insize,
+		     s_outsize, s_insize);
+
+    schedule_prepare(Global.mySolver->an_sched, c_outsize, c_insize,
+		     s_outsize, s_insize);
+
+    /* Send mass information of dangling nodes to their owners */
+    schedule_senddata(Global.mySolver->dn_sched, Global.mySolver->nTable,
+	      sizeof(n_t) / sizeof(solver_float), CONTRIBUTION, DN_MASS_MSG);
+
+    /*
+     * HAYDAR QUADRATIC EFFORT
+     */
+
+    /* Distribute the mass from dangling nodes to anchored nodes. (local) */
+
+      compute_adjust_quadratic(Global.mySolver->nTable, sizeof(n_t) / sizeof(solver_float),
+    		      DISTRIBUTION);
+
+    /* Send mass information of anchored nodes to their owner processors*/
+    schedule_senddata(Global.mySolver->an_sched, Global.mySolver->nTable,
+	      sizeof(n_t) / sizeof(solver_float), CONTRIBUTION, AN_MASS_MSG);
+
+    return;
+}
+
+/* HAYDAR QUADRATIC EFFORT */
+
+void assign_mass_to_nodes(elem_t *elemp, edata_t *edata, e_t *ep,
+		                  n_t *nTable, double a, double dashpot[][3], char flag, double mass, int32_t eindex)
+{
+	double  M, M_corner, M_edge_center, M_face_center, M_volume_center;
+	double  scale, scale_corner, scale_edge, scale_face, scale_center;
+	int j;
+
+	int corner[8][1] = {{0},{1},{2},{3},{4},{5},{6},{7}};
+	int edge_center[8][3] = {{1,2,4},{0,3,5},{0,3,6},{1,2,7},{0,5,6},{1,4,7},{2,4,7},{3,5,6}};
+	int face_center[8][3] = {{3,5,6},{2,4,7},{1,4,7},{0,5,6},{1,2,7},{0,3,6},{0,3,5},{1,2,4}};
+	int volume_center[8][1] = {{7},{6},{5},{4},{3},{2},{1},{0}};
+
+	M_corner = mass * 1. / 216.;
+	M_edge_center = mass * 1. / 54. / 2.;
+	M_face_center = mass * 2. / 27. / 4.;
+	M_volume_center = mass * 8. / 27. / 8.;
+
+	scale_corner = 1. / 36. * 16.;
+	scale_edge = 1. / 9. * 16. / 2.;
+	scale_face = 4. / 9. * 16. / 4.;
+	scale_center = 0.;
+
+	/* For each node */
+	for (j = 0; j < 8; j++)
+	{
+		if(isintheList(j, corner[eindex],1,0)){
+			M = M_corner;
+			scale = scale_corner; //mult. by 16 to change h^2 already included in the "compute_setbounday" method
+		}        						   //divide by the number the node is called for within a quadratic element
+		else if(isintheList(j, edge_center[eindex],3,0)){
+			M = M_edge_center;
+			scale = scale_edge;
+		}
+		else if(isintheList(j, face_center[eindex],3,0)){
+			M = M_face_center;
+			scale = scale_face;
+		}
+		else if(isintheList(j, volume_center[eindex],1,0)){
+	        M = M_volume_center;
+			scale = scale_center;
+		}
+		else
+		{
+			fprintf(stderr, "Thread %d: assign_mass: node is not in the given list  %d %d \n",Global.myID,j, eindex);
+			MPI_Abort(MPI_COMM_WORLD, ERROR);
+			exit(1);
+		}
+
+		int32_t lnid;
+		int axis;
+		n_t *np;
+
+		lnid = elemp->lnid[j];
+		np   = &nTable[lnid];
+
+		np->mass_simple += M;
+
+		/* loop for each axis */
+		for (axis = 0; axis < 3; axis++ )
+		{
+			np->mass_minusaM[axis]	-= (Param.theDeltaT * a * M);
+			np->mass2_minusaM[axis] -= (Param.theDeltaT * a * M);
+
+#ifdef BOUNDARY
+			if (flag != 13)
+			{
+				/* boundary impact */
+				np->mass_minusaM[axis]  -= scale * (Param.theDeltaT * dashpot[j][axis]);
+				np->mass2_minusaM[axis] -= scale * (Param.theDeltaT * dashpot[j][axis]);
+			}
+#endif /* BOUNDARY */
+
+			np->mass_minusaM[axis]	+= M;
+			np->mass2_minusaM[axis] += (M * 2);
+
+		} /* end loop for each axis */
+
+	} /* end loop for each node */
+
+	return;
+}
+
+/* HAYDAR QUADRATIC EFFORT */
+
+int isintheList(int d, int *array, int array_length, int s)
+{
+    int i;
+	for(i = 0; i < array_length; i++)
+	{
+		if(s)
+		printf("%d\n",array[i]);
+		if(d == array[i])
+			return 1;
+	}
+	return 0;
+}
 
 /**
  * Print the communication schedule of each processor to the given output
@@ -3637,10 +4110,12 @@ static void solver_delete()
     free(Global.mySolver->tm2);
     free(Global.mySolver->force);
 
-    free(Global.mySolver->conv_shear_1);
-    free(Global.mySolver->conv_shear_2);
-    free(Global.mySolver->conv_kappa_1);
-    free(Global.mySolver->conv_kappa_2);
+    if(Param.theTypeOfDamping == BKT){
+    	free(Global.mySolver->conv_shear_1);
+    	free(Global.mySolver->conv_shear_2);
+    	free(Global.mySolver->conv_kappa_1);
+    	free(Global.mySolver->conv_kappa_2);
+    }
 
     schedule_delete(Global.mySolver->dn_sched);
     schedule_delete(Global.mySolver->an_sched);
@@ -3870,10 +4345,10 @@ static void solver_output_wavefield( int step )
  */
 static void solver_output_planes( mysolver_t* solver, int my_id, int step )
 {
-    if (Param.theNumberOfPlanes != 0) {
-        if (step % Param.thePlanePrintRate == 0) {
+    if (theNumberOfPlanes != 0) {
+        if (step % thePlanePrintRate == 0) {
             Timer_Start( "Print Planes" );
-            planes_print( my_id, Param.IO_pool_pe_count, Param.theNumberOfPlanes, solver );
+            planes_print( my_id, solver );
             Timer_Stop( "Print Planes" );
         }
     }
@@ -3885,7 +4360,12 @@ static void solver_output_stations( int step )
     if (Param.theNumberOfStations !=0) {
         if (step % Param.theStationsPrintRate == 0) {
             Timer_Start( "Print Stations" );
-            interpolate_station_displacements( step );
+
+            if(Param.theElement == ELINEAR)
+            	interpolate_station_displacements( step );
+            else if(Param.theElement == EQUADRATIC)
+            	interpolate_station_displacements_quadratic( step );
+
             Timer_Stop( "Print Stations" );
         }
     }
@@ -3978,6 +4458,23 @@ solver_compute_force_stiffness( mysolver_t *solver,
 	Timer_Stop( "Compute addforces e" );
 }
 
+/* HAYDAR QUADRATIC EFFORT */
+
+/*
+ * Compute the force due to element stiffness matrices. Effective method is not available.
+ */
+static void
+solver_compute_force_stiffness_quadratic( mysolver_t *solver,
+                                mesh_t     *mesh,
+                                double *k1,
+                                double *k2 )
+{
+    Timer_Start( "Compute addforces e" );
+
+        compute_addforce_conventional_quadratic( mesh, solver, k1, k2 );
+
+    Timer_Stop( "Compute addforces e" );
+}
 
 /** Compute contribution of damping to the force vector */
 static void
@@ -4035,7 +4532,7 @@ solver_compute_force_gravity( mysolver_t *solver, mesh_t *mesh, int step )
 /** Send the forces on dangling nodes to their owner processors */
 static void solver_send_force_dangling( mysolver_t* solver )
 {
-//    HU_COND_GLOBAL_BARRIER( Param.theTimingBarriersFlag );
+//    HU_COND_GLOBAL_BARRIER( theTimingBarriersFlag );
 
     Timer_Start( "1st schedule send data (contribution)" );
     schedule_senddata( solver->dn_sched, solver->force,
@@ -4048,16 +4545,27 @@ static void solver_send_force_dangling( mysolver_t* solver )
 static void solver_adjust_forces(  mysolver_t* solver )
 {
     Timer_Start( "1st compute adjust (distribution)" );
+
+    /*
+     * HAYDAR QUADRATIC EFFORT
+     */
+
     /* Distribute the forces to LOCAL anchored nodes */
+
+    if(Param.theElement == ELINEAR)
     compute_adjust( solver->force, sizeof(fvector_t) / sizeof(solver_float),
                     DISTRIBUTION);
+    else if(Param.theElement == EQUADRATIC)
+    compute_adjust_quadratic( solver->force, sizeof(fvector_t) / sizeof(solver_float),
+                        DISTRIBUTION);
+
     Timer_Stop( "1st compute adjust (distribution)" );
 }
 
 
 static void solver_send_force_anchored( mysolver_t* solver )
 {
-//    HU_COND_GLOBAL_BARRIER( Param.theTimingBarriersFlag );
+//    HU_COND_GLOBAL_BARRIER( theTimingBarriersFlag );
 
     Timer_Start( "2nd schedule send data (contribution)" );
     /* Send the forces on anchored nodes to their owner processors */
@@ -4119,7 +4627,7 @@ solver_geostatic_fix(int step)
     if ( Param.includeNonlinearAnalysis == YES ) {
         Timer_Start( "Compute addforces gravity" );
         if ( get_geostatic_total_time() > 0 ) {
-            geostatic_displacements_fix( Global.myMesh, Global.mySolver, Param.theDomainZ,
+            geostatic_displacements_fix( Global.myMesh, Global.mySolver, theDomainZ,
                                          Param.theDeltaT, step );
         }
         Timer_Stop( "Compute addforces gravity" );
@@ -4129,7 +4637,7 @@ solver_geostatic_fix(int step)
 /** Share the displacement of anchored nodes with other processors. */
 static void solver_send_displacement_anchored( mysolver_t* solver )
 {
-//    HU_COND_GLOBAL_BARRIER( Param.theTimingBarriersFlag );
+//    HU_COND_GLOBAL_BARRIER( theTimingBarriersFlag );
 
     Timer_Start("3rd schedule send data (sharing)");
     schedule_senddata(Global.mySolver->an_sched, Global.mySolver->tm2,
@@ -4144,8 +4652,16 @@ static void solver_send_displacement_anchored( mysolver_t* solver )
 static void solver_adjust_displacement(  mysolver_t* solver )
 {
     Timer_Start( "2nd compute adjust (assignment)" );
+    /*
+     * HAYDAR QUADRATIC EFFORT
+     */
+    if(Param.theElement == ELINEAR)
     compute_adjust( Global.mySolver->tm2, sizeof(fvector_t) / sizeof(solver_float),
                     ASSIGNMENT );
+    else if(Param.theElement == EQUADRATIC)
+    compute_adjust_quadratic( Global.mySolver->tm2, sizeof(fvector_t) / sizeof(solver_float),
+                        ASSIGNMENT );
+
     Timer_Stop( "2nd compute adjust (assignment)" );
 }
 
@@ -4153,7 +4669,7 @@ static void solver_adjust_displacement(  mysolver_t* solver )
 /** Share the displacement of dangling nodes with other processors. */
 static void solver_send_displacement_dangling( mysolver_t* solver )
 {
-//    HU_COND_GLOBAL_BARRIER( Param.theTimingBarriersFlag );
+//    HU_COND_GLOBAL_BARRIER( theTimingBarriersFlag );
 
     Timer_Start( "4th schadule send data (sharing)" );
     schedule_senddata( Global.mySolver->dn_sched, Global.mySolver->tm2,
@@ -4177,8 +4693,8 @@ solver_loop_hook_bottom( mysolver_t* solver, mesh_t* mesh, int step )
 
 static void solver_output_wavefield_close( void )
 {
-    if (DO_OUTPUT && (Param.FourDOutFp != NULL)) {
-        fclose( Param.FourDOutFp );     /* close the output file */
+    if (DO_OUTPUT && (Param.theOutFp != NULL)) {
+        fclose( Param.theOutFp );     /* close the output file */
     }
 }
 
@@ -4203,18 +4719,6 @@ static void solver_run_collect_timers( void )
     if ( Timer_Exists("Compute addforces Non-linear") ) {
         Timer_Reduce("Compute addforces Non-linear", MAX | MIN | AVERAGE, comm_solver);
         Timer_Reduce("Compute addforces gravity",    MAX | MIN | AVERAGE, comm_solver);
-    }
-
-    if ( Timer_Exists("Solver drm output") ) {
-        Timer_Reduce("Solver drm output", MAX | MIN | AVERAGE, comm_solver);
-    }
-
-    if ( Timer_Exists("Solver drm read displacements") ) {
-        Timer_Reduce("Solver drm read displacements", MAX | MIN | AVERAGE, comm_solver);
-    }
-
-    if ( Timer_Exists("Solver drm force compute") ) {
-        Timer_Reduce("Solver drm force compute", MAX | MIN | AVERAGE, comm_solver);
     }
 
     Timer_Reduce("Read My Forces",                        MAX | MIN | AVERAGE, comm_solver);
@@ -4278,26 +4782,28 @@ static void solver_run()
         solver_output_wavefield( step );
         solver_output_planes( Global.mySolver, Global.myID, step );
         solver_output_stations( step );
-        solver_output_drm_nodes( Global.mySolver, step, Param.theTotalSteps );
         solver_read_source_forces( step );
-        solver_read_drm_displacements( step , Param.theDeltaT ,Param.theTotalSteps );
         Timer_Stop( "Solver I/O" );
 
         Timer_Start( "Compute Physics" );
         solver_nonlinear_state( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2, step );
         solver_compute_force_source( step );
-        solver_compute_effective_drm_force( Global.mySolver, Global.myMesh,Global.theK1, Global.theK2, step, Param.theDeltaT );
+
+        if(Param.theElement == ELINEAR)
         solver_compute_force_stiffness( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2 );
+        else if(Param.theElement == EQUADRATIC)
+        solver_compute_force_stiffness_quadratic( Global.mySolver, Global.myMesh, &(Global.theK1_quad[0][0]), &(Global.theK2_quad[0][0]));
+
         solver_compute_force_damping( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2 );
         solver_compute_force_gravity( Global.mySolver, Global.myMesh, step );
         solver_compute_force_nonlinear( Global.mySolver, Global.myMesh, Param.theDeltaTSquared );
         Timer_Stop( "Compute Physics" );
 
         Timer_Start( "Communication" );
-        HU_COND_GLOBAL_BARRIER( Param.theTimingBarriersFlag );
+        HU_COND_GLOBAL_BARRIER( theTimingBarriersFlag );
         solver_send_force_dangling( Global.mySolver );
         solver_adjust_forces( Global.mySolver );
-        HU_COND_GLOBAL_BARRIER( Param.theTimingBarriersFlag );
+        HU_COND_GLOBAL_BARRIER( theTimingBarriersFlag );
         solver_send_force_anchored( Global.mySolver );
         Timer_Stop( "Communication" );
 
@@ -4308,17 +4814,16 @@ static void solver_run()
         Timer_Stop( "Compute Physics" );
 
         Timer_Start( "Communication" );
-        HU_COND_GLOBAL_BARRIER( Param.theTimingBarriersFlag );
+        HU_COND_GLOBAL_BARRIER( theTimingBarriersFlag );
         solver_send_displacement_anchored( Global.mySolver );
         solver_adjust_displacement( Global.mySolver );
-        HU_COND_GLOBAL_BARRIER( Param.theTimingBarriersFlag );
+        HU_COND_GLOBAL_BARRIER( theTimingBarriersFlag );
         solver_send_displacement_dangling( Global.mySolver );
         Timer_Stop( "Communication" );
 
         solver_loop_hook_bottom( Global.mySolver, Global.myMesh, step );
     } /* for (step = ....): all steps */
 
-    solver_drm_close();
     solver_output_wavefield_close();
     solver_run_collect_timers();
 }
@@ -4365,29 +4870,29 @@ solver_output_seq()
 	first_counted = 0;
 #endif
 
-	if (Param.FourDOutFp == NULL) {
+	if (Param.theOutFp == NULL) {
 	    out_hdr_t out_hdr;
 
 	    /* First output, create the output file */
-	    Param.FourDOutFp = fopen(Param.FourDOutFile, "w+");
-	    if (Param.FourDOutFp == NULL) {
+	    Param.theOutFp = fopen(Param.theOutFile, "w+");
+	    if (Param.theOutFp == NULL) {
 		fprintf(stderr, "Thread 0: solver_output_seq: ");
-		fprintf(stderr, "cannot create %s\n", Param.FourDOutFile);
+		fprintf(stderr, "cannot create %s\n", Param.theOutFile);
 		perror("fopen");
 		MPI_Abort(MPI_COMM_WORLD, ERROR);
 		exit(1);
 	    }
 
 	    /* Write the header that contains the metadata */
-	    out_hdr.domain_x = Param.theDomainX;
-	    out_hdr.domain_y = Param.theDomainY;
-	    out_hdr.domain_z = Param.theDomainZ;
+	    out_hdr.domain_x = theDomainX;
+	    out_hdr.domain_y = theDomainY;
+	    out_hdr.domain_z = theDomainZ;
 	    out_hdr.total_nodes = Global.theNTotal;
 	    out_hdr.total_elements = Global.theETotal;
 	    out_hdr.mesh_ticksize = Global.myMesh->ticksize;
 	    out_hdr.output_steps = (Param.theTotalSteps - 1) / Param.theRate + 1;
 
-	    if (fwrite(&out_hdr, sizeof(out_hdr_t), 1, Param.FourDOutFp) != 1){
+	    if (fwrite(&out_hdr, sizeof(out_hdr_t), 1, Param.theOutFp) != 1){
 		fprintf(stderr, "Thread 0: solver_output_seq: ");
 		fprintf(stderr, "fail to write 4D-out header info\n");
 		perror("fwrite");
@@ -4413,13 +4918,13 @@ solver_output_seq()
 		     - Global.mySolver->tm2[nindex].f[2])  / Param.theDeltaT;
 
 
-		if (fwrite(&vel, sizeof(fvector_t), 1, Param.FourDOutFp) != 1) {
+		if (fwrite(&vel, sizeof(fvector_t), 1, Param.theOutFp) != 1) {
 		    fprintf(stderr, "Thread 0: solver_output_seq: error\n");
 		    MPI_Abort(MPI_COMM_WORLD, ERROR);
 		    exit(1);
 		}
 
-		Param.the4DOutSize += sizeof(fvector_t);
+		the4DOutSize += sizeof(fvector_t);
 
 #ifdef DEBUG
 		gnid_current = Global.myMesh->nodeTable[nindex].gnid;
@@ -4474,13 +4979,13 @@ solver_output_seq()
 		    break;
 		}
 
-		if (fwrite(Global.myVelocityTable, rcvbytecount, 1, Param.FourDOutFp) != 1) {
+		if (fwrite(Global.myVelocityTable, rcvbytecount, 1, Param.theOutFp) != 1) {
 		    fprintf(stderr, "Thread 0: solver_output_seq: error\n");
 		    MPI_Abort(MPI_COMM_WORLD, ERROR);
 		    exit(1);
 		}
 
-		Param.the4DOutSize += rcvbytecount;
+		the4DOutSize += rcvbytecount;
 
 	    } /* while there is more data to be received from procid */
 	} /* for all the processors */
@@ -5572,6 +6077,30 @@ static void compute_K()
     return;
 }
 
+/* HAYDAR QUADRATIC EFFORT
+ * Quadratic Hexahedral Element's stiffness matrices.
+ */
+
+static void get_K_quadratic()
+{
+//double	Kmu[81][81] = {{0.444444,0.083333,0.083333,-0.111111,-0.083333,-0.083333,0.000000,0.000000,0.000000,0.055556,0.083333,0.041667,-0.138889,-0.083333,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.055556,0.041667,0.083333,-0.138889,-0.041667,-0.083333,0.000000,0.000000,0.000000,-0.055556,0.041667,0.041667,-0.111111,-0.041667,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.083333,0.444444,0.083333,0.083333,0.055556,0.041667,0.000000,0.000000,0.000000,-0.083333,-0.111111,-0.083333,-0.083333,-0.138889,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,0.055556,0.083333,0.041667,-0.055556,0.041667,0.000000,0.000000,0.000000,-0.041667,-0.138889,-0.083333,-0.041667,-0.111111,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.083333,0.083333,0.444444,0.083333,0.041667,0.055556,0.000000,0.000000,0.000000,0.041667,0.083333,0.055556,0.041667,0.041667,-0.055556,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.083333,-0.083333,-0.111111,-0.083333,-0.041667,-0.138889,0.000000,0.000000,0.000000,-0.041667,-0.083333,-0.138889,-0.041667,-0.041667,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{-0.111111,0.083333,0.083333,0.888889,0.000000,0.000000,-0.111111,-0.083333,-0.083333,-0.138889,0.083333,0.041667,0.111111,0.000000,0.000000,-0.138889,-0.083333,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.138889,0.041667,0.083333,0.111111,0.000000,0.000000,-0.138889,-0.041667,-0.083333,-0.111111,0.041667,0.041667,-0.111111,-0.000000,0.000000,-0.111111,-0.041667,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{-0.083333,0.055556,0.041667,0.000000,0.888889,0.166667,0.083333,0.055556,0.041667,0.083333,-0.138889,-0.041667,0.000000,-0.222222,-0.166667,-0.083333,-0.138889,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.055556,0.041667,0.000000,0.111111,0.166667,0.041667,-0.055556,0.041667,0.041667,-0.111111,-0.041667,0.000000,-0.277778,-0.166667,-0.041667,-0.111111,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{-0.083333,0.041667,0.055556,0.000000,0.166667,0.888889,0.083333,0.041667,0.055556,-0.041667,0.041667,-0.055556,0.000000,0.166667,0.111111,0.041667,0.041667,-0.055556,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.083333,-0.041667,-0.138889,-0.000000,-0.166667,-0.222222,-0.083333,-0.041667,-0.138889,0.041667,-0.041667,-0.111111,0.000000,-0.166667,-0.277778,-0.041667,-0.041667,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,-0.111111,0.083333,0.083333,0.444444,-0.083333,-0.083333,0.000000,0.000000,0.000000,-0.138889,0.083333,0.041667,0.055556,-0.083333,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.138889,0.041667,0.083333,0.055556,-0.041667,-0.083333,0.000000,0.000000,0.000000,-0.111111,0.041667,0.041667,-0.055556,-0.041667,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,-0.083333,0.055556,0.041667,-0.083333,0.444444,0.083333,0.000000,0.000000,0.000000,0.083333,-0.138889,-0.041667,0.083333,-0.111111,-0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.055556,0.041667,-0.041667,0.055556,0.083333,0.000000,0.000000,0.000000,0.041667,-0.111111,-0.041667,0.041667,-0.138889,-0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,-0.083333,0.041667,0.055556,-0.083333,0.083333,0.444444,0.000000,0.000000,0.000000,-0.041667,0.041667,-0.055556,-0.041667,0.083333,0.055556,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.083333,-0.041667,-0.138889,0.083333,-0.083333,-0.111111,0.000000,0.000000,0.000000,0.041667,-0.041667,-0.111111,0.041667,-0.083333,-0.138889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.055556,-0.083333,0.041667,-0.138889,0.083333,-0.041667,0.000000,0.000000,0.000000,0.888889,-0.000000,0.166667,-0.222222,0.000000,-0.166667,0.000000,0.000000,0.000000,0.055556,0.083333,0.041667,-0.138889,-0.083333,-0.041667,0.000000,0.000000,0.000000,-0.055556,-0.041667,0.041667,-0.111111,0.041667,-0.041667,0.000000,0.000000,0.000000,0.111111,0.000000,0.166667,-0.277778,0.000000,-0.166667,0.000000,0.000000,0.000000,-0.055556,0.041667,0.041667,-0.111111,-0.041667,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.083333,-0.111111,0.083333,0.083333,-0.138889,0.041667,0.000000,0.000000,0.000000,-0.000000,0.888889,0.000000,-0.000000,0.111111,0.000000,0.000000,0.000000,0.000000,-0.083333,-0.111111,-0.083333,-0.083333,-0.138889,-0.041667,0.000000,0.000000,0.000000,0.041667,-0.138889,0.083333,0.041667,-0.111111,0.041667,0.000000,0.000000,0.000000,0.000000,0.111111,-0.000000,0.000000,-0.111111,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.138889,-0.083333,-0.041667,-0.111111,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.041667,-0.083333,0.055556,0.041667,-0.041667,-0.055556,0.000000,0.000000,0.000000,0.166667,0.000000,0.888889,0.166667,0.000000,0.111111,0.000000,0.000000,0.000000,0.041667,0.083333,0.055556,0.041667,0.041667,-0.055556,0.000000,0.000000,0.000000,-0.041667,0.083333,-0.138889,-0.041667,0.041667,-0.111111,0.000000,0.000000,0.000000,-0.166667,0.000000,-0.222222,-0.166667,0.000000,-0.277778,0.000000,0.000000,0.000000,-0.041667,-0.083333,-0.138889,-0.041667,-0.041667,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{-0.138889,-0.083333,0.041667,0.111111,0.000000,0.000000,-0.138889,0.083333,-0.041667,-0.222222,-0.000000,0.166667,1.777778,0.000000,0.000000,-0.222222,0.000000,-0.166667,-0.138889,0.083333,0.041667,0.111111,0.000000,0.000000,-0.138889,-0.083333,-0.041667,-0.111111,-0.041667,0.041667,-0.111111,0.000000,0.000000,-0.111111,0.041667,-0.041667,-0.277778,-0.000000,0.166667,0.222222,0.000000,0.000000,-0.277778,0.000000,-0.166667,-0.111111,0.041667,0.041667,-0.111111,-0.000000,0.000000,-0.111111,-0.041667,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{-0.083333,-0.138889,0.041667,0.000000,-0.222222,0.166667,0.083333,-0.138889,0.041667,0.000000,0.111111,0.000000,0.000000,1.777778,0.000000,-0.000000,0.111111,0.000000,0.083333,-0.138889,-0.041667,0.000000,-0.222222,-0.166667,-0.083333,-0.138889,-0.041667,-0.041667,-0.111111,0.041667,0.000000,-0.277778,0.166667,0.041667,-0.111111,0.041667,0.000000,-0.111111,0.000000,0.000000,0.222222,-0.000000,0.000000,-0.111111,0.000000,0.041667,-0.111111,-0.041667,0.000000,-0.277778,-0.166667,-0.041667,-0.111111,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{-0.041667,-0.041667,-0.055556,0.000000,-0.166667,0.111111,0.041667,-0.041667,-0.055556,-0.166667,0.000000,0.111111,0.000000,0.000000,1.777778,0.166667,0.000000,0.111111,-0.041667,0.041667,-0.055556,0.000000,0.166667,0.111111,0.041667,0.041667,-0.055556,0.041667,0.041667,-0.111111,0.000000,0.166667,-0.277778,-0.041667,0.041667,-0.111111,0.166667,0.000000,-0.277778,-0.000000,0.000000,-0.444444,-0.166667,0.000000,-0.277778,0.041667,-0.041667,-0.111111,0.000000,-0.166667,-0.277778,-0.041667,-0.041667,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,-0.138889,-0.083333,0.041667,0.055556,0.083333,-0.041667,0.000000,0.000000,0.000000,-0.222222,-0.000000,0.166667,0.888889,0.000000,-0.166667,0.000000,0.000000,0.000000,-0.138889,0.083333,0.041667,0.055556,-0.083333,-0.041667,0.000000,0.000000,0.000000,-0.111111,-0.041667,0.041667,-0.055556,0.041667,-0.041667,0.000000,0.000000,0.000000,-0.277778,-0.000000,0.166667,0.111111,0.000000,-0.166667,0.000000,0.000000,0.000000,-0.111111,0.041667,0.041667,-0.055556,-0.041667,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,-0.083333,-0.138889,0.041667,-0.083333,-0.111111,0.083333,0.000000,0.000000,0.000000,0.000000,0.111111,0.000000,0.000000,0.888889,0.000000,0.000000,0.000000,0.000000,0.083333,-0.138889,-0.041667,0.083333,-0.111111,-0.083333,0.000000,0.000000,0.000000,-0.041667,-0.111111,0.041667,-0.041667,-0.138889,0.083333,0.000000,0.000000,0.000000,0.000000,-0.111111,0.000000,0.000000,0.111111,-0.000000,0.000000,0.000000,0.000000,0.041667,-0.111111,-0.041667,0.041667,-0.138889,-0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,-0.041667,-0.041667,-0.055556,-0.041667,-0.083333,0.055556,0.000000,0.000000,0.000000,-0.166667,0.000000,0.111111,-0.166667,0.000000,0.888889,0.000000,0.000000,0.000000,-0.041667,0.041667,-0.055556,-0.041667,0.083333,0.055556,0.000000,0.000000,0.000000,0.041667,0.041667,-0.111111,0.041667,0.083333,-0.138889,0.000000,0.000000,0.000000,0.166667,0.000000,-0.277778,0.166667,0.000000,-0.222222,0.000000,0.000000,0.000000,0.041667,-0.041667,-0.111111,0.041667,-0.083333,-0.138889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.055556,-0.083333,0.041667,-0.138889,0.083333,-0.041667,0.000000,0.000000,0.000000,0.444444,-0.083333,0.083333,-0.111111,0.083333,-0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.055556,-0.041667,0.041667,-0.111111,0.041667,-0.041667,0.000000,0.000000,0.000000,0.055556,-0.041667,0.083333,-0.138889,0.041667,-0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.083333,-0.111111,0.083333,0.083333,-0.138889,0.041667,0.000000,0.000000,0.000000,-0.083333,0.444444,-0.083333,-0.083333,0.055556,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,-0.138889,0.083333,0.041667,-0.111111,0.041667,0.000000,0.000000,0.000000,-0.041667,0.055556,-0.083333,-0.041667,-0.055556,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,-0.083333,0.055556,0.041667,-0.041667,-0.055556,0.000000,0.000000,0.000000,0.083333,-0.083333,0.444444,0.083333,-0.041667,0.055556,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,0.083333,-0.138889,-0.041667,0.041667,-0.111111,0.000000,0.000000,0.000000,-0.083333,0.083333,-0.111111,-0.083333,0.041667,-0.138889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.138889,-0.083333,0.041667,0.111111,0.000000,0.000000,-0.138889,0.083333,-0.041667,-0.111111,-0.083333,0.083333,0.888889,0.000000,0.000000,-0.111111,0.083333,-0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.111111,-0.041667,0.041667,-0.111111,0.000000,0.000000,-0.111111,0.041667,-0.041667,-0.138889,-0.041667,0.083333,0.111111,0.000000,0.000000,-0.138889,0.041667,-0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.083333,-0.138889,0.041667,0.000000,-0.222222,0.166667,0.083333,-0.138889,0.041667,0.083333,0.055556,-0.041667,0.000000,0.888889,-0.166667,-0.083333,0.055556,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.111111,0.041667,0.000000,-0.277778,0.166667,0.041667,-0.111111,0.041667,0.041667,-0.055556,-0.041667,0.000000,0.111111,-0.166667,-0.041667,-0.055556,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.041667,-0.055556,0.000000,-0.166667,0.111111,0.041667,-0.041667,-0.055556,-0.083333,-0.041667,0.055556,0.000000,-0.166667,0.888889,0.083333,-0.041667,0.055556,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,0.041667,-0.111111,0.000000,0.166667,-0.277778,-0.041667,0.041667,-0.111111,0.083333,0.041667,-0.138889,-0.000000,0.166667,-0.222222,-0.083333,0.041667,-0.138889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.138889,-0.083333,0.041667,0.055556,0.083333,-0.041667,0.000000,0.000000,0.000000,-0.111111,-0.083333,0.083333,0.444444,0.083333,-0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.111111,-0.041667,0.041667,-0.055556,0.041667,-0.041667,0.000000,0.000000,0.000000,-0.138889,-0.041667,0.083333,0.055556,0.041667,-0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.083333,-0.138889,0.041667,-0.083333,-0.111111,0.083333,0.000000,0.000000,0.000000,0.083333,0.055556,-0.041667,0.083333,0.444444,-0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.111111,0.041667,-0.041667,-0.138889,0.083333,0.000000,0.000000,0.000000,0.041667,-0.055556,-0.041667,0.041667,0.055556,-0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.041667,-0.055556,-0.041667,-0.083333,0.055556,0.000000,0.000000,0.000000,-0.083333,-0.041667,0.055556,-0.083333,-0.083333,0.444444,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,0.041667,-0.111111,0.041667,0.083333,-0.138889,0.000000,0.000000,0.000000,0.083333,0.041667,-0.138889,0.083333,0.083333,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.055556,0.041667,-0.083333,-0.138889,-0.041667,0.083333,0.000000,0.000000,0.000000,-0.055556,0.041667,-0.041667,-0.111111,-0.041667,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.888889,0.166667,0.000000,-0.222222,-0.166667,-0.000000,0.000000,0.000000,0.000000,0.111111,0.166667,0.000000,-0.277778,-0.166667,-0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.055556,0.041667,0.083333,-0.138889,-0.041667,-0.083333,0.000000,0.000000,0.000000,-0.055556,0.041667,0.041667,-0.111111,-0.041667,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.041667,0.055556,-0.083333,0.041667,-0.055556,-0.041667,0.000000,0.000000,0.000000,-0.041667,-0.138889,0.083333,-0.041667,-0.111111,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.166667,0.888889,0.000000,0.166667,0.111111,0.000000,0.000000,0.000000,0.000000,-0.166667,-0.222222,-0.000000,-0.166667,-0.277778,-0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,0.055556,0.083333,0.041667,-0.055556,0.041667,0.000000,0.000000,0.000000,-0.041667,-0.138889,-0.083333,-0.041667,-0.111111,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.083333,0.083333,-0.111111,0.083333,0.041667,-0.138889,0.000000,0.000000,0.000000,0.041667,0.083333,-0.138889,0.041667,0.041667,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.888889,0.000000,0.000000,0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.111111,0.000000,0.000000,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.083333,-0.083333,-0.111111,-0.083333,-0.041667,-0.138889,0.000000,0.000000,0.000000,-0.041667,-0.083333,-0.138889,-0.041667,-0.041667,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{-0.138889,0.041667,-0.083333,0.111111,0.000000,-0.000000,-0.138889,-0.041667,0.083333,-0.111111,0.041667,-0.041667,-0.111111,-0.000000,0.000000,-0.111111,-0.041667,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.222222,0.166667,0.000000,1.777778,-0.000000,0.000000,-0.222222,-0.166667,-0.000000,-0.277778,0.166667,0.000000,0.222222,0.000000,-0.000000,-0.277778,-0.166667,-0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.138889,0.041667,0.083333,0.111111,0.000000,0.000000,-0.138889,-0.041667,-0.083333,-0.111111,0.041667,0.041667,-0.111111,-0.000000,0.000000,-0.111111,-0.041667,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{-0.041667,-0.055556,-0.041667,0.000000,0.111111,-0.166667,0.041667,-0.055556,-0.041667,0.041667,-0.111111,0.041667,0.000000,-0.277778,0.166667,-0.041667,-0.111111,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.166667,0.111111,0.000000,0.000000,1.777778,0.000000,0.166667,0.111111,0.000000,0.166667,-0.277778,-0.000000,0.000000,-0.444444,-0.000000,-0.166667,-0.277778,-0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.055556,0.041667,0.000000,0.111111,0.166667,0.041667,-0.055556,0.041667,0.041667,-0.111111,-0.041667,0.000000,-0.277778,-0.166667,-0.041667,-0.111111,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{-0.083333,0.041667,-0.138889,0.000000,0.166667,-0.222222,0.083333,0.041667,-0.138889,-0.041667,0.041667,-0.111111,0.000000,0.166667,-0.277778,0.041667,0.041667,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.000000,0.000000,0.111111,0.000000,0.000000,1.777778,0.000000,0.000000,0.111111,-0.000000,0.000000,-0.111111,-0.000000,-0.000000,0.222222,0.000000,0.000000,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.083333,-0.041667,-0.138889,-0.000000,-0.166667,-0.222222,-0.083333,-0.041667,-0.138889,0.041667,-0.041667,-0.111111,0.000000,-0.166667,-0.277778,-0.041667,-0.041667,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,-0.138889,0.041667,-0.083333,0.055556,-0.041667,0.083333,0.000000,0.000000,0.000000,-0.111111,0.041667,-0.041667,-0.055556,-0.041667,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.222222,0.166667,0.000000,0.888889,-0.166667,0.000000,0.000000,0.000000,0.000000,-0.277778,0.166667,0.000000,0.111111,-0.166667,-0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.138889,0.041667,0.083333,0.055556,-0.041667,-0.083333,0.000000,0.000000,0.000000,-0.111111,0.041667,0.041667,-0.055556,-0.041667,-0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,-0.041667,-0.055556,-0.041667,-0.041667,0.055556,-0.083333,0.000000,0.000000,0.000000,0.041667,-0.111111,0.041667,0.041667,-0.138889,0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.166667,0.111111,0.000000,-0.166667,0.888889,0.000000,0.000000,0.000000,0.000000,0.166667,-0.277778,-0.000000,0.166667,-0.222222,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.055556,0.041667,-0.041667,0.055556,0.083333,0.000000,0.000000,0.000000,0.041667,-0.111111,-0.041667,0.041667,-0.138889,-0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,-0.083333,0.041667,-0.138889,-0.083333,0.083333,-0.111111,0.000000,0.000000,0.000000,-0.041667,0.041667,-0.111111,-0.041667,0.083333,-0.138889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.000000,0.000000,0.111111,0.000000,0.000000,0.888889,0.000000,0.000000,0.000000,-0.000000,0.000000,-0.111111,-0.000000,-0.000000,0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.083333,-0.041667,-0.138889,0.083333,-0.083333,-0.111111,0.000000,0.000000,0.000000,0.041667,-0.041667,-0.111111,0.041667,-0.083333,-0.138889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{-0.055556,-0.041667,-0.041667,-0.111111,0.041667,0.041667,0.000000,0.000000,0.000000,0.111111,0.000000,-0.166667,-0.277778,0.000000,0.166667,0.000000,0.000000,0.000000,-0.055556,0.041667,-0.041667,-0.111111,-0.041667,0.041667,0.000000,0.000000,0.000000,0.111111,-0.166667,0.000000,-0.277778,0.166667,-0.000000,0.000000,0.000000,0.000000,1.777778,-0.000000,0.000000,-0.444444,0.000000,-0.000000,0.000000,0.000000,0.000000,0.111111,0.166667,0.000000,-0.277778,-0.166667,-0.000000,0.000000,0.000000,0.000000,-0.055556,-0.041667,0.041667,-0.111111,0.041667,-0.041667,0.000000,0.000000,0.000000,0.111111,0.000000,0.166667,-0.277778,0.000000,-0.166667,0.000000,0.000000,0.000000,-0.055556,0.041667,0.041667,-0.111111,-0.041667,-0.041667,0.000000,0.000000,0.000000},{0.041667,-0.138889,-0.083333,0.041667,-0.111111,-0.041667,0.000000,0.000000,0.000000,0.000000,0.111111,0.000000,0.000000,-0.111111,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.138889,0.083333,-0.041667,-0.111111,0.041667,0.000000,0.000000,0.000000,0.166667,-0.222222,0.000000,0.166667,-0.277778,0.000000,0.000000,0.000000,0.000000,-0.000000,1.777778,0.000000,-0.000000,0.222222,0.000000,0.000000,0.000000,0.000000,-0.166667,-0.222222,-0.000000,-0.166667,-0.277778,-0.000000,0.000000,0.000000,0.000000,0.041667,-0.138889,0.083333,0.041667,-0.111111,0.041667,0.000000,0.000000,0.000000,0.000000,0.111111,-0.000000,0.000000,-0.111111,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.138889,-0.083333,-0.041667,-0.111111,-0.041667,0.000000,0.000000,0.000000},{0.041667,-0.083333,-0.138889,0.041667,-0.041667,-0.111111,0.000000,0.000000,0.000000,0.166667,-0.000000,-0.222222,0.166667,0.000000,-0.277778,0.000000,0.000000,0.000000,0.041667,0.083333,-0.138889,0.041667,0.041667,-0.111111,0.000000,0.000000,0.000000,0.000000,-0.000000,0.111111,0.000000,-0.000000,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,1.777778,0.000000,0.000000,0.222222,0.000000,0.000000,0.000000,0.000000,0.000000,0.111111,0.000000,0.000000,-0.111111,0.000000,0.000000,0.000000,-0.041667,0.083333,-0.138889,-0.041667,0.041667,-0.111111,0.000000,0.000000,0.000000,-0.166667,0.000000,-0.222222,-0.166667,0.000000,-0.277778,0.000000,0.000000,0.000000,-0.041667,-0.083333,-0.138889,-0.041667,-0.041667,-0.111111,0.000000,0.000000,0.000000},{-0.111111,-0.041667,-0.041667,-0.111111,0.000000,0.000000,-0.111111,0.041667,0.041667,-0.277778,-0.000000,-0.166667,0.222222,0.000000,-0.000000,-0.277778,0.000000,0.166667,-0.111111,0.041667,-0.041667,-0.111111,-0.000000,0.000000,-0.111111,-0.041667,0.041667,-0.277778,-0.166667,0.000000,0.222222,0.000000,-0.000000,-0.277778,0.166667,-0.000000,-0.444444,-0.000000,0.000000,3.555556,-0.000000,0.000000,-0.444444,0.000000,-0.000000,-0.277778,0.166667,0.000000,0.222222,0.000000,-0.000000,-0.277778,-0.166667,-0.000000,-0.111111,-0.041667,0.041667,-0.111111,0.000000,0.000000,-0.111111,0.041667,-0.041667,-0.277778,-0.000000,0.166667,0.222222,0.000000,0.000000,-0.277778,0.000000,-0.166667,-0.111111,0.041667,0.041667,-0.111111,-0.000000,0.000000,-0.111111,-0.041667,-0.041667},{-0.041667,-0.111111,-0.041667,0.000000,-0.277778,-0.166667,0.041667,-0.111111,-0.041667,0.000000,-0.111111,0.000000,0.000000,0.222222,0.000000,0.000000,-0.111111,0.000000,0.041667,-0.111111,0.041667,0.000000,-0.277778,0.166667,-0.041667,-0.111111,0.041667,-0.166667,-0.277778,0.000000,0.000000,-0.444444,-0.000000,0.166667,-0.277778,0.000000,0.000000,0.222222,0.000000,0.000000,3.555556,0.000000,-0.000000,0.222222,0.000000,0.166667,-0.277778,-0.000000,0.000000,-0.444444,-0.000000,-0.166667,-0.277778,-0.000000,-0.041667,-0.111111,0.041667,0.000000,-0.277778,0.166667,0.041667,-0.111111,0.041667,0.000000,-0.111111,0.000000,0.000000,0.222222,-0.000000,0.000000,-0.111111,0.000000,0.041667,-0.111111,-0.041667,0.000000,-0.277778,-0.166667,-0.041667,-0.111111,-0.041667},{-0.041667,-0.041667,-0.111111,0.000000,-0.166667,-0.277778,0.041667,-0.041667,-0.111111,-0.166667,0.000000,-0.277778,0.000000,-0.000000,-0.444444,0.166667,0.000000,-0.277778,-0.041667,0.041667,-0.111111,0.000000,0.166667,-0.277778,0.041667,0.041667,-0.111111,-0.000000,-0.000000,-0.111111,-0.000000,-0.000000,0.222222,0.000000,-0.000000,-0.111111,-0.000000,0.000000,0.222222,0.000000,0.000000,3.555556,0.000000,0.000000,0.222222,-0.000000,0.000000,-0.111111,-0.000000,-0.000000,0.222222,0.000000,0.000000,-0.111111,0.041667,0.041667,-0.111111,0.000000,0.166667,-0.277778,-0.041667,0.041667,-0.111111,0.166667,0.000000,-0.277778,-0.000000,0.000000,-0.444444,-0.166667,0.000000,-0.277778,0.041667,-0.041667,-0.111111,0.000000,-0.166667,-0.277778,-0.041667,-0.041667,-0.111111},{0.000000,0.000000,0.000000,-0.111111,-0.041667,-0.041667,-0.055556,0.041667,0.041667,0.000000,0.000000,0.000000,-0.277778,-0.000000,-0.166667,0.111111,0.000000,0.166667,0.000000,0.000000,0.000000,-0.111111,0.041667,-0.041667,-0.055556,-0.041667,0.041667,0.000000,0.000000,0.000000,-0.277778,-0.166667,0.000000,0.111111,0.166667,-0.000000,0.000000,0.000000,0.000000,-0.444444,-0.000000,0.000000,1.777778,0.000000,0.000000,0.000000,0.000000,0.000000,-0.277778,0.166667,0.000000,0.111111,-0.166667,-0.000000,0.000000,0.000000,0.000000,-0.111111,-0.041667,0.041667,-0.055556,0.041667,-0.041667,0.000000,0.000000,0.000000,-0.277778,-0.000000,0.166667,0.111111,0.000000,-0.166667,0.000000,0.000000,0.000000,-0.111111,0.041667,0.041667,-0.055556,-0.041667,-0.041667},{0.000000,0.000000,0.000000,-0.041667,-0.111111,-0.041667,-0.041667,-0.138889,-0.083333,0.000000,0.000000,0.000000,0.000000,-0.111111,0.000000,0.000000,0.111111,0.000000,0.000000,0.000000,0.000000,0.041667,-0.111111,0.041667,0.041667,-0.138889,0.083333,0.000000,0.000000,0.000000,-0.166667,-0.277778,0.000000,-0.166667,-0.222222,-0.000000,0.000000,0.000000,0.000000,0.000000,0.222222,0.000000,0.000000,1.777778,0.000000,0.000000,0.000000,0.000000,0.166667,-0.277778,-0.000000,0.166667,-0.222222,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.111111,0.041667,-0.041667,-0.138889,0.083333,0.000000,0.000000,0.000000,0.000000,-0.111111,0.000000,0.000000,0.111111,-0.000000,0.000000,0.000000,0.000000,0.041667,-0.111111,-0.041667,0.041667,-0.138889,-0.083333},{0.000000,0.000000,0.000000,-0.041667,-0.041667,-0.111111,-0.041667,-0.083333,-0.138889,0.000000,0.000000,0.000000,-0.166667,0.000000,-0.277778,-0.166667,-0.000000,-0.222222,0.000000,0.000000,0.000000,-0.041667,0.041667,-0.111111,-0.041667,0.083333,-0.138889,0.000000,0.000000,0.000000,-0.000000,-0.000000,-0.111111,-0.000000,0.000000,0.111111,0.000000,0.000000,0.000000,-0.000000,0.000000,0.222222,0.000000,0.000000,1.777778,0.000000,0.000000,0.000000,-0.000000,0.000000,-0.111111,-0.000000,-0.000000,0.111111,0.000000,0.000000,0.000000,0.041667,0.041667,-0.111111,0.041667,0.083333,-0.138889,0.000000,0.000000,0.000000,0.166667,0.000000,-0.277778,0.166667,0.000000,-0.222222,0.000000,0.000000,0.000000,0.041667,-0.041667,-0.111111,0.041667,-0.083333,-0.138889},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.055556,-0.041667,-0.041667,-0.111111,0.041667,0.041667,0.000000,0.000000,0.000000,0.055556,-0.041667,-0.083333,-0.138889,0.041667,0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.111111,-0.166667,0.000000,-0.277778,0.166667,-0.000000,0.000000,0.000000,0.000000,0.888889,-0.166667,0.000000,-0.222222,0.166667,-0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.055556,-0.041667,0.041667,-0.111111,0.041667,-0.041667,0.000000,0.000000,0.000000,0.055556,-0.041667,0.083333,-0.138889,0.041667,-0.083333,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,-0.138889,-0.083333,0.041667,-0.111111,-0.041667,0.000000,0.000000,0.000000,-0.041667,0.055556,0.083333,-0.041667,-0.055556,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.166667,-0.222222,0.000000,0.166667,-0.277778,0.000000,0.000000,0.000000,0.000000,-0.166667,0.888889,0.000000,-0.166667,0.111111,-0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,-0.138889,0.083333,0.041667,-0.111111,0.041667,0.000000,0.000000,0.000000,-0.041667,0.055556,-0.083333,-0.041667,-0.055556,-0.041667,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,-0.083333,-0.138889,0.041667,-0.041667,-0.111111,0.000000,0.000000,0.000000,0.083333,-0.083333,-0.111111,0.083333,-0.041667,-0.138889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.000000,0.111111,0.000000,-0.000000,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.888889,0.000000,-0.000000,0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,0.083333,-0.138889,-0.041667,0.041667,-0.111111,0.000000,0.000000,0.000000,-0.083333,0.083333,-0.111111,-0.083333,0.041667,-0.138889,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.111111,-0.041667,-0.041667,-0.111111,0.000000,0.000000,-0.111111,0.041667,0.041667,-0.138889,-0.041667,-0.083333,0.111111,0.000000,-0.000000,-0.138889,0.041667,0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.277778,-0.166667,0.000000,0.222222,0.000000,-0.000000,-0.277778,0.166667,-0.000000,-0.222222,-0.166667,0.000000,1.777778,0.000000,0.000000,-0.222222,0.166667,-0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.111111,-0.041667,0.041667,-0.111111,0.000000,0.000000,-0.111111,0.041667,-0.041667,-0.138889,-0.041667,0.083333,0.111111,0.000000,0.000000,-0.138889,0.041667,-0.083333},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.111111,-0.041667,0.000000,-0.277778,-0.166667,0.041667,-0.111111,-0.041667,0.041667,-0.055556,0.041667,0.000000,0.111111,0.166667,-0.041667,-0.055556,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.166667,-0.277778,0.000000,0.000000,-0.444444,-0.000000,0.166667,-0.277778,0.000000,0.166667,0.111111,-0.000000,0.000000,1.777778,0.000000,-0.166667,0.111111,-0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.111111,0.041667,0.000000,-0.277778,0.166667,0.041667,-0.111111,0.041667,0.041667,-0.055556,-0.041667,0.000000,0.111111,-0.166667,-0.041667,-0.055556,-0.041667},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.041667,-0.111111,0.000000,-0.166667,-0.277778,0.041667,-0.041667,-0.111111,-0.083333,-0.041667,-0.138889,0.000000,-0.166667,-0.222222,0.083333,-0.041667,-0.138889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.000000,-0.000000,-0.111111,-0.000000,-0.000000,0.222222,0.000000,-0.000000,-0.111111,-0.000000,-0.000000,0.111111,0.000000,0.000000,1.777778,0.000000,-0.000000,0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,0.041667,-0.111111,0.000000,0.166667,-0.277778,-0.041667,0.041667,-0.111111,0.083333,0.041667,-0.138889,-0.000000,0.166667,-0.222222,-0.083333,0.041667,-0.138889},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.111111,-0.041667,-0.041667,-0.055556,0.041667,0.041667,0.000000,0.000000,0.000000,-0.138889,-0.041667,-0.083333,0.055556,0.041667,0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.277778,-0.166667,0.000000,0.111111,0.166667,-0.000000,0.000000,0.000000,0.000000,-0.222222,-0.166667,0.000000,0.888889,0.166667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.111111,-0.041667,0.041667,-0.055556,0.041667,-0.041667,0.000000,0.000000,0.000000,-0.138889,-0.041667,0.083333,0.055556,0.041667,-0.083333},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.111111,-0.041667,-0.041667,-0.138889,-0.083333,0.000000,0.000000,0.000000,0.041667,-0.055556,0.041667,0.041667,0.055556,0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.166667,-0.277778,0.000000,-0.166667,-0.222222,-0.000000,0.000000,0.000000,0.000000,0.166667,0.111111,-0.000000,0.166667,0.888889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.111111,0.041667,-0.041667,-0.138889,0.083333,0.000000,0.000000,0.000000,0.041667,-0.055556,-0.041667,0.041667,0.055556,-0.083333},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.041667,-0.111111,-0.041667,-0.083333,-0.138889,0.000000,0.000000,0.000000,-0.083333,-0.041667,-0.138889,-0.083333,-0.083333,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.000000,-0.000000,-0.111111,-0.000000,0.000000,0.111111,0.000000,0.000000,0.000000,-0.000000,-0.000000,0.111111,0.000000,0.000000,0.888889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,0.041667,-0.111111,0.041667,0.083333,-0.138889,0.000000,0.000000,0.000000,0.083333,0.041667,-0.138889,0.083333,0.083333,-0.111111},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.055556,0.041667,-0.083333,-0.138889,-0.041667,0.083333,0.000000,0.000000,0.000000,-0.055556,0.041667,-0.041667,-0.111111,-0.041667,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.444444,0.083333,-0.083333,-0.111111,-0.083333,0.083333,0.000000,0.000000,0.000000,0.055556,0.083333,-0.041667,-0.138889,-0.083333,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,0.055556,-0.083333,0.041667,-0.055556,-0.041667,0.000000,0.000000,0.000000,-0.041667,-0.138889,0.083333,-0.041667,-0.111111,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.083333,0.444444,-0.083333,0.083333,0.055556,-0.041667,0.000000,0.000000,0.000000,-0.083333,-0.111111,0.083333,-0.083333,-0.138889,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.083333,0.083333,-0.111111,0.083333,0.041667,-0.138889,0.000000,0.000000,0.000000,0.041667,0.083333,-0.138889,0.041667,0.041667,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.083333,-0.083333,0.444444,-0.083333,-0.041667,0.055556,0.000000,0.000000,0.000000,-0.041667,-0.083333,0.055556,-0.041667,-0.041667,-0.055556,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.138889,0.041667,-0.083333,0.111111,0.000000,-0.000000,-0.138889,-0.041667,0.083333,-0.111111,0.041667,-0.041667,-0.111111,-0.000000,0.000000,-0.111111,-0.041667,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.111111,0.083333,-0.083333,0.888889,-0.000000,0.000000,-0.111111,-0.083333,0.083333,-0.138889,0.083333,-0.041667,0.111111,0.000000,-0.000000,-0.138889,-0.083333,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.055556,-0.041667,0.000000,0.111111,-0.166667,0.041667,-0.055556,-0.041667,0.041667,-0.111111,0.041667,0.000000,-0.277778,0.166667,-0.041667,-0.111111,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.083333,0.055556,-0.041667,0.000000,0.888889,-0.166667,0.083333,0.055556,-0.041667,0.083333,-0.138889,0.041667,0.000000,-0.222222,0.166667,-0.083333,-0.138889,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.083333,0.041667,-0.138889,0.000000,0.166667,-0.222222,0.083333,0.041667,-0.138889,-0.041667,0.041667,-0.111111,0.000000,0.166667,-0.277778,0.041667,0.041667,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.083333,-0.041667,0.055556,0.000000,-0.166667,0.888889,-0.083333,-0.041667,0.055556,0.041667,-0.041667,-0.055556,-0.000000,-0.166667,0.111111,-0.041667,-0.041667,-0.055556,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.138889,0.041667,-0.083333,0.055556,-0.041667,0.083333,0.000000,0.000000,0.000000,-0.111111,0.041667,-0.041667,-0.055556,-0.041667,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.111111,0.083333,-0.083333,0.444444,-0.083333,0.083333,0.000000,0.000000,0.000000,-0.138889,0.083333,-0.041667,0.055556,-0.083333,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.055556,-0.041667,-0.041667,0.055556,-0.083333,0.000000,0.000000,0.000000,0.041667,-0.111111,0.041667,0.041667,-0.138889,0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.083333,0.055556,-0.041667,-0.083333,0.444444,-0.083333,0.000000,0.000000,0.000000,0.083333,-0.138889,0.041667,0.083333,-0.111111,0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.083333,0.041667,-0.138889,-0.083333,0.083333,-0.111111,0.000000,0.000000,0.000000,-0.041667,0.041667,-0.111111,-0.041667,0.083333,-0.138889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.083333,-0.041667,0.055556,0.083333,-0.083333,0.444444,0.000000,0.000000,0.000000,0.041667,-0.041667,-0.055556,0.041667,-0.083333,0.055556,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.055556,-0.041667,-0.041667,-0.111111,0.041667,0.041667,0.000000,0.000000,0.000000,0.111111,0.000000,-0.166667,-0.277778,0.000000,0.166667,0.000000,0.000000,0.000000,-0.055556,0.041667,-0.041667,-0.111111,-0.041667,0.041667,0.000000,0.000000,0.000000,0.055556,-0.083333,-0.041667,-0.138889,0.083333,0.041667,0.000000,0.000000,0.000000,0.888889,-0.000000,-0.166667,-0.222222,0.000000,0.166667,0.000000,0.000000,0.000000,0.055556,0.083333,-0.041667,-0.138889,-0.083333,0.041667,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,-0.138889,-0.083333,0.041667,-0.111111,-0.041667,0.000000,0.000000,0.000000,0.000000,0.111111,0.000000,0.000000,-0.111111,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.138889,0.083333,-0.041667,-0.111111,0.041667,0.000000,0.000000,0.000000,0.083333,-0.111111,-0.083333,0.083333,-0.138889,-0.041667,0.000000,0.000000,0.000000,0.000000,0.888889,0.000000,0.000000,0.111111,0.000000,0.000000,0.000000,0.000000,-0.083333,-0.111111,0.083333,-0.083333,-0.138889,0.041667,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,-0.083333,-0.138889,0.041667,-0.041667,-0.111111,0.000000,0.000000,0.000000,0.166667,-0.000000,-0.222222,0.166667,0.000000,-0.277778,0.000000,0.000000,0.000000,0.041667,0.083333,-0.138889,0.041667,0.041667,-0.111111,0.000000,0.000000,0.000000,-0.041667,0.083333,0.055556,-0.041667,0.041667,-0.055556,0.000000,0.000000,0.000000,-0.166667,0.000000,0.888889,-0.166667,0.000000,0.111111,0.000000,0.000000,0.000000,-0.041667,-0.083333,0.055556,-0.041667,-0.041667,-0.055556,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.111111,-0.041667,-0.041667,-0.111111,0.000000,0.000000,-0.111111,0.041667,0.041667,-0.277778,-0.000000,-0.166667,0.222222,0.000000,-0.000000,-0.277778,0.000000,0.166667,-0.111111,0.041667,-0.041667,-0.111111,-0.000000,0.000000,-0.111111,-0.041667,0.041667,-0.138889,-0.083333,-0.041667,0.111111,0.000000,-0.000000,-0.138889,0.083333,0.041667,-0.222222,0.000000,-0.166667,1.777778,-0.000000,0.000000,-0.222222,0.000000,0.166667,-0.138889,0.083333,-0.041667,0.111111,0.000000,-0.000000,-0.138889,-0.083333,0.041667},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.111111,-0.041667,0.000000,-0.277778,-0.166667,0.041667,-0.111111,-0.041667,0.000000,-0.111111,0.000000,0.000000,0.222222,0.000000,0.000000,-0.111111,0.000000,0.041667,-0.111111,0.041667,0.000000,-0.277778,0.166667,-0.041667,-0.111111,0.041667,-0.083333,-0.138889,-0.041667,0.000000,-0.222222,-0.166667,0.083333,-0.138889,-0.041667,0.000000,0.111111,0.000000,0.000000,1.777778,0.000000,0.000000,0.111111,0.000000,0.083333,-0.138889,0.041667,0.000000,-0.222222,0.166667,-0.083333,-0.138889,0.041667},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.041667,-0.111111,0.000000,-0.166667,-0.277778,0.041667,-0.041667,-0.111111,-0.166667,0.000000,-0.277778,0.000000,-0.000000,-0.444444,0.166667,0.000000,-0.277778,-0.041667,0.041667,-0.111111,0.000000,0.166667,-0.277778,0.041667,0.041667,-0.111111,0.041667,0.041667,-0.055556,-0.000000,0.166667,0.111111,-0.041667,0.041667,-0.055556,0.166667,0.000000,0.111111,0.000000,0.000000,1.777778,-0.166667,0.000000,0.111111,0.041667,-0.041667,-0.055556,-0.000000,-0.166667,0.111111,-0.041667,-0.041667,-0.055556},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.111111,-0.041667,-0.041667,-0.055556,0.041667,0.041667,0.000000,0.000000,0.000000,-0.277778,-0.000000,-0.166667,0.111111,0.000000,0.166667,0.000000,0.000000,0.000000,-0.111111,0.041667,-0.041667,-0.055556,-0.041667,0.041667,0.000000,0.000000,0.000000,-0.138889,-0.083333,-0.041667,0.055556,0.083333,0.041667,0.000000,0.000000,0.000000,-0.222222,0.000000,-0.166667,0.888889,0.000000,0.166667,0.000000,0.000000,0.000000,-0.138889,0.083333,-0.041667,0.055556,-0.083333,0.041667},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.111111,-0.041667,-0.041667,-0.138889,-0.083333,0.000000,0.000000,0.000000,0.000000,-0.111111,0.000000,0.000000,0.111111,0.000000,0.000000,0.000000,0.000000,0.041667,-0.111111,0.041667,0.041667,-0.138889,0.083333,0.000000,0.000000,0.000000,-0.083333,-0.138889,-0.041667,-0.083333,-0.111111,-0.083333,0.000000,0.000000,0.000000,0.000000,0.111111,0.000000,0.000000,0.888889,0.000000,0.000000,0.000000,0.000000,0.083333,-0.138889,0.041667,0.083333,-0.111111,0.083333},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.041667,-0.111111,-0.041667,-0.083333,-0.138889,0.000000,0.000000,0.000000,-0.166667,0.000000,-0.277778,-0.166667,-0.000000,-0.222222,0.000000,0.000000,0.000000,-0.041667,0.041667,-0.111111,-0.041667,0.083333,-0.138889,0.000000,0.000000,0.000000,0.041667,0.041667,-0.055556,0.041667,0.083333,0.055556,0.000000,0.000000,0.000000,0.166667,0.000000,0.111111,0.166667,0.000000,0.888889,0.000000,0.000000,0.000000,0.041667,-0.041667,-0.055556,0.041667,-0.083333,0.055556},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.055556,-0.041667,-0.041667,-0.111111,0.041667,0.041667,0.000000,0.000000,0.000000,0.055556,-0.041667,-0.083333,-0.138889,0.041667,0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.055556,-0.083333,-0.041667,-0.138889,0.083333,0.041667,0.000000,0.000000,0.000000,0.444444,-0.083333,-0.083333,-0.111111,0.083333,0.083333,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,-0.138889,-0.083333,0.041667,-0.111111,-0.041667,0.000000,0.000000,0.000000,-0.041667,0.055556,0.083333,-0.041667,-0.055556,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.083333,-0.111111,-0.083333,0.083333,-0.138889,-0.041667,0.000000,0.000000,0.000000,-0.083333,0.444444,0.083333,-0.083333,0.055556,0.041667,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,-0.083333,-0.138889,0.041667,-0.041667,-0.111111,0.000000,0.000000,0.000000,0.083333,-0.083333,-0.111111,0.083333,-0.041667,-0.138889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,0.083333,0.055556,-0.041667,0.041667,-0.055556,0.000000,0.000000,0.000000,-0.083333,0.083333,0.444444,-0.083333,0.041667,0.055556,0.000000,0.000000,0.000000},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.111111,-0.041667,-0.041667,-0.111111,0.000000,0.000000,-0.111111,0.041667,0.041667,-0.138889,-0.041667,-0.083333,0.111111,0.000000,-0.000000,-0.138889,0.041667,0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.138889,-0.083333,-0.041667,0.111111,0.000000,-0.000000,-0.138889,0.083333,0.041667,-0.111111,-0.083333,-0.083333,0.888889,0.000000,0.000000,-0.111111,0.083333,0.083333},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.111111,-0.041667,0.000000,-0.277778,-0.166667,0.041667,-0.111111,-0.041667,0.041667,-0.055556,0.041667,0.000000,0.111111,0.166667,-0.041667,-0.055556,0.041667,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.083333,-0.138889,-0.041667,0.000000,-0.222222,-0.166667,0.083333,-0.138889,-0.041667,0.083333,0.055556,0.041667,0.000000,0.888889,0.166667,-0.083333,0.055556,0.041667},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.041667,-0.111111,0.000000,-0.166667,-0.277778,0.041667,-0.041667,-0.111111,-0.083333,-0.041667,-0.138889,0.000000,-0.166667,-0.222222,0.083333,-0.041667,-0.138889,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,0.041667,-0.055556,-0.000000,0.166667,0.111111,-0.041667,0.041667,-0.055556,0.083333,0.041667,0.055556,0.000000,0.166667,0.888889,-0.083333,0.041667,0.055556},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.111111,-0.041667,-0.041667,-0.055556,0.041667,0.041667,0.000000,0.000000,0.000000,-0.138889,-0.041667,-0.083333,0.055556,0.041667,0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.138889,-0.083333,-0.041667,0.055556,0.083333,0.041667,0.000000,0.000000,0.000000,-0.111111,-0.083333,-0.083333,0.444444,0.083333,0.083333},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.111111,-0.041667,-0.041667,-0.138889,-0.083333,0.000000,0.000000,0.000000,0.041667,-0.055556,0.041667,0.041667,0.055556,0.083333,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.083333,-0.138889,-0.041667,-0.083333,-0.111111,-0.083333,0.000000,0.000000,0.000000,0.083333,0.055556,0.041667,0.083333,0.444444,0.083333},{0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,-0.041667,-0.041667,-0.111111,-0.041667,-0.083333,-0.138889,0.000000,0.000000,0.000000,-0.083333,-0.041667,-0.138889,-0.083333,-0.083333,-0.111111,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.000000,0.041667,0.041667,-0.055556,0.041667,0.083333,0.055556,0.000000,0.000000,0.000000,0.083333,0.041667,0.055556,0.083333,0.083333,0.444444}};
+//double	Klambda[81][81] = {{0.11111111,0.08333333,0.08333333,-0.11111111,0.08333333,0.08333333,0.00000000,0.00000000,0.00000000,0.05555556,-0.08333333,0.04166667,-0.05555556,-0.08333333,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.05555556,0.04166667,-0.08333333,-0.05555556,0.04166667,-0.08333333,0.00000000,0.00000000,0.00000000,0.02777778,-0.04166667,-0.04166667,-0.02777778,-0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.08333333,0.11111111,0.08333333,-0.08333333,0.05555556,0.04166667,0.00000000,0.00000000,0.00000000,0.08333333,-0.11111111,0.08333333,-0.08333333,-0.05555556,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.05555556,-0.08333333,-0.04166667,0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.04166667,-0.05555556,-0.08333333,-0.04166667,-0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.08333333,0.08333333,0.11111111,-0.08333333,0.04166667,0.05555556,0.00000000,0.00000000,0.00000000,0.04166667,-0.08333333,0.05555556,-0.04166667,-0.04166667,0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,0.08333333,-0.11111111,-0.08333333,0.04166667,-0.05555556,0.00000000,0.00000000,0.00000000,0.04166667,-0.08333333,-0.05555556,-0.04166667,-0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{-0.11111111,-0.08333333,-0.08333333,0.22222222,0.00000000,0.00000000,-0.11111111,0.08333333,0.08333333,-0.05555556,0.08333333,-0.04166667,0.11111111,0.00000000,0.00000000,-0.05555556,-0.08333333,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.05555556,-0.04166667,0.08333333,0.11111111,0.00000000,-0.00000000,-0.05555556,0.04166667,-0.08333333,-0.02777778,0.04166667,0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,-0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.08333333,0.05555556,0.04166667,0.00000000,0.22222222,0.16666667,-0.08333333,0.05555556,0.04166667,0.08333333,-0.05555556,0.04166667,0.00000000,-0.22222222,0.16666667,-0.08333333,-0.05555556,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.02777778,-0.04166667,0.00000000,0.11111111,-0.16666667,-0.04166667,0.02777778,-0.04166667,0.04166667,-0.02777778,-0.04166667,-0.00000000,-0.11111111,-0.16666667,-0.04166667,-0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.08333333,0.04166667,0.05555556,0.00000000,0.16666667,0.22222222,-0.08333333,0.04166667,0.05555556,0.04166667,-0.04166667,0.02777778,0.00000000,-0.16666667,0.11111111,-0.04166667,-0.04166667,0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,0.04166667,-0.05555556,0.00000000,0.16666667,-0.22222222,-0.08333333,0.04166667,-0.05555556,0.04166667,-0.04166667,-0.02777778,0.00000000,-0.16666667,-0.11111111,-0.04166667,-0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,-0.11111111,-0.08333333,-0.08333333,0.11111111,-0.08333333,-0.08333333,0.00000000,0.00000000,0.00000000,-0.05555556,0.08333333,-0.04166667,0.05555556,0.08333333,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.05555556,-0.04166667,0.08333333,0.05555556,-0.04166667,0.08333333,0.00000000,0.00000000,0.00000000,-0.02777778,0.04166667,0.04166667,0.02777778,0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.08333333,0.05555556,0.04166667,-0.08333333,0.11111111,0.08333333,0.00000000,0.00000000,0.00000000,0.08333333,-0.05555556,0.04166667,-0.08333333,-0.11111111,0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.02777778,-0.04166667,-0.04166667,0.05555556,-0.08333333,0.00000000,0.00000000,0.00000000,0.04166667,-0.02777778,-0.04166667,-0.04166667,-0.05555556,-0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.08333333,0.04166667,0.05555556,-0.08333333,0.08333333,0.11111111,0.00000000,0.00000000,0.00000000,0.04166667,-0.04166667,0.02777778,-0.04166667,-0.08333333,0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,0.04166667,-0.05555556,-0.08333333,0.08333333,-0.11111111,0.00000000,0.00000000,0.00000000,0.04166667,-0.04166667,-0.02777778,-0.04166667,-0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.05555556,0.08333333,0.04166667,-0.05555556,0.08333333,0.04166667,0.00000000,0.00000000,0.00000000,0.22222222,-0.00000000,0.16666667,-0.22222222,-0.00000000,0.16666667,0.00000000,0.00000000,0.00000000,0.05555556,-0.08333333,0.04166667,-0.05555556,-0.08333333,0.04166667,0.00000000,0.00000000,0.00000000,0.02777778,0.04166667,-0.04166667,-0.02777778,0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,0.11111111,0.00000000,-0.16666667,-0.11111111,0.00000000,-0.16666667,0.00000000,0.00000000,0.00000000,0.02777778,-0.04166667,-0.04166667,-0.02777778,-0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{-0.08333333,-0.11111111,-0.08333333,0.08333333,-0.05555556,-0.04166667,0.00000000,0.00000000,0.00000000,-0.00000000,0.22222222,0.00000000,0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,-0.11111111,0.08333333,-0.08333333,-0.05555556,0.04166667,0.00000000,0.00000000,0.00000000,-0.04166667,-0.05555556,0.08333333,0.04166667,-0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,0.00000000,0.00000000,0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,-0.05555556,-0.08333333,-0.04166667,-0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.04166667,0.08333333,0.05555556,-0.04166667,0.04166667,0.02777778,0.00000000,0.00000000,0.00000000,0.16666667,0.00000000,0.22222222,-0.16666667,0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,0.04166667,-0.08333333,0.05555556,-0.04166667,-0.04166667,0.02777778,0.00000000,0.00000000,0.00000000,0.04166667,0.08333333,-0.05555556,-0.04166667,0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.16666667,-0.00000000,-0.22222222,-0.16666667,0.00000000,-0.11111111,0.00000000,0.00000000,0.00000000,0.04166667,-0.08333333,-0.05555556,-0.04166667,-0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{-0.05555556,-0.08333333,-0.04166667,0.11111111,0.00000000,0.00000000,-0.05555556,0.08333333,0.04166667,-0.22222222,0.00000000,-0.16666667,0.44444444,0.00000000,0.00000000,-0.22222222,-0.00000000,0.16666667,-0.05555556,0.08333333,-0.04166667,0.11111111,0.00000000,0.00000000,-0.05555556,-0.08333333,0.04166667,-0.02777778,-0.04166667,0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,0.04166667,-0.04166667,-0.11111111,0.00000000,0.16666667,0.22222222,0.00000000,-0.00000000,-0.11111111,0.00000000,-0.16666667,-0.02777778,0.04166667,0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,-0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{-0.08333333,-0.05555556,-0.04166667,0.00000000,-0.22222222,-0.16666667,0.08333333,-0.05555556,-0.04166667,-0.00000000,0.11111111,0.00000000,0.00000000,0.44444444,0.00000000,0.00000000,0.11111111,0.00000000,0.08333333,-0.05555556,0.04166667,0.00000000,-0.22222222,0.16666667,-0.08333333,-0.05555556,0.04166667,-0.04166667,-0.02777778,0.04166667,0.00000000,-0.11111111,0.16666667,0.04166667,-0.02777778,0.04166667,-0.00000000,0.05555556,0.00000000,0.00000000,0.22222222,0.00000000,0.00000000,0.05555556,0.00000000,0.04166667,-0.02777778,-0.04166667,-0.00000000,-0.11111111,-0.16666667,-0.04166667,-0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.04166667,0.04166667,0.02777778,0.00000000,0.16666667,0.11111111,-0.04166667,0.04166667,0.02777778,0.16666667,0.00000000,0.11111111,0.00000000,0.00000000,0.44444444,-0.16666667,0.00000000,0.11111111,0.04166667,-0.04166667,0.02777778,0.00000000,-0.16666667,0.11111111,-0.04166667,-0.04166667,0.02777778,0.04166667,0.04166667,-0.02777778,0.00000000,0.16666667,-0.11111111,-0.04166667,0.04166667,-0.02777778,0.16666667,0.00000000,-0.11111111,0.00000000,-0.00000000,-0.44444444,-0.16666667,0.00000000,-0.11111111,0.04166667,-0.04166667,-0.02777778,0.00000000,-0.16666667,-0.11111111,-0.04166667,-0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,-0.05555556,-0.08333333,-0.04166667,0.05555556,-0.08333333,-0.04166667,0.00000000,0.00000000,0.00000000,-0.22222222,0.00000000,-0.16666667,0.22222222,0.00000000,-0.16666667,0.00000000,0.00000000,0.00000000,-0.05555556,0.08333333,-0.04166667,0.05555556,0.08333333,-0.04166667,0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,0.04166667,0.02777778,-0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,-0.11111111,0.00000000,0.16666667,0.11111111,0.00000000,0.16666667,0.00000000,0.00000000,0.00000000,-0.02777778,0.04166667,0.04166667,0.02777778,0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,-0.08333333,-0.05555556,-0.04166667,0.08333333,-0.11111111,-0.08333333,0.00000000,0.00000000,0.00000000,-0.00000000,0.11111111,0.00000000,0.00000000,0.22222222,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,-0.05555556,0.04166667,-0.08333333,-0.11111111,0.08333333,0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,0.04166667,0.04166667,-0.05555556,0.08333333,0.00000000,0.00000000,0.00000000,-0.00000000,0.05555556,0.00000000,0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,-0.02777778,-0.04166667,-0.04166667,-0.05555556,-0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.04166667,0.04166667,0.02777778,-0.04166667,0.08333333,0.05555556,0.00000000,0.00000000,0.00000000,0.16666667,0.00000000,0.11111111,-0.16666667,0.00000000,0.22222222,0.00000000,0.00000000,0.00000000,0.04166667,-0.04166667,0.02777778,-0.04166667,-0.08333333,0.05555556,0.00000000,0.00000000,0.00000000,0.04166667,0.04166667,-0.02777778,-0.04166667,0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,0.16666667,0.00000000,-0.11111111,-0.16666667,-0.00000000,-0.22222222,0.00000000,0.00000000,0.00000000,0.04166667,-0.04166667,-0.02777778,-0.04166667,-0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.05555556,0.08333333,0.04166667,-0.05555556,0.08333333,0.04166667,0.00000000,0.00000000,0.00000000,0.11111111,-0.08333333,0.08333333,-0.11111111,-0.08333333,0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.02777778,0.04166667,-0.04166667,-0.02777778,0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,0.05555556,-0.04166667,-0.08333333,-0.05555556,-0.04166667,-0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.08333333,-0.11111111,-0.08333333,0.08333333,-0.05555556,-0.04166667,0.00000000,0.00000000,0.00000000,-0.08333333,0.11111111,-0.08333333,0.08333333,0.05555556,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.05555556,0.08333333,0.04166667,-0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,-0.04166667,0.05555556,0.08333333,0.04166667,0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.08333333,0.05555556,-0.04166667,0.04166667,0.02777778,0.00000000,0.00000000,0.00000000,0.08333333,-0.08333333,0.11111111,-0.08333333,-0.04166667,0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.08333333,-0.05555556,-0.04166667,0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.08333333,-0.08333333,-0.11111111,-0.08333333,-0.04166667,-0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.05555556,-0.08333333,-0.04166667,0.11111111,0.00000000,0.00000000,-0.05555556,0.08333333,0.04166667,-0.11111111,0.08333333,-0.08333333,0.22222222,0.00000000,0.00000000,-0.11111111,-0.08333333,0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,0.04166667,-0.04166667,-0.05555556,0.04166667,0.08333333,0.11111111,0.00000000,-0.00000000,-0.05555556,-0.04166667,-0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.08333333,-0.05555556,-0.04166667,0.00000000,-0.22222222,-0.16666667,0.08333333,-0.05555556,-0.04166667,-0.08333333,0.05555556,-0.04166667,0.00000000,0.22222222,-0.16666667,0.08333333,0.05555556,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,0.04166667,0.00000000,-0.11111111,0.16666667,0.04166667,-0.02777778,0.04166667,-0.04166667,0.02777778,0.04166667,0.00000000,0.11111111,0.16666667,0.04166667,0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.04166667,0.02777778,0.00000000,0.16666667,0.11111111,-0.04166667,0.04166667,0.02777778,0.08333333,-0.04166667,0.05555556,0.00000000,-0.16666667,0.22222222,-0.08333333,-0.04166667,0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.04166667,-0.02777778,0.00000000,0.16666667,-0.11111111,-0.04166667,0.04166667,-0.02777778,0.08333333,-0.04166667,-0.05555556,0.00000000,-0.16666667,-0.22222222,-0.08333333,-0.04166667,-0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.05555556,-0.08333333,-0.04166667,0.05555556,-0.08333333,-0.04166667,0.00000000,0.00000000,0.00000000,-0.11111111,0.08333333,-0.08333333,0.11111111,0.08333333,-0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,0.04166667,0.02777778,-0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,-0.05555556,0.04166667,0.08333333,0.05555556,0.04166667,0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.08333333,-0.05555556,-0.04166667,0.08333333,-0.11111111,-0.08333333,0.00000000,0.00000000,0.00000000,-0.08333333,0.05555556,-0.04166667,0.08333333,0.11111111,-0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,0.04166667,0.04166667,-0.05555556,0.08333333,0.00000000,0.00000000,0.00000000,-0.04166667,0.02777778,0.04166667,0.04166667,0.05555556,0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.04166667,0.02777778,-0.04166667,0.08333333,0.05555556,0.00000000,0.00000000,0.00000000,0.08333333,-0.04166667,0.05555556,-0.08333333,-0.08333333,0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.04166667,-0.02777778,-0.04166667,0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,0.08333333,-0.04166667,-0.05555556,-0.08333333,-0.08333333,-0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.05555556,0.04166667,0.08333333,-0.05555556,0.04166667,0.08333333,0.00000000,0.00000000,0.00000000,0.02777778,-0.04166667,0.04166667,-0.02777778,-0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.22222222,0.16666667,0.00000000,-0.22222222,0.16666667,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,-0.16666667,0.00000000,-0.11111111,-0.16666667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.05555556,0.04166667,-0.08333333,-0.05555556,0.04166667,-0.08333333,0.00000000,0.00000000,0.00000000,0.02777778,-0.04166667,-0.04166667,-0.02777778,-0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.04166667,0.05555556,0.08333333,-0.04166667,0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,0.04166667,-0.05555556,0.08333333,-0.04166667,-0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.16666667,0.22222222,0.00000000,-0.16666667,0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.16666667,-0.22222222,0.00000000,-0.16666667,-0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.05555556,-0.08333333,-0.04166667,0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.04166667,-0.05555556,-0.08333333,-0.04166667,-0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{-0.08333333,-0.08333333,-0.11111111,0.08333333,-0.04166667,-0.05555556,0.00000000,0.00000000,0.00000000,-0.04166667,0.08333333,-0.05555556,0.04166667,0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.22222222,-0.00000000,0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,-0.00000000,0.11111111,-0.00000000,-0.00000000,0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,0.08333333,-0.11111111,-0.08333333,0.04166667,-0.05555556,0.00000000,0.00000000,0.00000000,0.04166667,-0.08333333,-0.05555556,-0.04166667,-0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{-0.05555556,-0.04166667,-0.08333333,0.11111111,0.00000000,0.00000000,-0.05555556,0.04166667,0.08333333,-0.02777778,0.04166667,-0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,-0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.22222222,-0.16666667,-0.00000000,0.44444444,0.00000000,0.00000000,-0.22222222,0.16666667,0.00000000,-0.11111111,0.16666667,-0.00000000,0.22222222,0.00000000,-0.00000000,-0.11111111,-0.16666667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.05555556,-0.04166667,0.08333333,0.11111111,0.00000000,-0.00000000,-0.05555556,0.04166667,-0.08333333,-0.02777778,0.04166667,0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,-0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.04166667,0.02777778,0.04166667,0.00000000,0.11111111,0.16666667,-0.04166667,0.02777778,0.04166667,0.04166667,-0.02777778,0.04166667,-0.00000000,-0.11111111,0.16666667,-0.04166667,-0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.16666667,0.11111111,0.00000000,-0.00000000,0.44444444,0.00000000,-0.16666667,0.11111111,0.00000000,0.16666667,-0.11111111,0.00000000,0.00000000,-0.44444444,-0.00000000,-0.16666667,-0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.02777778,-0.04166667,0.00000000,0.11111111,-0.16666667,-0.04166667,0.02777778,-0.04166667,0.04166667,-0.02777778,-0.04166667,-0.00000000,-0.11111111,-0.16666667,-0.04166667,-0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{-0.08333333,-0.04166667,-0.05555556,-0.00000000,-0.16666667,-0.22222222,0.08333333,-0.04166667,-0.05555556,-0.04166667,0.04166667,-0.02777778,0.00000000,0.16666667,-0.11111111,0.04166667,0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,0.00000000,0.00000000,0.44444444,-0.00000000,0.00000000,0.11111111,0.00000000,-0.00000000,0.05555556,-0.00000000,-0.00000000,0.22222222,-0.00000000,-0.00000000,0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,0.04166667,-0.05555556,0.00000000,0.16666667,-0.22222222,-0.08333333,0.04166667,-0.05555556,0.04166667,-0.04166667,-0.02777778,0.00000000,-0.16666667,-0.11111111,-0.04166667,-0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,-0.05555556,-0.04166667,-0.08333333,0.05555556,-0.04166667,-0.08333333,0.00000000,0.00000000,0.00000000,-0.02777778,0.04166667,-0.04166667,0.02777778,0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.22222222,-0.16666667,-0.00000000,0.22222222,-0.16666667,0.00000000,0.00000000,0.00000000,0.00000000,-0.11111111,0.16666667,-0.00000000,0.11111111,0.16666667,-0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.05555556,-0.04166667,0.08333333,0.05555556,-0.04166667,0.08333333,0.00000000,0.00000000,0.00000000,-0.02777778,0.04166667,0.04166667,0.02777778,0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.04166667,0.02777778,0.04166667,-0.04166667,0.05555556,0.08333333,0.00000000,0.00000000,0.00000000,0.04166667,-0.02777778,0.04166667,-0.04166667,-0.05555556,0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.16666667,0.11111111,0.00000000,-0.16666667,0.22222222,0.00000000,0.00000000,0.00000000,0.00000000,0.16666667,-0.11111111,0.00000000,-0.16666667,-0.22222222,-0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.02777778,-0.04166667,-0.04166667,0.05555556,-0.08333333,0.00000000,0.00000000,0.00000000,0.04166667,-0.02777778,-0.04166667,-0.04166667,-0.05555556,-0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,-0.08333333,-0.04166667,-0.05555556,0.08333333,-0.08333333,-0.11111111,0.00000000,0.00000000,0.00000000,-0.04166667,0.04166667,-0.02777778,0.04166667,0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,0.00000000,0.00000000,0.22222222,0.00000000,0.00000000,0.00000000,0.00000000,-0.00000000,0.05555556,-0.00000000,0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,0.04166667,-0.05555556,-0.08333333,0.08333333,-0.11111111,0.00000000,0.00000000,0.00000000,0.04166667,-0.04166667,-0.02777778,-0.04166667,-0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.02777778,0.04166667,0.04166667,-0.02777778,0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.11111111,0.00000000,0.16666667,-0.11111111,0.00000000,0.16666667,0.00000000,0.00000000,0.00000000,0.02777778,-0.04166667,0.04166667,-0.02777778,-0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.11111111,0.16666667,0.00000000,-0.11111111,0.16666667,0.00000000,0.00000000,0.00000000,0.00000000,0.44444444,-0.00000000,0.00000000,-0.44444444,-0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,-0.16666667,0.00000000,-0.11111111,-0.16666667,0.00000000,0.00000000,0.00000000,0.00000000,0.02777778,0.04166667,-0.04166667,-0.02777778,0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,0.11111111,0.00000000,-0.16666667,-0.11111111,0.00000000,-0.16666667,0.00000000,0.00000000,0.00000000,0.02777778,-0.04166667,-0.04166667,-0.02777778,-0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000},{-0.04166667,-0.05555556,-0.08333333,0.04166667,-0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,-0.00000000,0.00000000,0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,-0.05555556,0.08333333,-0.04166667,-0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,-0.16666667,-0.22222222,-0.00000000,0.16666667,-0.11111111,-0.00000000,0.00000000,0.00000000,0.00000000,-0.00000000,0.44444444,0.00000000,0.00000000,0.22222222,0.00000000,0.00000000,0.00000000,0.00000000,0.16666667,-0.22222222,0.00000000,-0.16666667,-0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.05555556,0.08333333,0.04166667,-0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,0.00000000,0.00000000,0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,-0.05555556,-0.08333333,-0.04166667,-0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000},{-0.04166667,-0.08333333,-0.05555556,0.04166667,-0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,-0.16666667,0.00000000,-0.22222222,0.16666667,0.00000000,-0.11111111,0.00000000,0.00000000,0.00000000,-0.04166667,0.08333333,-0.05555556,0.04166667,0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,-0.00000000,0.00000000,0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.44444444,-0.00000000,0.00000000,0.22222222,0.00000000,0.00000000,0.00000000,0.00000000,-0.00000000,0.11111111,-0.00000000,-0.00000000,0.05555556,0.00000000,0.00000000,0.00000000,0.04166667,0.08333333,-0.05555556,-0.04166667,0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.16666667,-0.00000000,-0.22222222,-0.16666667,0.00000000,-0.11111111,0.00000000,0.00000000,0.00000000,0.04166667,-0.08333333,-0.05555556,-0.04166667,-0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000},{-0.02777778,-0.04166667,-0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,0.04166667,0.04166667,-0.11111111,0.00000000,-0.16666667,0.22222222,0.00000000,0.00000000,-0.11111111,0.00000000,0.16666667,-0.02777778,0.04166667,-0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,-0.04166667,0.04166667,-0.11111111,-0.16666667,-0.00000000,0.22222222,0.00000000,-0.00000000,-0.11111111,0.16666667,0.00000000,-0.44444444,0.00000000,-0.00000000,0.88888889,0.00000000,0.00000000,-0.44444444,-0.00000000,0.00000000,-0.11111111,0.16666667,-0.00000000,0.22222222,0.00000000,-0.00000000,-0.11111111,-0.16666667,0.00000000,-0.02777778,-0.04166667,0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,0.04166667,-0.04166667,-0.11111111,0.00000000,0.16666667,0.22222222,0.00000000,-0.00000000,-0.11111111,0.00000000,-0.16666667,-0.02777778,0.04166667,0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,-0.04166667,-0.04166667},{-0.04166667,-0.02777778,-0.04166667,0.00000000,-0.11111111,-0.16666667,0.04166667,-0.02777778,-0.04166667,-0.00000000,0.05555556,0.00000000,0.00000000,0.22222222,-0.00000000,0.00000000,0.05555556,0.00000000,0.04166667,-0.02777778,0.04166667,-0.00000000,-0.11111111,0.16666667,-0.04166667,-0.02777778,0.04166667,-0.16666667,-0.11111111,-0.00000000,0.00000000,-0.44444444,-0.00000000,0.16666667,-0.11111111,-0.00000000,-0.00000000,0.22222222,0.00000000,-0.00000000,0.88888889,0.00000000,0.00000000,0.22222222,0.00000000,0.16666667,-0.11111111,0.00000000,0.00000000,-0.44444444,-0.00000000,-0.16666667,-0.11111111,0.00000000,-0.04166667,-0.02777778,0.04166667,0.00000000,-0.11111111,0.16666667,0.04166667,-0.02777778,0.04166667,-0.00000000,0.05555556,0.00000000,0.00000000,0.22222222,0.00000000,0.00000000,0.05555556,0.00000000,0.04166667,-0.02777778,-0.04166667,-0.00000000,-0.11111111,-0.16666667,-0.04166667,-0.02777778,-0.04166667},{-0.04166667,-0.04166667,-0.02777778,0.00000000,-0.16666667,-0.11111111,0.04166667,-0.04166667,-0.02777778,-0.16666667,0.00000000,-0.11111111,-0.00000000,0.00000000,-0.44444444,0.16666667,0.00000000,-0.11111111,-0.04166667,0.04166667,-0.02777778,0.00000000,0.16666667,-0.11111111,0.04166667,0.04166667,-0.02777778,0.00000000,0.00000000,0.05555556,-0.00000000,-0.00000000,0.22222222,-0.00000000,0.00000000,0.05555556,0.00000000,0.00000000,0.22222222,0.00000000,0.00000000,0.88888889,-0.00000000,0.00000000,0.22222222,0.00000000,-0.00000000,0.05555556,-0.00000000,-0.00000000,0.22222222,-0.00000000,-0.00000000,0.05555556,0.04166667,0.04166667,-0.02777778,0.00000000,0.16666667,-0.11111111,-0.04166667,0.04166667,-0.02777778,0.16666667,0.00000000,-0.11111111,0.00000000,-0.00000000,-0.44444444,-0.16666667,0.00000000,-0.11111111,0.04166667,-0.04166667,-0.02777778,0.00000000,-0.16666667,-0.11111111,-0.04166667,-0.04166667,-0.02777778},{0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,-0.04166667,0.02777778,-0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,-0.11111111,0.00000000,-0.16666667,0.11111111,0.00000000,-0.16666667,0.00000000,0.00000000,0.00000000,-0.02777778,0.04166667,-0.04166667,0.02777778,0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,-0.11111111,-0.16666667,-0.00000000,0.11111111,-0.16666667,-0.00000000,0.00000000,0.00000000,0.00000000,-0.44444444,0.00000000,-0.00000000,0.44444444,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.11111111,0.16666667,-0.00000000,0.11111111,0.16666667,-0.00000000,0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,0.04166667,0.02777778,-0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,-0.11111111,0.00000000,0.16666667,0.11111111,0.00000000,0.16666667,0.00000000,0.00000000,0.00000000,-0.02777778,0.04166667,0.04166667,0.02777778,0.04166667,0.04166667},{0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,-0.04166667,0.04166667,-0.05555556,-0.08333333,0.00000000,0.00000000,0.00000000,-0.00000000,0.05555556,0.00000000,0.00000000,0.11111111,-0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,-0.02777778,0.04166667,-0.04166667,-0.05555556,0.08333333,0.00000000,0.00000000,0.00000000,-0.16666667,-0.11111111,-0.00000000,0.16666667,-0.22222222,0.00000000,0.00000000,0.00000000,0.00000000,-0.00000000,0.22222222,0.00000000,0.00000000,0.44444444,0.00000000,0.00000000,0.00000000,0.00000000,0.16666667,-0.11111111,0.00000000,-0.16666667,-0.22222222,-0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,0.04166667,0.04166667,-0.05555556,0.08333333,0.00000000,0.00000000,0.00000000,-0.00000000,0.05555556,0.00000000,0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,-0.02777778,-0.04166667,-0.04166667,-0.05555556,-0.08333333},{0.00000000,0.00000000,0.00000000,-0.04166667,-0.04166667,-0.02777778,0.04166667,-0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,-0.16666667,0.00000000,-0.11111111,0.16666667,0.00000000,-0.22222222,0.00000000,0.00000000,0.00000000,-0.04166667,0.04166667,-0.02777778,0.04166667,0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.05555556,-0.00000000,-0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.22222222,0.00000000,0.00000000,0.44444444,0.00000000,0.00000000,0.00000000,0.00000000,-0.00000000,0.05555556,-0.00000000,0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,0.04166667,0.04166667,-0.02777778,-0.04166667,0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,0.16666667,0.00000000,-0.11111111,-0.16666667,-0.00000000,-0.22222222,0.00000000,0.00000000,0.00000000,0.04166667,-0.04166667,-0.02777778,-0.04166667,-0.08333333,-0.05555556},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.02777778,0.04166667,0.04166667,-0.02777778,0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.05555556,-0.04166667,0.08333333,-0.05555556,-0.04166667,0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,0.16666667,0.00000000,-0.11111111,0.16666667,0.00000000,0.00000000,0.00000000,0.00000000,0.22222222,-0.16666667,0.00000000,-0.22222222,-0.16666667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.02777778,0.04166667,-0.04166667,-0.02777778,0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,0.05555556,-0.04166667,-0.08333333,-0.05555556,-0.04166667,-0.08333333,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.05555556,-0.08333333,0.04166667,-0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,-0.04166667,0.05555556,-0.08333333,0.04166667,0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.16666667,-0.22222222,-0.00000000,0.16666667,-0.11111111,-0.00000000,0.00000000,0.00000000,0.00000000,-0.16666667,0.22222222,0.00000000,0.16666667,0.11111111,-0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.05555556,0.08333333,0.04166667,-0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,-0.04166667,0.05555556,0.08333333,0.04166667,0.02777778,0.04166667,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.08333333,-0.05555556,0.04166667,-0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,-0.08333333,0.08333333,-0.11111111,0.08333333,0.04166667,-0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,-0.00000000,0.00000000,0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.22222222,-0.00000000,-0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.08333333,-0.05555556,-0.04166667,0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.08333333,-0.08333333,-0.11111111,-0.08333333,-0.04166667,-0.05555556,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,-0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,0.04166667,0.04166667,-0.05555556,0.04166667,-0.08333333,0.11111111,0.00000000,0.00000000,-0.05555556,-0.04166667,0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.11111111,-0.16666667,-0.00000000,0.22222222,0.00000000,-0.00000000,-0.11111111,0.16666667,0.00000000,-0.22222222,0.16666667,-0.00000000,0.44444444,0.00000000,0.00000000,-0.22222222,-0.16666667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,0.04166667,-0.04166667,-0.05555556,0.04166667,0.08333333,0.11111111,0.00000000,-0.00000000,-0.05555556,-0.04166667,-0.08333333},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,-0.04166667,0.00000000,-0.11111111,-0.16666667,0.04166667,-0.02777778,-0.04166667,-0.04166667,0.02777778,-0.04166667,0.00000000,0.11111111,-0.16666667,0.04166667,0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.16666667,-0.11111111,-0.00000000,0.00000000,-0.44444444,-0.00000000,0.16666667,-0.11111111,-0.00000000,-0.16666667,0.11111111,-0.00000000,0.00000000,0.44444444,0.00000000,0.16666667,0.11111111,-0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,0.04166667,0.00000000,-0.11111111,0.16666667,0.04166667,-0.02777778,0.04166667,-0.04166667,0.02777778,0.04166667,0.00000000,0.11111111,0.16666667,0.04166667,0.02777778,0.04166667},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.04166667,-0.02777778,0.00000000,-0.16666667,-0.11111111,0.04166667,-0.04166667,-0.02777778,-0.08333333,0.04166667,-0.05555556,-0.00000000,0.16666667,-0.22222222,0.08333333,0.04166667,-0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.05555556,-0.00000000,-0.00000000,0.22222222,-0.00000000,0.00000000,0.05555556,0.00000000,-0.00000000,0.11111111,0.00000000,0.00000000,0.44444444,-0.00000000,-0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.04166667,-0.02777778,0.00000000,0.16666667,-0.11111111,-0.04166667,0.04166667,-0.02777778,0.08333333,-0.04166667,-0.05555556,0.00000000,-0.16666667,-0.22222222,-0.08333333,-0.04166667,-0.05555556},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,-0.04166667,0.02777778,-0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,-0.05555556,0.04166667,-0.08333333,0.05555556,0.04166667,-0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.11111111,-0.16666667,-0.00000000,0.11111111,-0.16666667,-0.00000000,0.00000000,0.00000000,0.00000000,-0.22222222,0.16666667,-0.00000000,0.22222222,0.16666667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,0.04166667,0.02777778,-0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,-0.05555556,0.04166667,0.08333333,0.05555556,0.04166667,0.08333333},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,-0.04166667,0.04166667,-0.05555556,-0.08333333,0.00000000,0.00000000,0.00000000,-0.04166667,0.02777778,-0.04166667,0.04166667,0.05555556,-0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.16666667,-0.11111111,-0.00000000,0.16666667,-0.22222222,0.00000000,0.00000000,0.00000000,0.00000000,-0.16666667,0.11111111,-0.00000000,0.16666667,0.22222222,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,0.04166667,0.04166667,-0.05555556,0.08333333,0.00000000,0.00000000,0.00000000,-0.04166667,0.02777778,0.04166667,0.04166667,0.05555556,0.08333333},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.04166667,-0.02777778,0.04166667,-0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,-0.08333333,0.04166667,-0.05555556,0.08333333,0.08333333,-0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.05555556,-0.00000000,-0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,-0.00000000,0.11111111,0.00000000,0.00000000,0.22222222,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.04166667,-0.02777778,-0.04166667,0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,0.08333333,-0.04166667,-0.05555556,-0.08333333,-0.08333333,-0.11111111},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.05555556,0.04166667,0.08333333,-0.05555556,0.04166667,0.08333333,0.00000000,0.00000000,0.00000000,0.02777778,-0.04166667,0.04166667,-0.02777778,-0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,0.08333333,-0.08333333,-0.11111111,0.08333333,-0.08333333,0.00000000,0.00000000,0.00000000,0.05555556,-0.08333333,-0.04166667,-0.05555556,-0.08333333,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.05555556,0.08333333,-0.04166667,0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,0.04166667,-0.05555556,0.08333333,-0.04166667,-0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,0.11111111,-0.08333333,-0.08333333,0.05555556,-0.04166667,0.00000000,0.00000000,0.00000000,0.08333333,-0.11111111,-0.08333333,-0.08333333,-0.05555556,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.08333333,-0.08333333,-0.11111111,0.08333333,-0.04166667,-0.05555556,0.00000000,0.00000000,0.00000000,-0.04166667,0.08333333,-0.05555556,0.04166667,0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.08333333,-0.08333333,0.11111111,0.08333333,-0.04166667,0.05555556,0.00000000,0.00000000,0.00000000,-0.04166667,0.08333333,0.05555556,0.04166667,0.04166667,0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.05555556,-0.04166667,-0.08333333,0.11111111,0.00000000,0.00000000,-0.05555556,0.04166667,0.08333333,-0.02777778,0.04166667,-0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,-0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.11111111,-0.08333333,0.08333333,0.22222222,0.00000000,0.00000000,-0.11111111,0.08333333,-0.08333333,-0.05555556,0.08333333,0.04166667,0.11111111,0.00000000,-0.00000000,-0.05555556,-0.08333333,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.02777778,0.04166667,0.00000000,0.11111111,0.16666667,-0.04166667,0.02777778,0.04166667,0.04166667,-0.02777778,0.04166667,-0.00000000,-0.11111111,0.16666667,-0.04166667,-0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,0.05555556,-0.04166667,-0.00000000,0.22222222,-0.16666667,-0.08333333,0.05555556,-0.04166667,0.08333333,-0.05555556,-0.04166667,0.00000000,-0.22222222,-0.16666667,-0.08333333,-0.05555556,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.08333333,-0.04166667,-0.05555556,-0.00000000,-0.16666667,-0.22222222,0.08333333,-0.04166667,-0.05555556,-0.04166667,0.04166667,-0.02777778,0.00000000,0.16666667,-0.11111111,0.04166667,0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.08333333,-0.04166667,0.05555556,0.00000000,-0.16666667,0.22222222,0.08333333,-0.04166667,0.05555556,-0.04166667,0.04166667,0.02777778,-0.00000000,0.16666667,0.11111111,0.04166667,0.04166667,0.02777778,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.05555556,-0.04166667,-0.08333333,0.05555556,-0.04166667,-0.08333333,0.00000000,0.00000000,0.00000000,-0.02777778,0.04166667,-0.04166667,0.02777778,0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.11111111,-0.08333333,0.08333333,0.11111111,-0.08333333,0.08333333,0.00000000,0.00000000,0.00000000,-0.05555556,0.08333333,0.04166667,0.05555556,0.08333333,0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,0.02777778,0.04166667,-0.04166667,0.05555556,0.08333333,0.00000000,0.00000000,0.00000000,0.04166667,-0.02777778,0.04166667,-0.04166667,-0.05555556,0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,0.05555556,-0.04166667,-0.08333333,0.11111111,-0.08333333,0.00000000,0.00000000,0.00000000,0.08333333,-0.05555556,-0.04166667,-0.08333333,-0.11111111,-0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.08333333,-0.04166667,-0.05555556,0.08333333,-0.08333333,-0.11111111,0.00000000,0.00000000,0.00000000,-0.04166667,0.04166667,-0.02777778,0.04166667,0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.08333333,-0.04166667,0.05555556,0.08333333,-0.08333333,0.11111111,0.00000000,0.00000000,0.00000000,-0.04166667,0.04166667,0.02777778,0.04166667,0.08333333,0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.02777778,0.04166667,0.04166667,-0.02777778,0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.11111111,0.00000000,0.16666667,-0.11111111,0.00000000,0.16666667,0.00000000,0.00000000,0.00000000,0.02777778,-0.04166667,0.04166667,-0.02777778,-0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.05555556,0.08333333,-0.04166667,-0.05555556,0.08333333,-0.04166667,0.00000000,0.00000000,0.00000000,0.22222222,0.00000000,-0.16666667,-0.22222222,0.00000000,-0.16666667,0.00000000,0.00000000,0.00000000,0.05555556,-0.08333333,-0.04166667,-0.05555556,-0.08333333,-0.04166667,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.05555556,-0.08333333,0.04166667,-0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,-0.00000000,0.00000000,0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,-0.05555556,0.08333333,-0.04166667,-0.02777778,0.04166667,0.00000000,0.00000000,0.00000000,-0.08333333,-0.11111111,0.08333333,0.08333333,-0.05555556,0.04166667,0.00000000,0.00000000,0.00000000,-0.00000000,0.22222222,0.00000000,0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,-0.11111111,-0.08333333,-0.08333333,-0.05555556,-0.04166667,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.08333333,-0.05555556,0.04166667,-0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,-0.16666667,0.00000000,-0.22222222,0.16666667,0.00000000,-0.11111111,0.00000000,0.00000000,0.00000000,-0.04166667,0.08333333,-0.05555556,0.04166667,0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,-0.04166667,-0.08333333,0.05555556,0.04166667,-0.04166667,0.02777778,0.00000000,0.00000000,0.00000000,-0.16666667,0.00000000,0.22222222,0.16666667,0.00000000,0.11111111,0.00000000,0.00000000,0.00000000,-0.04166667,0.08333333,0.05555556,0.04166667,0.04166667,0.02777778,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,-0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,0.04166667,0.04166667,-0.11111111,0.00000000,-0.16666667,0.22222222,0.00000000,0.00000000,-0.11111111,0.00000000,0.16666667,-0.02777778,0.04166667,-0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,-0.04166667,0.04166667,-0.05555556,-0.08333333,0.04166667,0.11111111,0.00000000,-0.00000000,-0.05555556,0.08333333,-0.04166667,-0.22222222,0.00000000,0.16666667,0.44444444,0.00000000,0.00000000,-0.22222222,0.00000000,-0.16666667,-0.05555556,0.08333333,0.04166667,0.11111111,0.00000000,-0.00000000,-0.05555556,-0.08333333,-0.04166667},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,-0.04166667,0.00000000,-0.11111111,-0.16666667,0.04166667,-0.02777778,-0.04166667,-0.00000000,0.05555556,0.00000000,0.00000000,0.22222222,-0.00000000,0.00000000,0.05555556,0.00000000,0.04166667,-0.02777778,0.04166667,-0.00000000,-0.11111111,0.16666667,-0.04166667,-0.02777778,0.04166667,-0.08333333,-0.05555556,0.04166667,0.00000000,-0.22222222,0.16666667,0.08333333,-0.05555556,0.04166667,0.00000000,0.11111111,0.00000000,-0.00000000,0.44444444,0.00000000,0.00000000,0.11111111,0.00000000,0.08333333,-0.05555556,-0.04166667,0.00000000,-0.22222222,-0.16666667,-0.08333333,-0.05555556,-0.04166667},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.04166667,-0.02777778,0.00000000,-0.16666667,-0.11111111,0.04166667,-0.04166667,-0.02777778,-0.16666667,0.00000000,-0.11111111,-0.00000000,0.00000000,-0.44444444,0.16666667,0.00000000,-0.11111111,-0.04166667,0.04166667,-0.02777778,0.00000000,0.16666667,-0.11111111,0.04166667,0.04166667,-0.02777778,-0.04166667,-0.04166667,0.02777778,-0.00000000,-0.16666667,0.11111111,0.04166667,-0.04166667,0.02777778,-0.16666667,0.00000000,0.11111111,0.00000000,0.00000000,0.44444444,0.16666667,0.00000000,0.11111111,-0.04166667,0.04166667,0.02777778,-0.00000000,0.16666667,0.11111111,0.04166667,0.04166667,0.02777778},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,-0.04166667,0.02777778,-0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,-0.11111111,0.00000000,-0.16666667,0.11111111,0.00000000,-0.16666667,0.00000000,0.00000000,0.00000000,-0.02777778,0.04166667,-0.04166667,0.02777778,0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,-0.05555556,-0.08333333,0.04166667,0.05555556,-0.08333333,0.04166667,0.00000000,0.00000000,0.00000000,-0.22222222,0.00000000,0.16666667,0.22222222,0.00000000,0.16666667,0.00000000,0.00000000,0.00000000,-0.05555556,0.08333333,0.04166667,0.05555556,0.08333333,0.04166667},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,-0.04166667,0.04166667,-0.05555556,-0.08333333,0.00000000,0.00000000,0.00000000,-0.00000000,0.05555556,0.00000000,0.00000000,0.11111111,-0.00000000,0.00000000,0.00000000,0.00000000,0.04166667,-0.02777778,0.04166667,-0.04166667,-0.05555556,0.08333333,0.00000000,0.00000000,0.00000000,-0.08333333,-0.05555556,0.04166667,0.08333333,-0.11111111,0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.11111111,0.00000000,0.00000000,0.22222222,0.00000000,0.00000000,0.00000000,0.00000000,0.08333333,-0.05555556,-0.04166667,-0.08333333,-0.11111111,-0.08333333},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.04166667,-0.02777778,0.04166667,-0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,-0.16666667,0.00000000,-0.11111111,0.16666667,0.00000000,-0.22222222,0.00000000,0.00000000,0.00000000,-0.04166667,0.04166667,-0.02777778,0.04166667,0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,-0.04166667,-0.04166667,0.02777778,0.04166667,-0.08333333,0.05555556,0.00000000,0.00000000,0.00000000,-0.16666667,0.00000000,0.11111111,0.16666667,0.00000000,0.22222222,0.00000000,0.00000000,0.00000000,-0.04166667,0.04166667,0.02777778,0.04166667,0.08333333,0.05555556},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.02777778,0.04166667,0.04166667,-0.02777778,0.04166667,0.04166667,0.00000000,0.00000000,0.00000000,0.05555556,-0.04166667,0.08333333,-0.05555556,-0.04166667,0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.05555556,0.08333333,-0.04166667,-0.05555556,0.08333333,-0.04166667,0.00000000,0.00000000,0.00000000,0.11111111,-0.08333333,-0.08333333,-0.11111111,-0.08333333,-0.08333333,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.05555556,-0.08333333,0.04166667,-0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,-0.04166667,0.05555556,-0.08333333,0.04166667,0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.08333333,-0.11111111,0.08333333,0.08333333,-0.05555556,0.04166667,0.00000000,0.00000000,0.00000000,-0.08333333,0.11111111,0.08333333,0.08333333,0.05555556,0.04166667,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.08333333,-0.05555556,0.04166667,-0.04166667,-0.02777778,0.00000000,0.00000000,0.00000000,-0.08333333,0.08333333,-0.11111111,0.08333333,0.04166667,-0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.08333333,0.05555556,0.04166667,-0.04166667,0.02777778,0.00000000,0.00000000,0.00000000,-0.08333333,0.08333333,0.11111111,0.08333333,0.04166667,0.05555556,0.00000000,0.00000000,0.00000000},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,-0.04166667,0.05555556,0.00000000,0.00000000,-0.02777778,0.04166667,0.04166667,-0.05555556,0.04166667,-0.08333333,0.11111111,0.00000000,0.00000000,-0.05555556,-0.04166667,0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.05555556,-0.08333333,0.04166667,0.11111111,0.00000000,-0.00000000,-0.05555556,0.08333333,-0.04166667,-0.11111111,0.08333333,0.08333333,0.22222222,0.00000000,0.00000000,-0.11111111,-0.08333333,-0.08333333},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,-0.04166667,0.00000000,-0.11111111,-0.16666667,0.04166667,-0.02777778,-0.04166667,-0.04166667,0.02777778,-0.04166667,0.00000000,0.11111111,-0.16666667,0.04166667,0.02777778,-0.04166667,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.08333333,-0.05555556,0.04166667,0.00000000,-0.22222222,0.16666667,0.08333333,-0.05555556,0.04166667,-0.08333333,0.05555556,0.04166667,0.00000000,0.22222222,0.16666667,0.08333333,0.05555556,0.04166667},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.04166667,-0.02777778,0.00000000,-0.16666667,-0.11111111,0.04166667,-0.04166667,-0.02777778,-0.08333333,0.04166667,-0.05555556,-0.00000000,0.16666667,-0.22222222,0.08333333,0.04166667,-0.05555556,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.04166667,0.02777778,-0.00000000,-0.16666667,0.11111111,0.04166667,-0.04166667,0.02777778,-0.08333333,0.04166667,0.05555556,0.00000000,0.16666667,0.22222222,0.08333333,0.04166667,0.05555556},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.02777778,-0.04166667,-0.04166667,0.02777778,-0.04166667,-0.04166667,0.00000000,0.00000000,0.00000000,-0.05555556,0.04166667,-0.08333333,0.05555556,0.04166667,-0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.05555556,-0.08333333,0.04166667,0.05555556,-0.08333333,0.04166667,0.00000000,0.00000000,0.00000000,-0.11111111,0.08333333,0.08333333,0.11111111,0.08333333,0.08333333},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.02777778,-0.04166667,0.04166667,-0.05555556,-0.08333333,0.00000000,0.00000000,0.00000000,-0.04166667,0.02777778,-0.04166667,0.04166667,0.05555556,-0.08333333,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.08333333,-0.05555556,0.04166667,0.08333333,-0.11111111,0.08333333,0.00000000,0.00000000,0.00000000,-0.08333333,0.05555556,0.04166667,0.08333333,0.11111111,0.08333333},{0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.04166667,-0.02777778,0.04166667,-0.08333333,-0.05555556,0.00000000,0.00000000,0.00000000,-0.08333333,0.04166667,-0.05555556,0.08333333,0.08333333,-0.11111111,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,0.00000000,-0.04166667,-0.04166667,0.02777778,0.04166667,-0.08333333,0.05555556,0.00000000,0.00000000,0.00000000,-0.08333333,0.04166667,0.05555556,0.08333333,0.08333333,0.11111111}};
+
+double Kmu[81][81] = {{0.331852,0.066667,0.066667,-0.106667,-0.088889,-0.088889,-0.017778,0.022222,0.022222,0.029630,0.088889,0.033333,-0.121481,-0.118519,-0.044444,0.025185,0.029630,0.011111,-0.050370,-0.022222,-0.016667,0.042963,0.029630,0.022222,-0.003704,-0.007407,-0.005556,0.029630,0.033333,0.088889,-0.121481,-0.044444,-0.118519,0.025185,0.011111,0.029630,-0.053333,0.044444,0.044444,-0.094815,-0.059259,-0.059259,0.029630,0.014815,0.014815,0.008889,-0.011111,-0.022222,0.038519,0.014815,0.029630,-0.010370,-0.003704,-0.007407,-0.050370,-0.016667,-0.022222,0.042963,0.022222,0.029630,-0.003704,-0.005556,-0.007407,0.008889,-0.022222,-0.011111,0.038519,0.029630,0.014815,-0.010370,-0.007407,-0.003704,0.004444,0.005556,0.005556,-0.014815,-0.007407,-0.007407,0.002963,0.001852,0.001852},{0.066667,0.331852,0.066667,0.088889,0.029630,0.033333,-0.022222,-0.050370,-0.016667,-0.088889,-0.106667,-0.088889,-0.118519,-0.121481,-0.044444,0.029630,0.042963,0.022222,0.022222,-0.017778,0.022222,0.029630,0.025185,0.011111,-0.007407,-0.003704,-0.005556,0.033333,0.029630,0.088889,0.044444,-0.053333,0.044444,-0.011111,0.008889,-0.022222,-0.044444,-0.121481,-0.118519,-0.059259,-0.094815,-0.059259,0.014815,0.038519,0.029630,0.011111,0.025185,0.029630,0.014815,0.029630,0.014815,-0.003704,-0.010370,-0.007407,-0.016667,-0.050370,-0.022222,-0.022222,0.008889,-0.011111,0.005556,0.004444,0.005556,0.022222,0.042963,0.029630,0.029630,0.038519,0.014815,-0.007407,-0.014815,-0.007407,-0.005556,-0.003704,-0.007407,-0.007407,-0.010370,-0.003704,0.001852,0.002963,0.001852},{0.066667,0.066667,0.331852,0.088889,0.033333,0.029630,-0.022222,-0.016667,-0.050370,0.033333,0.088889,0.029630,0.044444,0.044444,-0.053333,-0.011111,-0.022222,0.008889,-0.016667,-0.022222,-0.050370,-0.022222,-0.011111,0.008889,0.005556,0.005556,0.004444,-0.088889,-0.088889,-0.106667,-0.118519,-0.044444,-0.121481,0.029630,0.022222,0.042963,-0.044444,-0.118519,-0.121481,-0.059259,-0.059259,-0.094815,0.014815,0.029630,0.038519,0.022222,0.029630,0.042963,0.029630,0.014815,0.038519,-0.007407,-0.007407,-0.014815,0.022222,0.022222,-0.017778,0.029630,0.011111,0.025185,-0.007407,-0.005556,-0.003704,0.011111,0.029630,0.025185,0.014815,0.014815,0.029630,-0.003704,-0.007407,-0.010370,-0.005556,-0.007407,-0.003704,-0.007407,-0.003704,-0.010370,0.001852,0.001852,0.002963},{-0.106667,0.088889,0.088889,1.042963,-0.000000,0.000000,-0.106667,-0.088889,-0.088889,-0.121481,0.118519,0.044444,-0.023704,-0.000000,0.000000,-0.121481,-0.118519,-0.044444,0.042963,-0.029630,-0.022222,-0.130370,0.000000,0.000000,0.042963,0.029630,0.022222,-0.121481,0.044444,0.118519,-0.023704,-0.000000,0.000000,-0.121481,-0.044444,-0.118519,-0.094815,0.059259,0.059259,-0.284444,0.000000,0.000000,-0.094815,-0.059259,-0.059259,0.038519,-0.014815,-0.029630,0.071111,0.000000,-0.000000,0.038519,0.014815,0.029630,0.042963,-0.022222,-0.029630,-0.130370,0.000000,0.000000,0.042963,0.022222,0.029630,0.038519,-0.029630,-0.014815,0.071111,0.000000,0.000000,0.038519,0.029630,0.014815,-0.014815,0.007407,0.007407,-0.000000,-0.000000,-0.000000,-0.014815,-0.007407,-0.007407},{-0.088889,0.029630,0.033333,-0.000000,1.185185,0.266667,0.088889,0.029630,0.033333,0.118519,-0.121481,-0.044444,0.000000,-0.497778,-0.355556,-0.118519,-0.121481,-0.044444,-0.029630,0.025185,0.011111,-0.000000,-0.035556,0.088889,0.029630,0.025185,0.011111,-0.044444,-0.053333,0.044444,-0.000000,0.047407,0.355556,0.044444,-0.053333,0.044444,0.059259,-0.094815,-0.059259,0.000000,-0.521481,-0.474074,-0.059259,-0.094815,-0.059259,-0.014815,0.029630,0.014815,0.000000,0.118519,0.118519,0.014815,0.029630,0.014815,0.022222,0.008889,-0.011111,0.000000,-0.165926,-0.088889,-0.022222,0.008889,-0.011111,-0.029630,0.038519,0.014815,0.000000,0.189630,0.118519,0.029630,0.038519,0.014815,0.007407,-0.010370,-0.003704,0.000000,-0.023704,-0.029630,-0.007407,-0.010370,-0.003704},{-0.088889,0.033333,0.029630,0.000000,0.266667,1.185185,0.088889,0.033333,0.029630,-0.044444,0.044444,-0.053333,0.000000,0.355556,0.047407,0.044444,0.044444,-0.053333,0.022222,-0.011111,0.008889,0.000000,-0.088889,-0.165926,-0.022222,-0.011111,0.008889,0.118519,-0.044444,-0.121481,-0.000000,-0.355556,-0.497778,-0.118519,-0.044444,-0.121481,0.059259,-0.059259,-0.094815,-0.000000,-0.474074,-0.521481,-0.059259,-0.059259,-0.094815,-0.029630,0.014815,0.038519,0.000000,0.118519,0.189630,0.029630,0.014815,0.038519,-0.029630,0.011111,0.025185,-0.000000,0.088889,-0.035556,0.029630,0.011111,0.025185,-0.014815,0.014815,0.029630,-0.000000,0.118519,0.118519,0.014815,0.014815,0.029630,0.007407,-0.003704,-0.010370,0.000000,-0.029630,-0.023704,-0.007407,-0.003704,-0.010370},{-0.017778,-0.022222,-0.022222,-0.106667,0.088889,0.088889,0.331852,-0.066667,-0.066667,0.025185,-0.029630,-0.011111,-0.121481,0.118519,0.044444,0.029630,-0.088889,-0.033333,-0.003704,0.007407,0.005556,0.042963,-0.029630,-0.022222,-0.050370,0.022222,0.016667,0.025185,-0.011111,-0.029630,-0.121481,0.044444,0.118519,0.029630,-0.033333,-0.088889,0.029630,-0.014815,-0.014815,-0.094815,0.059259,0.059259,-0.053333,-0.044444,-0.044444,-0.010370,0.003704,0.007407,0.038519,-0.014815,-0.029630,0.008889,0.011111,0.022222,-0.003704,0.005556,0.007407,0.042963,-0.022222,-0.029630,-0.050370,0.016667,0.022222,-0.010370,0.007407,0.003704,0.038519,-0.029630,-0.014815,0.008889,0.022222,0.011111,0.002963,-0.001852,-0.001852,-0.014815,0.007407,0.007407,0.004444,-0.005556,-0.005556},{0.022222,-0.050370,-0.016667,-0.088889,0.029630,0.033333,-0.066667,0.331852,0.066667,-0.029630,0.042963,0.022222,0.118519,-0.121481,-0.044444,0.088889,-0.106667,-0.088889,0.007407,-0.003704,-0.005556,-0.029630,0.025185,0.011111,-0.022222,-0.017778,0.022222,0.011111,0.008889,-0.022222,-0.044444,-0.053333,0.044444,-0.033333,0.029630,0.088889,-0.014815,0.038519,0.029630,0.059259,-0.094815,-0.059259,0.044444,-0.121481,-0.118519,0.003704,-0.010370,-0.007407,-0.014815,0.029630,0.014815,-0.011111,0.025185,0.029630,-0.005556,0.004444,0.005556,0.022222,0.008889,-0.011111,0.016667,-0.050370,-0.022222,0.007407,-0.014815,-0.007407,-0.029630,0.038519,0.014815,-0.022222,0.042963,0.029630,-0.001852,0.002963,0.001852,0.007407,-0.010370,-0.003704,0.005556,-0.003704,-0.007407},{0.022222,-0.016667,-0.050370,-0.088889,0.033333,0.029630,-0.066667,0.066667,0.331852,0.011111,-0.022222,0.008889,-0.044444,0.044444,-0.053333,-0.033333,0.088889,0.029630,-0.005556,0.005556,0.004444,0.022222,-0.011111,0.008889,0.016667,-0.022222,-0.050370,-0.029630,0.022222,0.042963,0.118519,-0.044444,-0.121481,0.088889,-0.088889,-0.106667,-0.014815,0.029630,0.038519,0.059259,-0.059259,-0.094815,0.044444,-0.118519,-0.121481,0.007407,-0.007407,-0.014815,-0.029630,0.014815,0.038519,-0.022222,0.029630,0.042963,0.007407,-0.005556,-0.003704,-0.029630,0.011111,0.025185,-0.022222,0.022222,-0.017778,0.003704,-0.007407,-0.010370,-0.014815,0.014815,0.029630,-0.011111,0.029630,0.025185,-0.001852,0.001852,0.002963,0.007407,-0.003704,-0.010370,0.005556,-0.007407,-0.003704},{0.029630,-0.088889,0.033333,-0.121481,0.118519,-0.044444,0.025185,-0.029630,0.011111,1.185185,0.000000,0.266667,-0.497778,0.000000,-0.355556,-0.035556,0.000000,0.088889,0.029630,0.088889,0.033333,-0.121481,-0.118519,-0.044444,0.025185,0.029630,0.011111,-0.053333,-0.044444,0.044444,-0.094815,0.059259,-0.059259,0.029630,-0.014815,0.014815,0.047407,0.000000,0.355556,-0.521481,0.000000,-0.474074,0.118519,-0.000000,0.118519,-0.053333,0.044444,0.044444,-0.094815,-0.059259,-0.059259,0.029630,0.014815,0.014815,0.008889,0.022222,-0.011111,0.038519,-0.029630,0.014815,-0.010370,0.007407,-0.003704,-0.165926,0.000000,-0.088889,0.189630,-0.000000,0.118519,-0.023704,0.000000,-0.029630,0.008889,-0.022222,-0.011111,0.038519,0.029630,0.014815,-0.010370,-0.007407,-0.003704},{0.088889,-0.106667,0.088889,0.118519,-0.121481,0.044444,-0.029630,0.042963,-0.022222,0.000000,1.042963,0.000000,0.000000,-0.023704,0.000000,0.000000,-0.130370,0.000000,-0.088889,-0.106667,-0.088889,-0.118519,-0.121481,-0.044444,0.029630,0.042963,0.022222,0.044444,-0.121481,0.118519,0.059259,-0.094815,0.059259,-0.014815,0.038519,-0.029630,0.000000,-0.023704,0.000000,0.000000,-0.284444,0.000000,0.000000,0.071111,0.000000,-0.044444,-0.121481,-0.118519,-0.059259,-0.094815,-0.059259,0.014815,0.038519,0.029630,-0.022222,0.042963,-0.029630,-0.029630,0.038519,-0.014815,0.007407,-0.014815,0.007407,0.000000,-0.130370,0.000000,0.000000,0.071111,0.000000,0.000000,-0.000000,0.000000,0.022222,0.042963,0.029630,0.029630,0.038519,0.014815,-0.007407,-0.014815,-0.007407},{0.033333,-0.088889,0.029630,0.044444,-0.044444,-0.053333,-0.011111,0.022222,0.008889,0.266667,0.000000,1.185185,0.355556,-0.000000,0.047407,-0.088889,0.000000,-0.165926,0.033333,0.088889,0.029630,0.044444,0.044444,-0.053333,-0.011111,-0.022222,0.008889,-0.044444,0.118519,-0.121481,-0.059259,0.059259,-0.094815,0.014815,-0.029630,0.038519,-0.355556,0.000000,-0.497778,-0.474074,0.000000,-0.521481,0.118519,-0.000000,0.189630,-0.044444,-0.118519,-0.121481,-0.059259,-0.059259,-0.094815,0.014815,0.029630,0.038519,0.011111,-0.029630,0.025185,0.014815,-0.014815,0.029630,-0.003704,0.007407,-0.010370,0.088889,0.000000,-0.035556,0.118519,-0.000000,0.118519,-0.029630,0.000000,-0.023704,0.011111,0.029630,0.025185,0.014815,0.014815,0.029630,-0.003704,-0.007407,-0.010370},{-0.121481,-0.118519,0.044444,-0.023704,0.000000,0.000000,-0.121481,0.118519,-0.044444,-0.497778,0.000000,0.355556,3.602963,0.000000,0.000000,-0.497778,0.000000,-0.355556,-0.121481,0.118519,0.044444,-0.023704,0.000000,0.000000,-0.121481,-0.118519,-0.044444,-0.094815,-0.059259,0.059259,-0.284444,0.000000,-0.000000,-0.094815,0.059259,-0.059259,-0.521481,0.000000,0.474074,-0.379259,0.000000,0.000000,-0.521481,0.000000,-0.474074,-0.094815,0.059259,0.059259,-0.284444,0.000000,0.000000,-0.094815,-0.059259,-0.059259,0.038519,0.029630,-0.014815,0.071111,0.000000,0.000000,0.038519,-0.029630,0.014815,0.189630,0.000000,-0.118519,-0.379259,0.000000,0.000000,0.189630,0.000000,0.118519,0.038519,-0.029630,-0.014815,0.071111,0.000000,0.000000,0.038519,0.029630,0.014815},{-0.118519,-0.121481,0.044444,0.000000,-0.497778,0.355556,0.118519,-0.121481,0.044444,0.000000,-0.023704,-0.000000,0.000000,3.602963,-0.000000,-0.000000,-0.023704,-0.000000,0.118519,-0.121481,-0.044444,0.000000,-0.497778,-0.355556,-0.118519,-0.121481,-0.044444,-0.059259,-0.094815,0.059259,0.000000,-0.521481,0.474074,0.059259,-0.094815,0.059259,-0.000000,-0.284444,0.000000,0.000000,-0.379259,0.000000,0.000000,-0.284444,0.000000,0.059259,-0.094815,-0.059259,0.000000,-0.521481,-0.474074,-0.059259,-0.094815,-0.059259,0.029630,0.038519,-0.014815,0.000000,0.189630,-0.118519,-0.029630,0.038519,-0.014815,-0.000000,0.071111,-0.000000,0.000000,-0.379259,0.000000,0.000000,0.071111,0.000000,-0.029630,0.038519,0.014815,-0.000000,0.189630,0.118519,0.029630,0.038519,0.014815},{-0.044444,-0.044444,-0.053333,0.000000,-0.355556,0.047407,0.044444,-0.044444,-0.053333,-0.355556,0.000000,0.047407,0.000000,-0.000000,4.171852,0.355556,0.000000,0.047407,-0.044444,0.044444,-0.053333,-0.000000,0.355556,0.047407,0.044444,0.044444,-0.053333,0.059259,0.059259,-0.094815,-0.000000,0.474074,-0.521481,-0.059259,0.059259,-0.094815,0.474074,-0.000000,-0.521481,0.000000,0.000000,-2.275556,-0.474074,0.000000,-0.521481,0.059259,-0.059259,-0.094815,0.000000,-0.474074,-0.521481,-0.059259,-0.059259,-0.094815,-0.014815,-0.014815,0.029630,-0.000000,-0.118519,0.118519,0.014815,-0.014815,0.029630,-0.118519,0.000000,0.118519,0.000000,0.000000,-0.000000,0.118519,0.000000,0.118519,-0.014815,0.014815,0.029630,-0.000000,0.118519,0.118519,0.014815,0.014815,0.029630},{0.025185,0.029630,-0.011111,-0.121481,-0.118519,0.044444,0.029630,0.088889,-0.033333,-0.035556,0.000000,-0.088889,-0.497778,-0.000000,0.355556,1.185185,0.000000,-0.266667,0.025185,-0.029630,-0.011111,-0.121481,0.118519,0.044444,0.029630,-0.088889,-0.033333,0.029630,0.014815,-0.014815,-0.094815,-0.059259,0.059259,-0.053333,0.044444,-0.044444,0.118519,0.000000,-0.118519,-0.521481,0.000000,0.474074,0.047407,0.000000,-0.355556,0.029630,-0.014815,-0.014815,-0.094815,0.059259,0.059259,-0.053333,-0.044444,-0.044444,-0.010370,-0.007407,0.003704,0.038519,0.029630,-0.014815,0.008889,-0.022222,0.011111,-0.023704,0.000000,0.029630,0.189630,0.000000,-0.118519,-0.165926,0.000000,0.088889,-0.010370,0.007407,0.003704,0.038519,-0.029630,-0.014815,0.008889,0.022222,0.011111},{0.029630,0.042963,-0.022222,-0.118519,-0.121481,0.044444,-0.088889,-0.106667,0.088889,0.000000,-0.130370,0.000000,0.000000,-0.023704,0.000000,0.000000,1.042963,0.000000,-0.029630,0.042963,0.022222,0.118519,-0.121481,-0.044444,0.088889,-0.106667,-0.088889,0.014815,0.038519,-0.029630,-0.059259,-0.094815,0.059259,-0.044444,-0.121481,0.118519,0.000000,0.071111,0.000000,0.000000,-0.284444,0.000000,0.000000,-0.023704,0.000000,-0.014815,0.038519,0.029630,0.059259,-0.094815,-0.059259,0.044444,-0.121481,-0.118519,-0.007407,-0.014815,0.007407,0.029630,0.038519,-0.014815,0.022222,0.042963,-0.029630,0.000000,-0.000000,0.000000,0.000000,0.071111,0.000000,0.000000,-0.130370,0.000000,0.007407,-0.014815,-0.007407,-0.029630,0.038519,0.014815,-0.022222,0.042963,0.029630},{0.011111,0.022222,0.008889,-0.044444,-0.044444,-0.053333,-0.033333,-0.088889,0.029630,0.088889,0.000000,-0.165926,-0.355556,-0.000000,0.047407,-0.266667,0.000000,1.185185,0.011111,-0.022222,0.008889,-0.044444,0.044444,-0.053333,-0.033333,0.088889,0.029630,-0.014815,-0.029630,0.038519,0.059259,0.059259,-0.094815,0.044444,0.118519,-0.121481,-0.118519,-0.000000,0.189630,0.474074,0.000000,-0.521481,0.355556,0.000000,-0.497778,-0.014815,0.029630,0.038519,0.059259,-0.059259,-0.094815,0.044444,-0.118519,-0.121481,0.003704,0.007407,-0.010370,-0.014815,-0.014815,0.029630,-0.011111,-0.029630,0.025185,0.029630,0.000000,-0.023704,-0.118519,-0.000000,0.118519,-0.088889,0.000000,-0.035556,0.003704,-0.007407,-0.010370,-0.014815,0.014815,0.029630,-0.011111,0.029630,0.025185},{-0.050370,0.022222,-0.016667,0.042963,-0.029630,0.022222,-0.003704,0.007407,-0.005556,0.029630,-0.088889,0.033333,-0.121481,0.118519,-0.044444,0.025185,-0.029630,0.011111,0.331852,-0.066667,0.066667,-0.106667,0.088889,-0.088889,-0.017778,-0.022222,0.022222,0.008889,0.011111,-0.022222,0.038519,-0.014815,0.029630,-0.010370,0.003704,-0.007407,-0.053333,-0.044444,0.044444,-0.094815,0.059259,-0.059259,0.029630,-0.014815,0.014815,0.029630,-0.033333,0.088889,-0.121481,0.044444,-0.118519,0.025185,-0.011111,0.029630,0.004444,-0.005556,0.005556,-0.014815,0.007407,-0.007407,0.002963,-0.001852,0.001852,0.008889,0.022222,-0.011111,0.038519,-0.029630,0.014815,-0.010370,0.007407,-0.003704,-0.050370,0.016667,-0.022222,0.042963,-0.022222,0.029630,-0.003704,0.005556,-0.007407},{-0.022222,-0.017778,-0.022222,-0.029630,0.025185,-0.011111,0.007407,-0.003704,0.005556,0.088889,-0.106667,0.088889,0.118519,-0.121481,0.044444,-0.029630,0.042963,-0.022222,-0.066667,0.331852,-0.066667,-0.088889,0.029630,-0.033333,0.022222,-0.050370,0.016667,-0.011111,0.025185,-0.029630,-0.014815,0.029630,-0.014815,0.003704,-0.010370,0.007407,0.044444,-0.121481,0.118519,0.059259,-0.094815,0.059259,-0.014815,0.038519,-0.029630,-0.033333,0.029630,-0.088889,-0.044444,-0.053333,-0.044444,0.011111,0.008889,0.022222,0.005556,-0.003704,0.007407,0.007407,-0.010370,0.003704,-0.001852,0.002963,-0.001852,-0.022222,0.042963,-0.029630,-0.029630,0.038519,-0.014815,0.007407,-0.014815,0.007407,0.016667,-0.050370,0.022222,0.022222,0.008889,0.011111,-0.005556,0.004444,-0.005556},{-0.016667,0.022222,-0.050370,-0.022222,0.011111,0.008889,0.005556,-0.005556,0.004444,0.033333,-0.088889,0.029630,0.044444,-0.044444,-0.053333,-0.011111,0.022222,0.008889,0.066667,-0.066667,0.331852,0.088889,-0.033333,0.029630,-0.022222,0.016667,-0.050370,0.022222,-0.029630,0.042963,0.029630,-0.014815,0.038519,-0.007407,0.007407,-0.014815,-0.044444,0.118519,-0.121481,-0.059259,0.059259,-0.094815,0.014815,-0.029630,0.038519,-0.088889,0.088889,-0.106667,-0.118519,0.044444,-0.121481,0.029630,-0.022222,0.042963,-0.005556,0.007407,-0.003704,-0.007407,0.003704,-0.010370,0.001852,-0.001852,0.002963,0.011111,-0.029630,0.025185,0.014815,-0.014815,0.029630,-0.003704,0.007407,-0.010370,0.022222,-0.022222,-0.017778,0.029630,-0.011111,0.025185,-0.007407,0.005556,-0.003704},{0.042963,0.029630,-0.022222,-0.130370,-0.000000,0.000000,0.042963,-0.029630,0.022222,-0.121481,-0.118519,0.044444,-0.023704,-0.000000,-0.000000,-0.121481,0.118519,-0.044444,-0.106667,-0.088889,0.088889,1.042963,0.000000,-0.000000,-0.106667,0.088889,-0.088889,0.038519,0.014815,-0.029630,0.071111,-0.000000,-0.000000,0.038519,-0.014815,0.029630,-0.094815,-0.059259,0.059259,-0.284444,0.000000,0.000000,-0.094815,0.059259,-0.059259,-0.121481,-0.044444,0.118519,-0.023704,0.000000,0.000000,-0.121481,0.044444,-0.118519,-0.014815,-0.007407,0.007407,-0.000000,0.000000,-0.000000,-0.014815,0.007407,-0.007407,0.038519,0.029630,-0.014815,0.071111,0.000000,0.000000,0.038519,-0.029630,0.014815,0.042963,0.022222,-0.029630,-0.130370,0.000000,0.000000,0.042963,-0.022222,0.029630},{0.029630,0.025185,-0.011111,0.000000,-0.035556,-0.088889,-0.029630,0.025185,-0.011111,-0.118519,-0.121481,0.044444,0.000000,-0.497778,0.355556,0.118519,-0.121481,0.044444,0.088889,0.029630,-0.033333,0.000000,1.185185,-0.266667,-0.088889,0.029630,-0.033333,0.014815,0.029630,-0.014815,-0.000000,0.118519,-0.118519,-0.014815,0.029630,-0.014815,-0.059259,-0.094815,0.059259,0.000000,-0.521481,0.474074,0.059259,-0.094815,0.059259,0.044444,-0.053333,-0.044444,0.000000,0.047407,-0.355556,-0.044444,-0.053333,-0.044444,-0.007407,-0.010370,0.003704,-0.000000,-0.023704,0.029630,0.007407,-0.010370,0.003704,0.029630,0.038519,-0.014815,0.000000,0.189630,-0.118519,-0.029630,0.038519,-0.014815,-0.022222,0.008889,0.011111,0.000000,-0.165926,0.088889,0.022222,0.008889,0.011111},{0.022222,0.011111,0.008889,0.000000,0.088889,-0.165926,-0.022222,0.011111,0.008889,-0.044444,-0.044444,-0.053333,0.000000,-0.355556,0.047407,0.044444,-0.044444,-0.053333,-0.088889,-0.033333,0.029630,-0.000000,-0.266667,1.185185,0.088889,-0.033333,0.029630,-0.029630,-0.014815,0.038519,0.000000,-0.118519,0.189630,0.029630,-0.014815,0.038519,0.059259,0.059259,-0.094815,0.000000,0.474074,-0.521481,-0.059259,0.059259,-0.094815,0.118519,0.044444,-0.121481,0.000000,0.355556,-0.497778,-0.118519,0.044444,-0.121481,0.007407,0.003704,-0.010370,0.000000,0.029630,-0.023704,-0.007407,0.003704,-0.010370,-0.014815,-0.014815,0.029630,0.000000,-0.118519,0.118519,0.014815,-0.014815,0.029630,-0.029630,-0.011111,0.025185,-0.000000,-0.088889,-0.035556,0.029630,-0.011111,0.025185},{-0.003704,-0.007407,0.005556,0.042963,0.029630,-0.022222,-0.050370,-0.022222,0.016667,0.025185,0.029630,-0.011111,-0.121481,-0.118519,0.044444,0.029630,0.088889,-0.033333,-0.017778,0.022222,-0.022222,-0.106667,-0.088889,0.088889,0.331852,0.066667,-0.066667,-0.010370,-0.003704,0.007407,0.038519,0.014815,-0.029630,0.008889,-0.011111,0.022222,0.029630,0.014815,-0.014815,-0.094815,-0.059259,0.059259,-0.053333,0.044444,-0.044444,0.025185,0.011111,-0.029630,-0.121481,-0.044444,0.118519,0.029630,0.033333,-0.088889,0.002963,0.001852,-0.001852,-0.014815,-0.007407,0.007407,0.004444,0.005556,-0.005556,-0.010370,-0.007407,0.003704,0.038519,0.029630,-0.014815,0.008889,-0.022222,0.011111,-0.003704,-0.005556,0.007407,0.042963,0.022222,-0.029630,-0.050370,-0.016667,0.022222},{-0.007407,-0.003704,0.005556,0.029630,0.025185,-0.011111,0.022222,-0.017778,-0.022222,0.029630,0.042963,-0.022222,-0.118519,-0.121481,0.044444,-0.088889,-0.106667,0.088889,-0.022222,-0.050370,0.016667,0.088889,0.029630,-0.033333,0.066667,0.331852,-0.066667,-0.003704,-0.010370,0.007407,0.014815,0.029630,-0.014815,0.011111,0.025185,-0.029630,0.014815,0.038519,-0.029630,-0.059259,-0.094815,0.059259,-0.044444,-0.121481,0.118519,-0.011111,0.008889,0.022222,0.044444,-0.053333,-0.044444,0.033333,0.029630,-0.088889,0.001852,0.002963,-0.001852,-0.007407,-0.010370,0.003704,-0.005556,-0.003704,0.007407,-0.007407,-0.014815,0.007407,0.029630,0.038519,-0.014815,0.022222,0.042963,-0.029630,0.005556,0.004444,-0.005556,-0.022222,0.008889,0.011111,-0.016667,-0.050370,0.022222},{-0.005556,-0.005556,0.004444,0.022222,0.011111,0.008889,0.016667,0.022222,-0.050370,0.011111,0.022222,0.008889,-0.044444,-0.044444,-0.053333,-0.033333,-0.088889,0.029630,0.022222,0.016667,-0.050370,-0.088889,-0.033333,0.029630,-0.066667,-0.066667,0.331852,0.007407,0.007407,-0.014815,-0.029630,-0.014815,0.038519,-0.022222,-0.029630,0.042963,-0.014815,-0.029630,0.038519,0.059259,0.059259,-0.094815,0.044444,0.118519,-0.121481,-0.029630,-0.022222,0.042963,0.118519,0.044444,-0.121481,0.088889,0.088889,-0.106667,-0.001852,-0.001852,0.002963,0.007407,0.003704,-0.010370,0.005556,0.007407,-0.003704,0.003704,0.007407,-0.010370,-0.014815,-0.014815,0.029630,-0.011111,-0.029630,0.025185,0.007407,0.005556,-0.003704,-0.029630,-0.011111,0.025185,-0.022222,-0.022222,-0.017778},{0.029630,0.033333,-0.088889,-0.121481,-0.044444,0.118519,0.025185,0.011111,-0.029630,-0.053333,0.044444,-0.044444,-0.094815,-0.059259,0.059259,0.029630,0.014815,-0.014815,0.008889,-0.011111,0.022222,0.038519,0.014815,-0.029630,-0.010370,-0.003704,0.007407,1.185185,0.266667,-0.000000,-0.497778,-0.355556,0.000000,-0.035556,0.088889,-0.000000,0.047407,0.355556,-0.000000,-0.521481,-0.474074,-0.000000,0.118519,0.118519,0.000000,-0.165926,-0.088889,0.000000,0.189630,0.118519,0.000000,-0.023704,-0.029630,0.000000,0.029630,0.033333,0.088889,-0.121481,-0.044444,-0.118519,0.025185,0.011111,0.029630,-0.053333,0.044444,0.044444,-0.094815,-0.059259,-0.059259,0.029630,0.014815,0.014815,0.008889,-0.011111,-0.022222,0.038519,0.014815,0.029630,-0.010370,-0.003704,-0.007407},{0.033333,0.029630,-0.088889,0.044444,-0.053333,-0.044444,-0.011111,0.008889,0.022222,-0.044444,-0.121481,0.118519,-0.059259,-0.094815,0.059259,0.014815,0.038519,-0.029630,0.011111,0.025185,-0.029630,0.014815,0.029630,-0.014815,-0.003704,-0.010370,0.007407,0.266667,1.185185,-0.000000,0.355556,0.047407,0.000000,-0.088889,-0.165926,-0.000000,-0.355556,-0.497778,0.000000,-0.474074,-0.521481,0.000000,0.118519,0.189630,0.000000,0.088889,-0.035556,-0.000000,0.118519,0.118519,0.000000,-0.029630,-0.023704,0.000000,0.033333,0.029630,0.088889,0.044444,-0.053333,0.044444,-0.011111,0.008889,-0.022222,-0.044444,-0.121481,-0.118519,-0.059259,-0.094815,-0.059259,0.014815,0.038519,0.029630,0.011111,0.025185,0.029630,0.014815,0.029630,0.014815,-0.003704,-0.010370,-0.007407},{0.088889,0.088889,-0.106667,0.118519,0.044444,-0.121481,-0.029630,-0.022222,0.042963,0.044444,0.118519,-0.121481,0.059259,0.059259,-0.094815,-0.014815,-0.029630,0.038519,-0.022222,-0.029630,0.042963,-0.029630,-0.014815,0.038519,0.007407,0.007407,-0.014815,-0.000000,-0.000000,1.042963,0.000000,0.000000,-0.023704,0.000000,-0.000000,-0.130370,0.000000,0.000000,-0.023704,0.000000,0.000000,-0.284444,0.000000,-0.000000,0.071111,0.000000,0.000000,-0.130370,-0.000000,0.000000,0.071111,-0.000000,-0.000000,-0.000000,-0.088889,-0.088889,-0.106667,-0.118519,-0.044444,-0.121481,0.029630,0.022222,0.042963,-0.044444,-0.118519,-0.121481,-0.059259,-0.059259,-0.094815,0.014815,0.029630,0.038519,0.022222,0.029630,0.042963,0.029630,0.014815,0.038519,-0.007407,-0.007407,-0.014815},{-0.121481,0.044444,-0.118519,-0.023704,-0.000000,-0.000000,-0.121481,-0.044444,0.118519,-0.094815,0.059259,-0.059259,-0.284444,0.000000,-0.000000,-0.094815,-0.059259,0.059259,0.038519,-0.014815,0.029630,0.071111,0.000000,0.000000,0.038519,0.014815,-0.029630,-0.497778,0.355556,0.000000,3.602963,0.000000,0.000000,-0.497778,-0.355556,-0.000000,-0.521481,0.474074,0.000000,-0.379259,-0.000000,0.000000,-0.521481,-0.474074,0.000000,0.189630,-0.118519,-0.000000,-0.379259,0.000000,0.000000,0.189630,0.118519,-0.000000,-0.121481,0.044444,0.118519,-0.023704,-0.000000,0.000000,-0.121481,-0.044444,-0.118519,-0.094815,0.059259,0.059259,-0.284444,0.000000,0.000000,-0.094815,-0.059259,-0.059259,0.038519,-0.014815,-0.029630,0.071111,0.000000,-0.000000,0.038519,0.014815,0.029630},{-0.044444,-0.053333,-0.044444,-0.000000,0.047407,-0.355556,0.044444,-0.053333,-0.044444,0.059259,-0.094815,0.059259,0.000000,-0.521481,0.474074,-0.059259,-0.094815,0.059259,-0.014815,0.029630,-0.014815,-0.000000,0.118519,-0.118519,0.014815,0.029630,-0.014815,-0.355556,0.047407,0.000000,0.000000,4.171852,-0.000000,0.355556,0.047407,-0.000000,0.474074,-0.521481,0.000000,-0.000000,-2.275556,-0.000000,-0.474074,-0.521481,0.000000,-0.118519,0.118519,0.000000,-0.000000,-0.000000,0.000000,0.118519,0.118519,-0.000000,-0.044444,-0.053333,0.044444,-0.000000,0.047407,0.355556,0.044444,-0.053333,0.044444,0.059259,-0.094815,-0.059259,0.000000,-0.521481,-0.474074,-0.059259,-0.094815,-0.059259,-0.014815,0.029630,0.014815,-0.000000,0.118519,0.118519,0.014815,0.029630,0.014815},{-0.118519,0.044444,-0.121481,0.000000,0.355556,-0.497778,0.118519,0.044444,-0.121481,-0.059259,0.059259,-0.094815,-0.000000,0.474074,-0.521481,0.059259,0.059259,-0.094815,0.029630,-0.014815,0.038519,-0.000000,-0.118519,0.189630,-0.029630,-0.014815,0.038519,0.000000,0.000000,-0.023704,0.000000,-0.000000,3.602963,0.000000,-0.000000,-0.023704,0.000000,0.000000,-0.284444,0.000000,-0.000000,-0.379259,0.000000,-0.000000,-0.284444,0.000000,0.000000,0.071111,0.000000,0.000000,-0.379259,-0.000000,0.000000,0.071111,0.118519,-0.044444,-0.121481,-0.000000,-0.355556,-0.497778,-0.118519,-0.044444,-0.121481,0.059259,-0.059259,-0.094815,0.000000,-0.474074,-0.521481,-0.059259,-0.059259,-0.094815,-0.029630,0.014815,0.038519,0.000000,0.118519,0.189630,0.029630,0.014815,0.038519},{0.025185,-0.011111,0.029630,-0.121481,0.044444,-0.118519,0.029630,-0.033333,0.088889,0.029630,-0.014815,0.014815,-0.094815,0.059259,-0.059259,-0.053333,-0.044444,0.044444,-0.010370,0.003704,-0.007407,0.038519,-0.014815,0.029630,0.008889,0.011111,-0.022222,-0.035556,-0.088889,0.000000,-0.497778,0.355556,0.000000,1.185185,-0.266667,-0.000000,0.118519,-0.118519,0.000000,-0.521481,0.474074,0.000000,0.047407,-0.355556,-0.000000,-0.023704,0.029630,-0.000000,0.189630,-0.118519,0.000000,-0.165926,0.088889,0.000000,0.025185,-0.011111,-0.029630,-0.121481,0.044444,0.118519,0.029630,-0.033333,-0.088889,0.029630,-0.014815,-0.014815,-0.094815,0.059259,0.059259,-0.053333,-0.044444,-0.044444,-0.010370,0.003704,0.007407,0.038519,-0.014815,-0.029630,0.008889,0.011111,0.022222},{0.011111,0.008889,0.022222,-0.044444,-0.053333,-0.044444,-0.033333,0.029630,-0.088889,-0.014815,0.038519,-0.029630,0.059259,-0.094815,0.059259,0.044444,-0.121481,0.118519,0.003704,-0.010370,0.007407,-0.014815,0.029630,-0.014815,-0.011111,0.025185,-0.029630,0.088889,-0.165926,-0.000000,-0.355556,0.047407,-0.000000,-0.266667,1.185185,-0.000000,-0.118519,0.189630,0.000000,0.474074,-0.521481,0.000000,0.355556,-0.497778,0.000000,0.029630,-0.023704,0.000000,-0.118519,0.118519,-0.000000,-0.088889,-0.035556,0.000000,0.011111,0.008889,-0.022222,-0.044444,-0.053333,0.044444,-0.033333,0.029630,0.088889,-0.014815,0.038519,0.029630,0.059259,-0.094815,-0.059259,0.044444,-0.121481,-0.118519,0.003704,-0.010370,-0.007407,-0.014815,0.029630,0.014815,-0.011111,0.025185,0.029630},{0.029630,-0.022222,0.042963,-0.118519,0.044444,-0.121481,-0.088889,0.088889,-0.106667,0.014815,-0.029630,0.038519,-0.059259,0.059259,-0.094815,-0.044444,0.118519,-0.121481,-0.007407,0.007407,-0.014815,0.029630,-0.014815,0.038519,0.022222,-0.029630,0.042963,-0.000000,-0.000000,-0.130370,-0.000000,-0.000000,-0.023704,-0.000000,-0.000000,1.042963,-0.000000,-0.000000,0.071111,0.000000,0.000000,-0.284444,-0.000000,-0.000000,-0.023704,0.000000,-0.000000,-0.000000,-0.000000,0.000000,0.071111,0.000000,0.000000,-0.130370,-0.029630,0.022222,0.042963,0.118519,-0.044444,-0.121481,0.088889,-0.088889,-0.106667,-0.014815,0.029630,0.038519,0.059259,-0.059259,-0.094815,0.044444,-0.118519,-0.121481,0.007407,-0.007407,-0.014815,-0.029630,0.014815,0.038519,-0.022222,0.029630,0.042963},{-0.053333,-0.044444,-0.044444,-0.094815,0.059259,0.059259,0.029630,-0.014815,-0.014815,0.047407,0.000000,-0.355556,-0.521481,-0.000000,0.474074,0.118519,0.000000,-0.118519,-0.053333,0.044444,-0.044444,-0.094815,-0.059259,0.059259,0.029630,0.014815,-0.014815,0.047407,-0.355556,0.000000,-0.521481,0.474074,0.000000,0.118519,-0.118519,-0.000000,4.171852,-0.000000,0.000000,-2.275556,0.000000,-0.000000,0.000000,-0.000000,-0.000000,0.047407,0.355556,-0.000000,-0.521481,-0.474074,-0.000000,0.118519,0.118519,-0.000000,-0.053333,-0.044444,0.044444,-0.094815,0.059259,-0.059259,0.029630,-0.014815,0.014815,0.047407,0.000000,0.355556,-0.521481,0.000000,-0.474074,0.118519,0.000000,0.118519,-0.053333,0.044444,0.044444,-0.094815,-0.059259,-0.059259,0.029630,0.014815,0.014815},{0.044444,-0.121481,-0.118519,0.059259,-0.094815,-0.059259,-0.014815,0.038519,0.029630,0.000000,-0.023704,0.000000,0.000000,-0.284444,-0.000000,-0.000000,0.071111,-0.000000,-0.044444,-0.121481,0.118519,-0.059259,-0.094815,0.059259,0.014815,0.038519,-0.029630,0.355556,-0.497778,0.000000,0.474074,-0.521481,0.000000,-0.118519,0.189630,-0.000000,-0.000000,3.602963,-0.000000,0.000000,-0.379259,0.000000,0.000000,-0.379259,0.000000,-0.355556,-0.497778,-0.000000,-0.474074,-0.521481,-0.000000,0.118519,0.189630,0.000000,0.044444,-0.121481,0.118519,0.059259,-0.094815,0.059259,-0.014815,0.038519,-0.029630,-0.000000,-0.023704,-0.000000,0.000000,-0.284444,0.000000,0.000000,0.071111,0.000000,-0.044444,-0.121481,-0.118519,-0.059259,-0.094815,-0.059259,0.014815,0.038519,0.029630},{0.044444,-0.118519,-0.121481,0.059259,-0.059259,-0.094815,-0.014815,0.029630,0.038519,0.355556,0.000000,-0.497778,0.474074,0.000000,-0.521481,-0.118519,0.000000,0.189630,0.044444,0.118519,-0.121481,0.059259,0.059259,-0.094815,-0.014815,-0.029630,0.038519,-0.000000,0.000000,-0.023704,0.000000,0.000000,-0.284444,-0.000000,0.000000,0.071111,0.000000,0.000000,3.602963,0.000000,0.000000,-0.379259,-0.000000,0.000000,-0.379259,-0.000000,-0.000000,-0.023704,0.000000,-0.000000,-0.284444,0.000000,0.000000,0.071111,-0.044444,0.118519,-0.121481,-0.059259,0.059259,-0.094815,0.014815,-0.029630,0.038519,-0.355556,0.000000,-0.497778,-0.474074,0.000000,-0.521481,0.118519,0.000000,0.189630,-0.044444,-0.118519,-0.121481,-0.059259,-0.059259,-0.094815,0.014815,0.029630,0.038519},{-0.094815,-0.059259,-0.059259,-0.284444,0.000000,-0.000000,-0.094815,0.059259,0.059259,-0.521481,0.000000,-0.474074,-0.379259,0.000000,0.000000,-0.521481,0.000000,0.474074,-0.094815,0.059259,-0.059259,-0.284444,0.000000,0.000000,-0.094815,-0.059259,0.059259,-0.521481,-0.474074,-0.000000,-0.379259,-0.000000,0.000000,-0.521481,0.474074,-0.000000,-2.275556,0.000000,0.000000,12.136296,0.000000,0.000000,-2.275556,0.000000,0.000000,-0.521481,0.474074,0.000000,-0.379259,0.000000,0.000000,-0.521481,-0.474074,0.000000,-0.094815,-0.059259,0.059259,-0.284444,0.000000,0.000000,-0.094815,0.059259,-0.059259,-0.521481,0.000000,0.474074,-0.379259,0.000000,-0.000000,-0.521481,0.000000,-0.474074,-0.094815,0.059259,0.059259,-0.284444,0.000000,0.000000,-0.094815,-0.059259,-0.059259},{-0.059259,-0.094815,-0.059259,0.000000,-0.521481,-0.474074,0.059259,-0.094815,-0.059259,0.000000,-0.284444,0.000000,0.000000,-0.379259,0.000000,0.000000,-0.284444,0.000000,0.059259,-0.094815,0.059259,0.000000,-0.521481,0.474074,-0.059259,-0.094815,0.059259,-0.474074,-0.521481,-0.000000,0.000000,-2.275556,0.000000,0.474074,-0.521481,0.000000,0.000000,-0.379259,0.000000,0.000000,12.136296,0.000000,0.000000,-0.379259,0.000000,0.474074,-0.521481,-0.000000,0.000000,-2.275556,-0.000000,-0.474074,-0.521481,0.000000,-0.059259,-0.094815,0.059259,0.000000,-0.521481,0.474074,0.059259,-0.094815,0.059259,0.000000,-0.284444,0.000000,0.000000,-0.379259,0.000000,0.000000,-0.284444,0.000000,0.059259,-0.094815,-0.059259,0.000000,-0.521481,-0.474074,-0.059259,-0.094815,-0.059259},{-0.059259,-0.059259,-0.094815,0.000000,-0.474074,-0.521481,0.059259,-0.059259,-0.094815,-0.474074,0.000000,-0.521481,0.000000,0.000000,-2.275556,0.474074,0.000000,-0.521481,-0.059259,0.059259,-0.094815,0.000000,0.474074,-0.521481,0.059259,0.059259,-0.094815,0.000000,0.000000,-0.284444,0.000000,-0.000000,-0.379259,0.000000,0.000000,-0.284444,-0.000000,0.000000,-0.379259,0.000000,0.000000,12.136296,-0.000000,0.000000,-0.379259,0.000000,-0.000000,-0.284444,0.000000,0.000000,-0.379259,0.000000,0.000000,-0.284444,0.059259,0.059259,-0.094815,0.000000,0.474074,-0.521481,-0.059259,0.059259,-0.094815,0.474074,0.000000,-0.521481,-0.000000,0.000000,-2.275556,-0.474074,0.000000,-0.521481,0.059259,-0.059259,-0.094815,0.000000,-0.474074,-0.521481,-0.059259,-0.059259,-0.094815},{0.029630,0.014815,0.014815,-0.094815,-0.059259,-0.059259,-0.053333,0.044444,0.044444,0.118519,0.000000,0.118519,-0.521481,0.000000,-0.474074,0.047407,0.000000,0.355556,0.029630,-0.014815,0.014815,-0.094815,0.059259,-0.059259,-0.053333,-0.044444,0.044444,0.118519,0.118519,0.000000,-0.521481,-0.474074,0.000000,0.047407,0.355556,-0.000000,0.000000,0.000000,-0.000000,-2.275556,0.000000,-0.000000,4.171852,0.000000,0.000000,0.118519,-0.118519,0.000000,-0.521481,0.474074,0.000000,0.047407,-0.355556,0.000000,0.029630,0.014815,-0.014815,-0.094815,-0.059259,0.059259,-0.053333,0.044444,-0.044444,0.118519,0.000000,-0.118519,-0.521481,0.000000,0.474074,0.047407,0.000000,-0.355556,0.029630,-0.014815,-0.014815,-0.094815,0.059259,0.059259,-0.053333,-0.044444,-0.044444},{0.014815,0.038519,0.029630,-0.059259,-0.094815,-0.059259,-0.044444,-0.121481,-0.118519,0.000000,0.071111,-0.000000,0.000000,-0.284444,0.000000,0.000000,-0.023704,0.000000,-0.014815,0.038519,-0.029630,0.059259,-0.094815,0.059259,0.044444,-0.121481,0.118519,0.118519,0.189630,-0.000000,-0.474074,-0.521481,-0.000000,-0.355556,-0.497778,0.000000,-0.000000,-0.379259,0.000000,0.000000,-0.379259,0.000000,0.000000,3.602963,0.000000,-0.118519,0.189630,0.000000,0.474074,-0.521481,0.000000,0.355556,-0.497778,0.000000,0.014815,0.038519,-0.029630,-0.059259,-0.094815,0.059259,-0.044444,-0.121481,0.118519,0.000000,0.071111,0.000000,0.000000,-0.284444,0.000000,0.000000,-0.023704,0.000000,-0.014815,0.038519,0.029630,0.059259,-0.094815,-0.059259,0.044444,-0.121481,-0.118519},{0.014815,0.029630,0.038519,-0.059259,-0.059259,-0.094815,-0.044444,-0.118519,-0.121481,0.118519,0.000000,0.189630,-0.474074,0.000000,-0.521481,-0.355556,0.000000,-0.497778,0.014815,-0.029630,0.038519,-0.059259,0.059259,-0.094815,-0.044444,0.118519,-0.121481,-0.000000,0.000000,0.071111,0.000000,0.000000,-0.284444,-0.000000,0.000000,-0.023704,-0.000000,0.000000,-0.379259,-0.000000,0.000000,-0.379259,0.000000,0.000000,3.602963,0.000000,-0.000000,0.071111,0.000000,0.000000,-0.284444,0.000000,0.000000,-0.023704,-0.014815,-0.029630,0.038519,0.059259,0.059259,-0.094815,0.044444,0.118519,-0.121481,-0.118519,0.000000,0.189630,0.474074,0.000000,-0.521481,0.355556,0.000000,-0.497778,-0.014815,0.029630,0.038519,0.059259,-0.059259,-0.094815,0.044444,-0.118519,-0.121481},{0.008889,0.011111,0.022222,0.038519,-0.014815,-0.029630,-0.010370,0.003704,0.007407,-0.053333,-0.044444,-0.044444,-0.094815,0.059259,0.059259,0.029630,-0.014815,-0.014815,0.029630,-0.033333,-0.088889,-0.121481,0.044444,0.118519,0.025185,-0.011111,-0.029630,-0.165926,0.088889,0.000000,0.189630,-0.118519,0.000000,-0.023704,0.029630,0.000000,0.047407,-0.355556,-0.000000,-0.521481,0.474074,-0.000000,0.118519,-0.118519,0.000000,1.185185,-0.266667,-0.000000,-0.497778,0.355556,0.000000,-0.035556,-0.088889,-0.000000,0.008889,0.011111,-0.022222,0.038519,-0.014815,0.029630,-0.010370,0.003704,-0.007407,-0.053333,-0.044444,0.044444,-0.094815,0.059259,-0.059259,0.029630,-0.014815,0.014815,0.029630,-0.033333,0.088889,-0.121481,0.044444,-0.118519,0.025185,-0.011111,0.029630},{-0.011111,0.025185,0.029630,-0.014815,0.029630,0.014815,0.003704,-0.010370,-0.007407,0.044444,-0.121481,-0.118519,0.059259,-0.094815,-0.059259,-0.014815,0.038519,0.029630,-0.033333,0.029630,0.088889,-0.044444,-0.053333,0.044444,0.011111,0.008889,-0.022222,-0.088889,-0.035556,0.000000,-0.118519,0.118519,0.000000,0.029630,-0.023704,-0.000000,0.355556,-0.497778,-0.000000,0.474074,-0.521481,-0.000000,-0.118519,0.189630,-0.000000,-0.266667,1.185185,0.000000,-0.355556,0.047407,-0.000000,0.088889,-0.165926,0.000000,-0.011111,0.025185,-0.029630,-0.014815,0.029630,-0.014815,0.003704,-0.010370,0.007407,0.044444,-0.121481,0.118519,0.059259,-0.094815,0.059259,-0.014815,0.038519,-0.029630,-0.033333,0.029630,-0.088889,-0.044444,-0.053333,-0.044444,0.011111,0.008889,0.022222},{-0.022222,0.029630,0.042963,-0.029630,0.014815,0.038519,0.007407,-0.007407,-0.014815,0.044444,-0.118519,-0.121481,0.059259,-0.059259,-0.094815,-0.014815,0.029630,0.038519,0.088889,-0.088889,-0.106667,0.118519,-0.044444,-0.121481,-0.029630,0.022222,0.042963,0.000000,-0.000000,-0.130370,-0.000000,0.000000,0.071111,0.000000,0.000000,-0.000000,-0.000000,-0.000000,-0.023704,0.000000,0.000000,-0.284444,0.000000,-0.000000,0.071111,-0.000000,0.000000,1.042963,-0.000000,-0.000000,-0.023704,0.000000,0.000000,-0.130370,0.022222,-0.029630,0.042963,0.029630,-0.014815,0.038519,-0.007407,0.007407,-0.014815,-0.044444,0.118519,-0.121481,-0.059259,0.059259,-0.094815,0.014815,-0.029630,0.038519,-0.088889,0.088889,-0.106667,-0.118519,0.044444,-0.121481,0.029630,-0.022222,0.042963},{0.038519,0.014815,0.029630,0.071111,-0.000000,0.000000,0.038519,-0.014815,-0.029630,-0.094815,-0.059259,-0.059259,-0.284444,0.000000,0.000000,-0.094815,0.059259,0.059259,-0.121481,-0.044444,-0.118519,-0.023704,0.000000,0.000000,-0.121481,0.044444,0.118519,0.189630,0.118519,-0.000000,-0.379259,-0.000000,0.000000,0.189630,-0.118519,-0.000000,-0.521481,-0.474074,0.000000,-0.379259,-0.000000,0.000000,-0.521481,0.474074,0.000000,-0.497778,-0.355556,0.000000,3.602963,0.000000,0.000000,-0.497778,0.355556,0.000000,0.038519,0.014815,-0.029630,0.071111,-0.000000,-0.000000,0.038519,-0.014815,0.029630,-0.094815,-0.059259,0.059259,-0.284444,0.000000,0.000000,-0.094815,0.059259,-0.059259,-0.121481,-0.044444,0.118519,-0.023704,0.000000,0.000000,-0.121481,0.044444,-0.118519},{0.014815,0.029630,0.014815,0.000000,0.118519,0.118519,-0.014815,0.029630,0.014815,-0.059259,-0.094815,-0.059259,0.000000,-0.521481,-0.474074,0.059259,-0.094815,-0.059259,0.044444,-0.053333,0.044444,0.000000,0.047407,0.355556,-0.044444,-0.053333,0.044444,0.118519,0.118519,0.000000,0.000000,-0.000000,0.000000,-0.118519,0.118519,0.000000,-0.474074,-0.521481,-0.000000,0.000000,-2.275556,0.000000,0.474074,-0.521481,0.000000,0.355556,0.047407,-0.000000,0.000000,4.171852,0.000000,-0.355556,0.047407,0.000000,0.014815,0.029630,-0.014815,0.000000,0.118519,-0.118519,-0.014815,0.029630,-0.014815,-0.059259,-0.094815,0.059259,0.000000,-0.521481,0.474074,0.059259,-0.094815,0.059259,0.044444,-0.053333,-0.044444,0.000000,0.047407,-0.355556,-0.044444,-0.053333,-0.044444},{0.029630,0.014815,0.038519,-0.000000,0.118519,0.189630,-0.029630,0.014815,0.038519,-0.059259,-0.059259,-0.094815,0.000000,-0.474074,-0.521481,0.059259,-0.059259,-0.094815,-0.118519,-0.044444,-0.121481,0.000000,-0.355556,-0.497778,0.118519,-0.044444,-0.121481,0.000000,0.000000,0.071111,0.000000,0.000000,-0.379259,0.000000,-0.000000,0.071111,-0.000000,-0.000000,-0.284444,0.000000,-0.000000,-0.379259,0.000000,0.000000,-0.284444,0.000000,-0.000000,-0.023704,0.000000,0.000000,3.602963,0.000000,0.000000,-0.023704,-0.029630,-0.014815,0.038519,0.000000,-0.118519,0.189630,0.029630,-0.014815,0.038519,0.059259,0.059259,-0.094815,0.000000,0.474074,-0.521481,-0.059259,0.059259,-0.094815,0.118519,0.044444,-0.121481,0.000000,0.355556,-0.497778,-0.118519,0.044444,-0.121481},{-0.010370,-0.003704,-0.007407,0.038519,0.014815,0.029630,0.008889,-0.011111,-0.022222,0.029630,0.014815,0.014815,-0.094815,-0.059259,-0.059259,-0.053333,0.044444,0.044444,0.025185,0.011111,0.029630,-0.121481,-0.044444,-0.118519,0.029630,0.033333,0.088889,-0.023704,-0.029630,-0.000000,0.189630,0.118519,-0.000000,-0.165926,-0.088889,0.000000,0.118519,0.118519,0.000000,-0.521481,-0.474074,0.000000,0.047407,0.355556,0.000000,-0.035556,0.088889,0.000000,-0.497778,-0.355556,0.000000,1.185185,0.266667,0.000000,-0.010370,-0.003704,0.007407,0.038519,0.014815,-0.029630,0.008889,-0.011111,0.022222,0.029630,0.014815,-0.014815,-0.094815,-0.059259,0.059259,-0.053333,0.044444,-0.044444,0.025185,0.011111,-0.029630,-0.121481,-0.044444,0.118519,0.029630,0.033333,-0.088889},{-0.003704,-0.010370,-0.007407,0.014815,0.029630,0.014815,0.011111,0.025185,0.029630,0.014815,0.038519,0.029630,-0.059259,-0.094815,-0.059259,-0.044444,-0.121481,-0.118519,-0.011111,0.008889,-0.022222,0.044444,-0.053333,0.044444,0.033333,0.029630,0.088889,-0.029630,-0.023704,-0.000000,0.118519,0.118519,0.000000,0.088889,-0.035556,0.000000,0.118519,0.189630,-0.000000,-0.474074,-0.521481,0.000000,-0.355556,-0.497778,0.000000,-0.088889,-0.165926,0.000000,0.355556,0.047407,0.000000,0.266667,1.185185,0.000000,-0.003704,-0.010370,0.007407,0.014815,0.029630,-0.014815,0.011111,0.025185,-0.029630,0.014815,0.038519,-0.029630,-0.059259,-0.094815,0.059259,-0.044444,-0.121481,0.118519,-0.011111,0.008889,0.022222,0.044444,-0.053333,-0.044444,0.033333,0.029630,-0.088889},{-0.007407,-0.007407,-0.014815,0.029630,0.014815,0.038519,0.022222,0.029630,0.042963,0.014815,0.029630,0.038519,-0.059259,-0.059259,-0.094815,-0.044444,-0.118519,-0.121481,0.029630,0.022222,0.042963,-0.118519,-0.044444,-0.121481,-0.088889,-0.088889,-0.106667,0.000000,0.000000,-0.000000,-0.000000,-0.000000,0.071111,0.000000,0.000000,-0.130370,-0.000000,-0.000000,0.071111,-0.000000,0.000000,-0.284444,0.000000,0.000000,-0.023704,-0.000000,0.000000,-0.130370,0.000000,0.000000,-0.023704,0.000000,0.000000,1.042963,0.007407,0.007407,-0.014815,-0.029630,-0.014815,0.038519,-0.022222,-0.029630,0.042963,-0.014815,-0.029630,0.038519,0.059259,0.059259,-0.094815,0.044444,0.118519,-0.121481,-0.029630,-0.022222,0.042963,0.118519,0.044444,-0.121481,0.088889,0.088889,-0.106667},{-0.050370,-0.016667,0.022222,0.042963,0.022222,-0.029630,-0.003704,-0.005556,0.007407,0.008889,-0.022222,0.011111,0.038519,0.029630,-0.014815,-0.010370,-0.007407,0.003704,0.004444,0.005556,-0.005556,-0.014815,-0.007407,0.007407,0.002963,0.001852,-0.001852,0.029630,0.033333,-0.088889,-0.121481,-0.044444,0.118519,0.025185,0.011111,-0.029630,-0.053333,0.044444,-0.044444,-0.094815,-0.059259,0.059259,0.029630,0.014815,-0.014815,0.008889,-0.011111,0.022222,0.038519,0.014815,-0.029630,-0.010370,-0.003704,0.007407,0.331852,0.066667,-0.066667,-0.106667,-0.088889,0.088889,-0.017778,0.022222,-0.022222,0.029630,0.088889,-0.033333,-0.121481,-0.118519,0.044444,0.025185,0.029630,-0.011111,-0.050370,-0.022222,0.016667,0.042963,0.029630,-0.022222,-0.003704,-0.007407,0.005556},{-0.016667,-0.050370,0.022222,-0.022222,0.008889,0.011111,0.005556,0.004444,-0.005556,0.022222,0.042963,-0.029630,0.029630,0.038519,-0.014815,-0.007407,-0.014815,0.007407,-0.005556,-0.003704,0.007407,-0.007407,-0.010370,0.003704,0.001852,0.002963,-0.001852,0.033333,0.029630,-0.088889,0.044444,-0.053333,-0.044444,-0.011111,0.008889,0.022222,-0.044444,-0.121481,0.118519,-0.059259,-0.094815,0.059259,0.014815,0.038519,-0.029630,0.011111,0.025185,-0.029630,0.014815,0.029630,-0.014815,-0.003704,-0.010370,0.007407,0.066667,0.331852,-0.066667,0.088889,0.029630,-0.033333,-0.022222,-0.050370,0.016667,-0.088889,-0.106667,0.088889,-0.118519,-0.121481,0.044444,0.029630,0.042963,-0.022222,0.022222,-0.017778,-0.022222,0.029630,0.025185,-0.011111,-0.007407,-0.003704,0.005556},{-0.022222,-0.022222,-0.017778,-0.029630,-0.011111,0.025185,0.007407,0.005556,-0.003704,-0.011111,-0.029630,0.025185,-0.014815,-0.014815,0.029630,0.003704,0.007407,-0.010370,0.005556,0.007407,-0.003704,0.007407,0.003704,-0.010370,-0.001852,-0.001852,0.002963,0.088889,0.088889,-0.106667,0.118519,0.044444,-0.121481,-0.029630,-0.022222,0.042963,0.044444,0.118519,-0.121481,0.059259,0.059259,-0.094815,-0.014815,-0.029630,0.038519,-0.022222,-0.029630,0.042963,-0.029630,-0.014815,0.038519,0.007407,0.007407,-0.014815,-0.066667,-0.066667,0.331852,-0.088889,-0.033333,0.029630,0.022222,0.016667,-0.050370,-0.033333,-0.088889,0.029630,-0.044444,-0.044444,-0.053333,0.011111,0.022222,0.008889,0.016667,0.022222,-0.050370,0.022222,0.011111,0.008889,-0.005556,-0.005556,0.004444},{0.042963,-0.022222,0.029630,-0.130370,0.000000,-0.000000,0.042963,0.022222,-0.029630,0.038519,-0.029630,0.014815,0.071111,0.000000,-0.000000,0.038519,0.029630,-0.014815,-0.014815,0.007407,-0.007407,-0.000000,-0.000000,0.000000,-0.014815,-0.007407,0.007407,-0.121481,0.044444,-0.118519,-0.023704,-0.000000,-0.000000,-0.121481,-0.044444,0.118519,-0.094815,0.059259,-0.059259,-0.284444,0.000000,0.000000,-0.094815,-0.059259,0.059259,0.038519,-0.014815,0.029630,0.071111,0.000000,0.000000,0.038519,0.014815,-0.029630,-0.106667,0.088889,-0.088889,1.042963,-0.000000,-0.000000,-0.106667,-0.088889,0.088889,-0.121481,0.118519,-0.044444,-0.023704,-0.000000,-0.000000,-0.121481,-0.118519,0.044444,0.042963,-0.029630,0.022222,-0.130370,0.000000,0.000000,0.042963,0.029630,-0.022222},{0.022222,0.008889,0.011111,0.000000,-0.165926,0.088889,-0.022222,0.008889,0.011111,-0.029630,0.038519,-0.014815,0.000000,0.189630,-0.118519,0.029630,0.038519,-0.014815,0.007407,-0.010370,0.003704,0.000000,-0.023704,0.029630,-0.007407,-0.010370,0.003704,-0.044444,-0.053333,-0.044444,-0.000000,0.047407,-0.355556,0.044444,-0.053333,-0.044444,0.059259,-0.094815,0.059259,0.000000,-0.521481,0.474074,-0.059259,-0.094815,0.059259,-0.014815,0.029630,-0.014815,-0.000000,0.118519,-0.118519,0.014815,0.029630,-0.014815,-0.088889,0.029630,-0.033333,-0.000000,1.185185,-0.266667,0.088889,0.029630,-0.033333,0.118519,-0.121481,0.044444,0.000000,-0.497778,0.355556,-0.118519,-0.121481,0.044444,-0.029630,0.025185,-0.011111,-0.000000,-0.035556,-0.088889,0.029630,0.025185,-0.011111},{0.029630,-0.011111,0.025185,0.000000,-0.088889,-0.035556,-0.029630,-0.011111,0.025185,0.014815,-0.014815,0.029630,0.000000,-0.118519,0.118519,-0.014815,-0.014815,0.029630,-0.007407,0.003704,-0.010370,-0.000000,0.029630,-0.023704,0.007407,0.003704,-0.010370,-0.118519,0.044444,-0.121481,0.000000,0.355556,-0.497778,0.118519,0.044444,-0.121481,-0.059259,0.059259,-0.094815,0.000000,0.474074,-0.521481,0.059259,0.059259,-0.094815,0.029630,-0.014815,0.038519,-0.000000,-0.118519,0.189630,-0.029630,-0.014815,0.038519,0.088889,-0.033333,0.029630,-0.000000,-0.266667,1.185185,-0.088889,-0.033333,0.029630,0.044444,-0.044444,-0.053333,-0.000000,-0.355556,0.047407,-0.044444,-0.044444,-0.053333,-0.022222,0.011111,0.008889,0.000000,0.088889,-0.165926,0.022222,0.011111,0.008889},{-0.003704,0.005556,-0.007407,0.042963,-0.022222,0.029630,-0.050370,0.016667,-0.022222,-0.010370,0.007407,-0.003704,0.038519,-0.029630,0.014815,0.008889,0.022222,-0.011111,0.002963,-0.001852,0.001852,-0.014815,0.007407,-0.007407,0.004444,-0.005556,0.005556,0.025185,-0.011111,0.029630,-0.121481,0.044444,-0.118519,0.029630,-0.033333,0.088889,0.029630,-0.014815,0.014815,-0.094815,0.059259,-0.059259,-0.053333,-0.044444,0.044444,-0.010370,0.003704,-0.007407,0.038519,-0.014815,0.029630,0.008889,0.011111,-0.022222,-0.017778,-0.022222,0.022222,-0.106667,0.088889,-0.088889,0.331852,-0.066667,0.066667,0.025185,-0.029630,0.011111,-0.121481,0.118519,-0.044444,0.029630,-0.088889,0.033333,-0.003704,0.007407,-0.005556,0.042963,-0.029630,0.022222,-0.050370,0.022222,-0.016667},{-0.005556,0.004444,-0.005556,0.022222,0.008889,0.011111,0.016667,-0.050370,0.022222,0.007407,-0.014815,0.007407,-0.029630,0.038519,-0.014815,-0.022222,0.042963,-0.029630,-0.001852,0.002963,-0.001852,0.007407,-0.010370,0.003704,0.005556,-0.003704,0.007407,0.011111,0.008889,0.022222,-0.044444,-0.053333,-0.044444,-0.033333,0.029630,-0.088889,-0.014815,0.038519,-0.029630,0.059259,-0.094815,0.059259,0.044444,-0.121481,0.118519,0.003704,-0.010370,0.007407,-0.014815,0.029630,-0.014815,-0.011111,0.025185,-0.029630,0.022222,-0.050370,0.016667,-0.088889,0.029630,-0.033333,-0.066667,0.331852,-0.066667,-0.029630,0.042963,-0.022222,0.118519,-0.121481,0.044444,0.088889,-0.106667,0.088889,0.007407,-0.003704,0.005556,-0.029630,0.025185,-0.011111,-0.022222,-0.017778,-0.022222},{-0.007407,0.005556,-0.003704,0.029630,-0.011111,0.025185,0.022222,-0.022222,-0.017778,-0.003704,0.007407,-0.010370,0.014815,-0.014815,0.029630,0.011111,-0.029630,0.025185,0.001852,-0.001852,0.002963,-0.007407,0.003704,-0.010370,-0.005556,0.007407,-0.003704,0.029630,-0.022222,0.042963,-0.118519,0.044444,-0.121481,-0.088889,0.088889,-0.106667,0.014815,-0.029630,0.038519,-0.059259,0.059259,-0.094815,-0.044444,0.118519,-0.121481,-0.007407,0.007407,-0.014815,0.029630,-0.014815,0.038519,0.022222,-0.029630,0.042963,-0.022222,0.016667,-0.050370,0.088889,-0.033333,0.029630,0.066667,-0.066667,0.331852,-0.011111,0.022222,0.008889,0.044444,-0.044444,-0.053333,0.033333,-0.088889,0.029630,0.005556,-0.005556,0.004444,-0.022222,0.011111,0.008889,-0.016667,0.022222,-0.050370},{0.008889,0.022222,0.011111,0.038519,-0.029630,-0.014815,-0.010370,0.007407,0.003704,-0.165926,0.000000,0.088889,0.189630,-0.000000,-0.118519,-0.023704,0.000000,0.029630,0.008889,-0.022222,0.011111,0.038519,0.029630,-0.014815,-0.010370,-0.007407,0.003704,-0.053333,-0.044444,-0.044444,-0.094815,0.059259,0.059259,0.029630,-0.014815,-0.014815,0.047407,-0.000000,-0.355556,-0.521481,0.000000,0.474074,0.118519,-0.000000,-0.118519,-0.053333,0.044444,-0.044444,-0.094815,-0.059259,0.059259,0.029630,0.014815,-0.014815,0.029630,-0.088889,-0.033333,-0.121481,0.118519,0.044444,0.025185,-0.029630,-0.011111,1.185185,0.000000,-0.266667,-0.497778,0.000000,0.355556,-0.035556,0.000000,-0.088889,0.029630,0.088889,-0.033333,-0.121481,-0.118519,0.044444,0.025185,0.029630,-0.011111},{-0.022222,0.042963,0.029630,-0.029630,0.038519,0.014815,0.007407,-0.014815,-0.007407,0.000000,-0.130370,0.000000,0.000000,0.071111,0.000000,0.000000,-0.000000,0.000000,0.022222,0.042963,-0.029630,0.029630,0.038519,-0.014815,-0.007407,-0.014815,0.007407,0.044444,-0.121481,-0.118519,0.059259,-0.094815,-0.059259,-0.014815,0.038519,0.029630,0.000000,-0.023704,0.000000,0.000000,-0.284444,0.000000,0.000000,0.071111,0.000000,-0.044444,-0.121481,0.118519,-0.059259,-0.094815,0.059259,0.014815,0.038519,-0.029630,0.088889,-0.106667,-0.088889,0.118519,-0.121481,-0.044444,-0.029630,0.042963,0.022222,0.000000,1.042963,0.000000,0.000000,-0.023704,0.000000,0.000000,-0.130370,0.000000,-0.088889,-0.106667,0.088889,-0.118519,-0.121481,0.044444,0.029630,0.042963,-0.022222},{-0.011111,0.029630,0.025185,-0.014815,0.014815,0.029630,0.003704,-0.007407,-0.010370,-0.088889,0.000000,-0.035556,-0.118519,0.000000,0.118519,0.029630,0.000000,-0.023704,-0.011111,-0.029630,0.025185,-0.014815,-0.014815,0.029630,0.003704,0.007407,-0.010370,0.044444,-0.118519,-0.121481,0.059259,-0.059259,-0.094815,-0.014815,0.029630,0.038519,0.355556,-0.000000,-0.497778,0.474074,0.000000,-0.521481,-0.118519,0.000000,0.189630,0.044444,0.118519,-0.121481,0.059259,0.059259,-0.094815,-0.014815,-0.029630,0.038519,-0.033333,0.088889,0.029630,-0.044444,0.044444,-0.053333,0.011111,-0.022222,0.008889,-0.266667,0.000000,1.185185,-0.355556,0.000000,0.047407,0.088889,0.000000,-0.165926,-0.033333,-0.088889,0.029630,-0.044444,-0.044444,-0.053333,0.011111,0.022222,0.008889},{0.038519,0.029630,0.014815,0.071111,0.000000,-0.000000,0.038519,-0.029630,-0.014815,0.189630,0.000000,0.118519,-0.379259,0.000000,0.000000,0.189630,0.000000,-0.118519,0.038519,-0.029630,0.014815,0.071111,0.000000,0.000000,0.038519,0.029630,-0.014815,-0.094815,-0.059259,-0.059259,-0.284444,0.000000,0.000000,-0.094815,0.059259,0.059259,-0.521481,0.000000,-0.474074,-0.379259,0.000000,-0.000000,-0.521481,0.000000,0.474074,-0.094815,0.059259,-0.059259,-0.284444,0.000000,0.000000,-0.094815,-0.059259,0.059259,-0.121481,-0.118519,-0.044444,-0.023704,0.000000,-0.000000,-0.121481,0.118519,0.044444,-0.497778,0.000000,-0.355556,3.602963,0.000000,-0.000000,-0.497778,0.000000,0.355556,-0.121481,0.118519,-0.044444,-0.023704,0.000000,0.000000,-0.121481,-0.118519,0.044444},{0.029630,0.038519,0.014815,0.000000,0.189630,0.118519,-0.029630,0.038519,0.014815,-0.000000,0.071111,0.000000,0.000000,-0.379259,0.000000,0.000000,0.071111,0.000000,-0.029630,0.038519,-0.014815,0.000000,0.189630,-0.118519,0.029630,0.038519,-0.014815,-0.059259,-0.094815,-0.059259,0.000000,-0.521481,-0.474074,0.059259,-0.094815,-0.059259,0.000000,-0.284444,0.000000,0.000000,-0.379259,0.000000,0.000000,-0.284444,0.000000,0.059259,-0.094815,0.059259,0.000000,-0.521481,0.474074,-0.059259,-0.094815,0.059259,-0.118519,-0.121481,-0.044444,0.000000,-0.497778,-0.355556,0.118519,-0.121481,-0.044444,0.000000,-0.023704,0.000000,0.000000,3.602963,0.000000,0.000000,-0.023704,0.000000,0.118519,-0.121481,0.044444,0.000000,-0.497778,0.355556,-0.118519,-0.121481,0.044444},{0.014815,0.014815,0.029630,0.000000,0.118519,0.118519,-0.014815,0.014815,0.029630,0.118519,0.000000,0.118519,0.000000,0.000000,-0.000000,-0.118519,0.000000,0.118519,0.014815,-0.014815,0.029630,0.000000,-0.118519,0.118519,-0.014815,-0.014815,0.029630,-0.059259,-0.059259,-0.094815,0.000000,-0.474074,-0.521481,0.059259,-0.059259,-0.094815,-0.474074,0.000000,-0.521481,-0.000000,0.000000,-2.275556,0.474074,0.000000,-0.521481,-0.059259,0.059259,-0.094815,0.000000,0.474074,-0.521481,0.059259,0.059259,-0.094815,0.044444,0.044444,-0.053333,-0.000000,0.355556,0.047407,-0.044444,0.044444,-0.053333,0.355556,0.000000,0.047407,-0.000000,0.000000,4.171852,-0.355556,0.000000,0.047407,0.044444,-0.044444,-0.053333,0.000000,-0.355556,0.047407,-0.044444,-0.044444,-0.053333},{-0.010370,-0.007407,-0.003704,0.038519,0.029630,0.014815,0.008889,-0.022222,-0.011111,-0.023704,0.000000,-0.029630,0.189630,0.000000,0.118519,-0.165926,0.000000,-0.088889,-0.010370,0.007407,-0.003704,0.038519,-0.029630,0.014815,0.008889,0.022222,-0.011111,0.029630,0.014815,0.014815,-0.094815,-0.059259,-0.059259,-0.053333,0.044444,0.044444,0.118519,0.000000,0.118519,-0.521481,0.000000,-0.474074,0.047407,0.000000,0.355556,0.029630,-0.014815,0.014815,-0.094815,0.059259,-0.059259,-0.053333,-0.044444,0.044444,0.025185,0.029630,0.011111,-0.121481,-0.118519,-0.044444,0.029630,0.088889,0.033333,-0.035556,0.000000,0.088889,-0.497778,0.000000,-0.355556,1.185185,0.000000,0.266667,0.025185,-0.029630,0.011111,-0.121481,0.118519,-0.044444,0.029630,-0.088889,0.033333},{-0.007407,-0.014815,-0.007407,0.029630,0.038519,0.014815,0.022222,0.042963,0.029630,0.000000,-0.000000,0.000000,0.000000,0.071111,0.000000,0.000000,-0.130370,0.000000,0.007407,-0.014815,0.007407,-0.029630,0.038519,-0.014815,-0.022222,0.042963,-0.029630,0.014815,0.038519,0.029630,-0.059259,-0.094815,-0.059259,-0.044444,-0.121481,-0.118519,0.000000,0.071111,0.000000,0.000000,-0.284444,0.000000,0.000000,-0.023704,0.000000,-0.014815,0.038519,-0.029630,0.059259,-0.094815,0.059259,0.044444,-0.121481,0.118519,0.029630,0.042963,0.022222,-0.118519,-0.121481,-0.044444,-0.088889,-0.106667,-0.088889,0.000000,-0.130370,0.000000,0.000000,-0.023704,0.000000,0.000000,1.042963,0.000000,-0.029630,0.042963,-0.022222,0.118519,-0.121481,0.044444,0.088889,-0.106667,0.088889},{-0.003704,-0.007407,-0.010370,0.014815,0.014815,0.029630,0.011111,0.029630,0.025185,-0.029630,0.000000,-0.023704,0.118519,0.000000,0.118519,0.088889,0.000000,-0.035556,-0.003704,0.007407,-0.010370,0.014815,-0.014815,0.029630,0.011111,-0.029630,0.025185,0.014815,0.029630,0.038519,-0.059259,-0.059259,-0.094815,-0.044444,-0.118519,-0.121481,0.118519,0.000000,0.189630,-0.474074,0.000000,-0.521481,-0.355556,0.000000,-0.497778,0.014815,-0.029630,0.038519,-0.059259,0.059259,-0.094815,-0.044444,0.118519,-0.121481,-0.011111,-0.022222,0.008889,0.044444,0.044444,-0.053333,0.033333,0.088889,0.029630,-0.088889,0.000000,-0.165926,0.355556,0.000000,0.047407,0.266667,0.000000,1.185185,-0.011111,0.022222,0.008889,0.044444,-0.044444,-0.053333,0.033333,-0.088889,0.029630},{0.004444,-0.005556,-0.005556,-0.014815,0.007407,0.007407,0.002963,-0.001852,-0.001852,0.008889,0.022222,0.011111,0.038519,-0.029630,-0.014815,-0.010370,0.007407,0.003704,-0.050370,0.016667,0.022222,0.042963,-0.022222,-0.029630,-0.003704,0.005556,0.007407,0.008889,0.011111,0.022222,0.038519,-0.014815,-0.029630,-0.010370,0.003704,0.007407,-0.053333,-0.044444,-0.044444,-0.094815,0.059259,0.059259,0.029630,-0.014815,-0.014815,0.029630,-0.033333,-0.088889,-0.121481,0.044444,0.118519,0.025185,-0.011111,-0.029630,-0.050370,0.022222,0.016667,0.042963,-0.029630,-0.022222,-0.003704,0.007407,0.005556,0.029630,-0.088889,-0.033333,-0.121481,0.118519,0.044444,0.025185,-0.029630,-0.011111,0.331852,-0.066667,-0.066667,-0.106667,0.088889,0.088889,-0.017778,-0.022222,-0.022222},{0.005556,-0.003704,-0.007407,0.007407,-0.010370,-0.003704,-0.001852,0.002963,0.001852,-0.022222,0.042963,0.029630,-0.029630,0.038519,0.014815,0.007407,-0.014815,-0.007407,0.016667,-0.050370,-0.022222,0.022222,0.008889,-0.011111,-0.005556,0.004444,0.005556,-0.011111,0.025185,0.029630,-0.014815,0.029630,0.014815,0.003704,-0.010370,-0.007407,0.044444,-0.121481,-0.118519,0.059259,-0.094815,-0.059259,-0.014815,0.038519,0.029630,-0.033333,0.029630,0.088889,-0.044444,-0.053333,0.044444,0.011111,0.008889,-0.022222,-0.022222,-0.017778,0.022222,-0.029630,0.025185,0.011111,0.007407,-0.003704,-0.005556,0.088889,-0.106667,-0.088889,0.118519,-0.121481,-0.044444,-0.029630,0.042963,0.022222,-0.066667,0.331852,0.066667,-0.088889,0.029630,0.033333,0.022222,-0.050370,-0.016667},{0.005556,-0.007407,-0.003704,0.007407,-0.003704,-0.010370,-0.001852,0.001852,0.002963,-0.011111,0.029630,0.025185,-0.014815,0.014815,0.029630,0.003704,-0.007407,-0.010370,-0.022222,0.022222,-0.017778,-0.029630,0.011111,0.025185,0.007407,-0.005556,-0.003704,-0.022222,0.029630,0.042963,-0.029630,0.014815,0.038519,0.007407,-0.007407,-0.014815,0.044444,-0.118519,-0.121481,0.059259,-0.059259,-0.094815,-0.014815,0.029630,0.038519,0.088889,-0.088889,-0.106667,0.118519,-0.044444,-0.121481,-0.029630,0.022222,0.042963,0.016667,-0.022222,-0.050370,0.022222,-0.011111,0.008889,-0.005556,0.005556,0.004444,-0.033333,0.088889,0.029630,-0.044444,0.044444,-0.053333,0.011111,-0.022222,0.008889,-0.066667,0.066667,0.331852,-0.088889,0.033333,0.029630,0.022222,-0.016667,-0.050370},{-0.014815,-0.007407,-0.007407,-0.000000,0.000000,0.000000,-0.014815,0.007407,0.007407,0.038519,0.029630,0.014815,0.071111,0.000000,-0.000000,0.038519,-0.029630,-0.014815,0.042963,0.022222,0.029630,-0.130370,0.000000,-0.000000,0.042963,-0.022222,-0.029630,0.038519,0.014815,0.029630,0.071111,-0.000000,0.000000,0.038519,-0.014815,-0.029630,-0.094815,-0.059259,-0.059259,-0.284444,0.000000,0.000000,-0.094815,0.059259,0.059259,-0.121481,-0.044444,-0.118519,-0.023704,0.000000,0.000000,-0.121481,0.044444,0.118519,0.042963,0.029630,0.022222,-0.130370,-0.000000,0.000000,0.042963,-0.029630,-0.022222,-0.121481,-0.118519,-0.044444,-0.023704,-0.000000,0.000000,-0.121481,0.118519,0.044444,-0.106667,-0.088889,-0.088889,1.042963,0.000000,0.000000,-0.106667,0.088889,0.088889},{-0.007407,-0.010370,-0.003704,-0.000000,-0.023704,-0.029630,0.007407,-0.010370,-0.003704,0.029630,0.038519,0.014815,0.000000,0.189630,0.118519,-0.029630,0.038519,0.014815,-0.022222,0.008889,-0.011111,0.000000,-0.165926,-0.088889,0.022222,0.008889,-0.011111,0.014815,0.029630,0.014815,0.000000,0.118519,0.118519,-0.014815,0.029630,0.014815,-0.059259,-0.094815,-0.059259,0.000000,-0.521481,-0.474074,0.059259,-0.094815,-0.059259,0.044444,-0.053333,0.044444,0.000000,0.047407,0.355556,-0.044444,-0.053333,0.044444,0.029630,0.025185,0.011111,0.000000,-0.035556,0.088889,-0.029630,0.025185,0.011111,-0.118519,-0.121481,-0.044444,0.000000,-0.497778,-0.355556,0.118519,-0.121481,-0.044444,0.088889,0.029630,0.033333,0.000000,1.185185,0.266667,-0.088889,0.029630,0.033333},{-0.007407,-0.003704,-0.010370,-0.000000,-0.029630,-0.023704,0.007407,-0.003704,-0.010370,0.014815,0.014815,0.029630,0.000000,0.118519,0.118519,-0.014815,0.014815,0.029630,0.029630,0.011111,0.025185,0.000000,0.088889,-0.035556,-0.029630,0.011111,0.025185,0.029630,0.014815,0.038519,-0.000000,0.118519,0.189630,-0.029630,0.014815,0.038519,-0.059259,-0.059259,-0.094815,0.000000,-0.474074,-0.521481,0.059259,-0.059259,-0.094815,-0.118519,-0.044444,-0.121481,0.000000,-0.355556,-0.497778,0.118519,-0.044444,-0.121481,-0.022222,-0.011111,0.008889,0.000000,-0.088889,-0.165926,0.022222,-0.011111,0.008889,0.044444,0.044444,-0.053333,0.000000,0.355556,0.047407,-0.044444,0.044444,-0.053333,0.088889,0.033333,0.029630,0.000000,0.266667,1.185185,-0.088889,0.033333,0.029630},{0.002963,0.001852,0.001852,-0.014815,-0.007407,-0.007407,0.004444,0.005556,0.005556,-0.010370,-0.007407,-0.003704,0.038519,0.029630,0.014815,0.008889,-0.022222,-0.011111,-0.003704,-0.005556,-0.007407,0.042963,0.022222,0.029630,-0.050370,-0.016667,-0.022222,-0.010370,-0.003704,-0.007407,0.038519,0.014815,0.029630,0.008889,-0.011111,-0.022222,0.029630,0.014815,0.014815,-0.094815,-0.059259,-0.059259,-0.053333,0.044444,0.044444,0.025185,0.011111,0.029630,-0.121481,-0.044444,-0.118519,0.029630,0.033333,0.088889,-0.003704,-0.007407,-0.005556,0.042963,0.029630,0.022222,-0.050370,-0.022222,-0.016667,0.025185,0.029630,0.011111,-0.121481,-0.118519,-0.044444,0.029630,0.088889,0.033333,-0.017778,0.022222,0.022222,-0.106667,-0.088889,-0.088889,0.331852,0.066667,0.066667},{0.001852,0.002963,0.001852,-0.007407,-0.010370,-0.003704,-0.005556,-0.003704,-0.007407,-0.007407,-0.014815,-0.007407,0.029630,0.038519,0.014815,0.022222,0.042963,0.029630,0.005556,0.004444,0.005556,-0.022222,0.008889,-0.011111,-0.016667,-0.050370,-0.022222,-0.003704,-0.010370,-0.007407,0.014815,0.029630,0.014815,0.011111,0.025185,0.029630,0.014815,0.038519,0.029630,-0.059259,-0.094815,-0.059259,-0.044444,-0.121481,-0.118519,-0.011111,0.008889,-0.022222,0.044444,-0.053333,0.044444,0.033333,0.029630,0.088889,-0.007407,-0.003704,-0.005556,0.029630,0.025185,0.011111,0.022222,-0.017778,0.022222,0.029630,0.042963,0.022222,-0.118519,-0.121481,-0.044444,-0.088889,-0.106667,-0.088889,-0.022222,-0.050370,-0.016667,0.088889,0.029630,0.033333,0.066667,0.331852,0.066667},{0.001852,0.001852,0.002963,-0.007407,-0.003704,-0.010370,-0.005556,-0.007407,-0.003704,-0.003704,-0.007407,-0.010370,0.014815,0.014815,0.029630,0.011111,0.029630,0.025185,-0.007407,-0.005556,-0.003704,0.029630,0.011111,0.025185,0.022222,0.022222,-0.017778,-0.007407,-0.007407,-0.014815,0.029630,0.014815,0.038519,0.022222,0.029630,0.042963,0.014815,0.029630,0.038519,-0.059259,-0.059259,-0.094815,-0.044444,-0.118519,-0.121481,0.029630,0.022222,0.042963,-0.118519,-0.044444,-0.121481,-0.088889,-0.088889,-0.106667,0.005556,0.005556,0.004444,-0.022222,-0.011111,0.008889,-0.016667,-0.022222,-0.050370,-0.011111,-0.022222,0.008889,0.044444,0.044444,-0.053333,0.033333,0.088889,0.029630,-0.022222,-0.016667,-0.050370,0.088889,0.033333,0.029630,0.066667,0.066667,0.331852}};
+double Klambda[81][81] = {{0.082963,0.066667,0.066667,-0.094815,0.088889,0.088889,0.011852,-0.022222,-0.022222,0.041481,-0.088889,0.033333,-0.047407,-0.118519,0.044444,0.005926,0.029630,-0.011111,-0.020741,0.022222,-0.016667,0.023704,0.029630,-0.022222,-0.002963,-0.007407,0.005556,0.041481,0.033333,-0.088889,-0.047407,0.044444,-0.118519,0.005926,-0.011111,0.029630,0.020741,-0.044444,-0.044444,-0.023704,-0.059259,-0.059259,0.002963,0.014815,0.014815,-0.010370,0.011111,0.022222,0.011852,0.014815,0.029630,-0.001481,-0.003704,-0.007407,-0.020741,-0.016667,0.022222,0.023704,-0.022222,0.029630,-0.002963,0.005556,-0.007407,-0.010370,0.022222,0.011111,0.011852,0.029630,0.014815,-0.001481,-0.007407,-0.003704,0.005185,-0.005556,-0.005556,-0.005926,-0.007407,-0.007407,0.000741,0.001852,0.001852},{0.066667,0.082963,0.066667,-0.088889,0.041481,0.033333,0.022222,-0.020741,-0.016667,0.088889,-0.094815,0.088889,-0.118519,-0.047407,0.044444,0.029630,0.023704,-0.022222,-0.022222,0.011852,-0.022222,0.029630,0.005926,-0.011111,-0.007407,-0.002963,0.005556,0.033333,0.041481,-0.088889,-0.044444,0.020741,-0.044444,0.011111,-0.010370,0.022222,0.044444,-0.047407,-0.118519,-0.059259,-0.023704,-0.059259,0.014815,0.011852,0.029630,-0.011111,0.005926,0.029630,0.014815,0.002963,0.014815,-0.003704,-0.001481,-0.007407,-0.016667,-0.020741,0.022222,0.022222,-0.010370,0.011111,-0.005556,0.005185,-0.005556,-0.022222,0.023704,0.029630,0.029630,0.011852,0.014815,-0.007407,-0.005926,-0.007407,0.005556,-0.002963,-0.007407,-0.007407,-0.001481,-0.003704,0.001852,0.000741,0.001852},{0.066667,0.066667,0.082963,-0.088889,0.033333,0.041481,0.022222,-0.016667,-0.020741,0.033333,-0.088889,0.041481,-0.044444,-0.044444,0.020741,0.011111,0.022222,-0.010370,-0.016667,0.022222,-0.020741,0.022222,0.011111,-0.010370,-0.005556,-0.005556,0.005185,0.088889,0.088889,-0.094815,-0.118519,0.044444,-0.047407,0.029630,-0.022222,0.023704,0.044444,-0.118519,-0.047407,-0.059259,-0.059259,-0.023704,0.014815,0.029630,0.011852,-0.022222,0.029630,0.023704,0.029630,0.014815,0.011852,-0.007407,-0.007407,-0.005926,-0.022222,-0.022222,0.011852,0.029630,-0.011111,0.005926,-0.007407,0.005556,-0.002963,-0.011111,0.029630,0.005926,0.014815,0.014815,0.002963,-0.003704,-0.007407,-0.001481,0.005556,-0.007407,-0.002963,-0.007407,-0.003704,-0.001481,0.001852,0.001852,0.000741},{-0.094815,-0.088889,-0.088889,0.189630,-0.000000,0.000000,-0.094815,0.088889,0.088889,-0.047407,0.118519,-0.044444,0.094815,0.000000,0.000000,-0.047407,-0.118519,0.044444,0.023704,-0.029630,0.022222,-0.047407,-0.000000,0.000000,0.023704,0.029630,-0.022222,-0.047407,-0.044444,0.118519,0.094815,-0.000000,-0.000000,-0.047407,0.044444,-0.118519,-0.023704,0.059259,0.059259,0.047407,0.000000,-0.000000,-0.023704,-0.059259,-0.059259,0.011852,-0.014815,-0.029630,-0.023704,0.000000,0.000000,0.011852,0.014815,0.029630,0.023704,0.022222,-0.029630,-0.047407,0.000000,-0.000000,0.023704,-0.022222,0.029630,0.011852,-0.029630,-0.014815,-0.023704,0.000000,-0.000000,0.011852,0.029630,0.014815,-0.005926,0.007407,0.007407,0.011852,0.000000,0.000000,-0.005926,-0.007407,-0.007407},{0.088889,0.041481,0.033333,-0.000000,0.331852,0.266667,-0.088889,0.041481,0.033333,0.118519,-0.047407,0.044444,-0.000000,-0.379259,0.355556,-0.118519,-0.047407,0.044444,-0.029630,0.005926,-0.011111,0.000000,0.047407,-0.088889,0.029630,0.005926,-0.011111,0.044444,0.020741,-0.044444,-0.000000,0.165926,-0.355556,-0.044444,0.020741,-0.044444,0.059259,-0.023704,-0.059259,0.000000,-0.189630,-0.474074,-0.059259,-0.023704,-0.059259,-0.014815,0.002963,0.014815,0.000000,0.023704,0.118519,0.014815,0.002963,0.014815,-0.022222,-0.010370,0.011111,0.000000,-0.082963,0.088889,0.022222,-0.010370,0.011111,-0.029630,0.011852,0.014815,0.000000,0.094815,0.118519,0.029630,0.011852,0.014815,0.007407,-0.001481,-0.003704,-0.000000,-0.011852,-0.029630,-0.007407,-0.001481,-0.003704},{0.088889,0.033333,0.041481,0.000000,0.266667,0.331852,-0.088889,0.033333,0.041481,0.044444,-0.044444,0.020741,0.000000,-0.355556,0.165926,-0.044444,-0.044444,0.020741,-0.022222,0.011111,-0.010370,0.000000,0.088889,-0.082963,0.022222,0.011111,-0.010370,0.118519,0.044444,-0.047407,0.000000,0.355556,-0.379259,-0.118519,0.044444,-0.047407,0.059259,-0.059259,-0.023704,0.000000,-0.474074,-0.189630,-0.059259,-0.059259,-0.023704,-0.029630,0.014815,0.011852,-0.000000,0.118519,0.094815,0.029630,0.014815,0.011852,-0.029630,-0.011111,0.005926,0.000000,-0.088889,0.047407,0.029630,-0.011111,0.005926,-0.014815,0.014815,0.002963,0.000000,0.118519,0.023704,0.014815,0.014815,0.002963,0.007407,-0.003704,-0.001481,-0.000000,-0.029630,-0.011852,-0.007407,-0.003704,-0.001481},{0.011852,0.022222,0.022222,-0.094815,-0.088889,-0.088889,0.082963,-0.066667,-0.066667,0.005926,-0.029630,0.011111,-0.047407,0.118519,-0.044444,0.041481,0.088889,-0.033333,-0.002963,0.007407,-0.005556,0.023704,-0.029630,0.022222,-0.020741,-0.022222,0.016667,0.005926,0.011111,-0.029630,-0.047407,-0.044444,0.118519,0.041481,-0.033333,0.088889,0.002963,-0.014815,-0.014815,-0.023704,0.059259,0.059259,0.020741,0.044444,0.044444,-0.001481,0.003704,0.007407,0.011852,-0.014815,-0.029630,-0.010370,-0.011111,-0.022222,-0.002963,-0.005556,0.007407,0.023704,0.022222,-0.029630,-0.020741,0.016667,-0.022222,-0.001481,0.007407,0.003704,0.011852,-0.029630,-0.014815,-0.010370,-0.022222,-0.011111,0.000741,-0.001852,-0.001852,-0.005926,0.007407,0.007407,0.005185,0.005556,0.005556},{-0.022222,-0.020741,-0.016667,0.088889,0.041481,0.033333,-0.066667,0.082963,0.066667,-0.029630,0.023704,-0.022222,0.118519,-0.047407,0.044444,-0.088889,-0.094815,0.088889,0.007407,-0.002963,0.005556,-0.029630,0.005926,-0.011111,0.022222,0.011852,-0.022222,-0.011111,-0.010370,0.022222,0.044444,0.020741,-0.044444,-0.033333,0.041481,-0.088889,-0.014815,0.011852,0.029630,0.059259,-0.023704,-0.059259,-0.044444,-0.047407,-0.118519,0.003704,-0.001481,-0.007407,-0.014815,0.002963,0.014815,0.011111,0.005926,0.029630,0.005556,0.005185,-0.005556,-0.022222,-0.010370,0.011111,0.016667,-0.020741,0.022222,0.007407,-0.005926,-0.007407,-0.029630,0.011852,0.014815,0.022222,0.023704,0.029630,-0.001852,0.000741,0.001852,0.007407,-0.001481,-0.003704,-0.005556,-0.002963,-0.007407},{-0.022222,-0.016667,-0.020741,0.088889,0.033333,0.041481,-0.066667,0.066667,0.082963,-0.011111,0.022222,-0.010370,0.044444,-0.044444,0.020741,-0.033333,-0.088889,0.041481,0.005556,-0.005556,0.005185,-0.022222,0.011111,-0.010370,0.016667,0.022222,-0.020741,-0.029630,-0.022222,0.023704,0.118519,0.044444,-0.047407,-0.088889,0.088889,-0.094815,-0.014815,0.029630,0.011852,0.059259,-0.059259,-0.023704,-0.044444,-0.118519,-0.047407,0.007407,-0.007407,-0.005926,-0.029630,0.014815,0.011852,0.022222,0.029630,0.023704,0.007407,0.005556,-0.002963,-0.029630,-0.011111,0.005926,0.022222,-0.022222,0.011852,0.003704,-0.007407,-0.001481,-0.014815,0.014815,0.002963,0.011111,0.029630,0.005926,-0.001852,0.001852,0.000741,0.007407,-0.003704,-0.001481,-0.005556,-0.007407,-0.002963},{0.041481,0.088889,0.033333,-0.047407,0.118519,0.044444,0.005926,-0.029630,-0.011111,0.331852,0.000000,0.266667,-0.379259,0.000000,0.355556,0.047407,0.000000,-0.088889,0.041481,-0.088889,0.033333,-0.047407,-0.118519,0.044444,0.005926,0.029630,-0.011111,0.020741,0.044444,-0.044444,-0.023704,0.059259,-0.059259,0.002963,-0.014815,0.014815,0.165926,0.000000,-0.355556,-0.189630,0.000000,-0.474074,0.023704,0.000000,0.118519,0.020741,-0.044444,-0.044444,-0.023704,-0.059259,-0.059259,0.002963,0.014815,0.014815,-0.010370,-0.022222,0.011111,0.011852,-0.029630,0.014815,-0.001481,0.007407,-0.003704,-0.082963,0.000000,0.088889,0.094815,0.000000,0.118519,-0.011852,0.000000,-0.029630,-0.010370,0.022222,0.011111,0.011852,0.029630,0.014815,-0.001481,-0.007407,-0.003704},{-0.088889,-0.094815,-0.088889,0.118519,-0.047407,-0.044444,-0.029630,0.023704,0.022222,0.000000,0.189630,0.000000,0.000000,0.094815,-0.000000,0.000000,-0.047407,0.000000,0.088889,-0.094815,0.088889,-0.118519,-0.047407,0.044444,0.029630,0.023704,-0.022222,-0.044444,-0.047407,0.118519,0.059259,-0.023704,0.059259,-0.014815,0.011852,-0.029630,0.000000,0.094815,0.000000,0.000000,0.047407,0.000000,-0.000000,-0.023704,-0.000000,0.044444,-0.047407,-0.118519,-0.059259,-0.023704,-0.059259,0.014815,0.011852,0.029630,0.022222,0.023704,-0.029630,-0.029630,0.011852,-0.014815,0.007407,-0.005926,0.007407,0.000000,-0.047407,0.000000,-0.000000,-0.023704,-0.000000,0.000000,0.011852,0.000000,-0.022222,0.023704,0.029630,0.029630,0.011852,0.014815,-0.007407,-0.005926,-0.007407},{0.033333,0.088889,0.041481,-0.044444,0.044444,0.020741,0.011111,-0.022222,-0.010370,0.266667,0.000000,0.331852,-0.355556,0.000000,0.165926,0.088889,0.000000,-0.082963,0.033333,-0.088889,0.041481,-0.044444,-0.044444,0.020741,0.011111,0.022222,-0.010370,0.044444,0.118519,-0.047407,-0.059259,0.059259,-0.023704,0.014815,-0.029630,0.011852,0.355556,0.000000,-0.379259,-0.474074,0.000000,-0.189630,0.118519,0.000000,0.094815,0.044444,-0.118519,-0.047407,-0.059259,-0.059259,-0.023704,0.014815,0.029630,0.011852,-0.011111,-0.029630,0.005926,0.014815,-0.014815,0.002963,-0.003704,0.007407,-0.001481,-0.088889,0.000000,0.047407,0.118519,0.000000,0.023704,-0.029630,0.000000,-0.011852,-0.011111,0.029630,0.005926,0.014815,0.014815,0.002963,-0.003704,-0.007407,-0.001481},{-0.047407,-0.118519,-0.044444,0.094815,0.000000,0.000000,-0.047407,0.118519,0.044444,-0.379259,0.000000,-0.355556,0.758519,0.000000,0.000000,-0.379259,-0.000000,0.355556,-0.047407,0.118519,-0.044444,0.094815,0.000000,-0.000000,-0.047407,-0.118519,0.044444,-0.023704,-0.059259,0.059259,0.047407,0.000000,-0.000000,-0.023704,0.059259,-0.059259,-0.189630,-0.000000,0.474074,0.379259,0.000000,0.000000,-0.189630,0.000000,-0.474074,-0.023704,0.059259,0.059259,0.047407,0.000000,0.000000,-0.023704,-0.059259,-0.059259,0.011852,0.029630,-0.014815,-0.023704,0.000000,-0.000000,0.011852,-0.029630,0.014815,0.094815,-0.000000,-0.118519,-0.189630,0.000000,0.000000,0.094815,0.000000,0.118519,0.011852,-0.029630,-0.014815,-0.023704,-0.000000,-0.000000,0.011852,0.029630,0.014815},{-0.118519,-0.047407,-0.044444,0.000000,-0.379259,-0.355556,0.118519,-0.047407,-0.044444,0.000000,0.094815,0.000000,0.000000,0.758519,-0.000000,0.000000,0.094815,0.000000,0.118519,-0.047407,0.044444,0.000000,-0.379259,0.355556,-0.118519,-0.047407,0.044444,-0.059259,-0.023704,0.059259,0.000000,-0.189630,0.474074,0.059259,-0.023704,0.059259,0.000000,0.047407,-0.000000,0.000000,0.379259,0.000000,0.000000,0.047407,0.000000,0.059259,-0.023704,-0.059259,0.000000,-0.189630,-0.474074,-0.059259,-0.023704,-0.059259,0.029630,0.011852,-0.014815,0.000000,0.094815,-0.118519,-0.029630,0.011852,-0.014815,0.000000,-0.023704,0.000000,0.000000,-0.189630,0.000000,0.000000,-0.023704,0.000000,-0.029630,0.011852,0.014815,0.000000,0.094815,0.118519,0.029630,0.011852,0.014815},{0.044444,0.044444,0.020741,0.000000,0.355556,0.165926,-0.044444,0.044444,0.020741,0.355556,-0.000000,0.165926,0.000000,-0.000000,1.327407,-0.355556,-0.000000,0.165926,0.044444,-0.044444,0.020741,0.000000,-0.355556,0.165926,-0.044444,-0.044444,0.020741,0.059259,0.059259,-0.023704,-0.000000,0.474074,-0.189630,-0.059259,0.059259,-0.023704,0.474074,0.000000,-0.189630,0.000000,0.000000,-1.517037,-0.474074,0.000000,-0.189630,0.059259,-0.059259,-0.023704,0.000000,-0.474074,-0.189630,-0.059259,-0.059259,-0.023704,-0.014815,-0.014815,0.002963,0.000000,-0.118519,0.023704,0.014815,-0.014815,0.002963,-0.118519,-0.000000,0.023704,0.000000,0.000000,0.189630,0.118519,0.000000,0.023704,-0.014815,0.014815,0.002963,0.000000,0.118519,0.023704,0.014815,0.014815,0.002963},{0.005926,0.029630,0.011111,-0.047407,-0.118519,-0.044444,0.041481,-0.088889,-0.033333,0.047407,0.000000,0.088889,-0.379259,0.000000,-0.355556,0.331852,0.000000,-0.266667,0.005926,-0.029630,0.011111,-0.047407,0.118519,-0.044444,0.041481,0.088889,-0.033333,0.002963,0.014815,-0.014815,-0.023704,-0.059259,0.059259,0.020741,-0.044444,0.044444,0.023704,0.000000,-0.118519,-0.189630,0.000000,0.474074,0.165926,0.000000,0.355556,0.002963,-0.014815,-0.014815,-0.023704,0.059259,0.059259,0.020741,0.044444,0.044444,-0.001481,-0.007407,0.003704,0.011852,0.029630,-0.014815,-0.010370,0.022222,-0.011111,-0.011852,0.000000,0.029630,0.094815,0.000000,-0.118519,-0.082963,0.000000,-0.088889,-0.001481,0.007407,0.003704,0.011852,-0.029630,-0.014815,-0.010370,-0.022222,-0.011111},{0.029630,0.023704,0.022222,-0.118519,-0.047407,-0.044444,0.088889,-0.094815,-0.088889,0.000000,-0.047407,0.000000,-0.000000,0.094815,-0.000000,0.000000,0.189630,0.000000,-0.029630,0.023704,-0.022222,0.118519,-0.047407,0.044444,-0.088889,-0.094815,0.088889,0.014815,0.011852,-0.029630,-0.059259,-0.023704,0.059259,0.044444,-0.047407,0.118519,0.000000,-0.023704,-0.000000,0.000000,0.047407,0.000000,0.000000,0.094815,0.000000,-0.014815,0.011852,0.029630,0.059259,-0.023704,-0.059259,-0.044444,-0.047407,-0.118519,-0.007407,-0.005926,0.007407,0.029630,0.011852,-0.014815,-0.022222,0.023704,-0.029630,0.000000,0.011852,0.000000,0.000000,-0.023704,-0.000000,0.000000,-0.047407,0.000000,0.007407,-0.005926,-0.007407,-0.029630,0.011852,0.014815,0.022222,0.023704,0.029630},{-0.011111,-0.022222,-0.010370,0.044444,0.044444,0.020741,-0.033333,0.088889,0.041481,-0.088889,0.000000,-0.082963,0.355556,0.000000,0.165926,-0.266667,0.000000,0.331852,-0.011111,0.022222,-0.010370,0.044444,-0.044444,0.020741,-0.033333,-0.088889,0.041481,-0.014815,-0.029630,0.011852,0.059259,0.059259,-0.023704,-0.044444,0.118519,-0.047407,-0.118519,0.000000,0.094815,0.474074,0.000000,-0.189630,-0.355556,0.000000,-0.379259,-0.014815,0.029630,0.011852,0.059259,-0.059259,-0.023704,-0.044444,-0.118519,-0.047407,0.003704,0.007407,-0.001481,-0.014815,-0.014815,0.002963,0.011111,-0.029630,0.005926,0.029630,0.000000,-0.011852,-0.118519,0.000000,0.023704,0.088889,0.000000,0.047407,0.003704,-0.007407,-0.001481,-0.014815,0.014815,0.002963,0.011111,0.029630,0.005926},{-0.020741,-0.022222,-0.016667,0.023704,-0.029630,-0.022222,-0.002963,0.007407,0.005556,0.041481,0.088889,0.033333,-0.047407,0.118519,0.044444,0.005926,-0.029630,-0.011111,0.082963,-0.066667,0.066667,-0.094815,-0.088889,0.088889,0.011852,0.022222,-0.022222,-0.010370,-0.011111,0.022222,0.011852,-0.014815,0.029630,-0.001481,0.003704,-0.007407,0.020741,0.044444,-0.044444,-0.023704,0.059259,-0.059259,0.002963,-0.014815,0.014815,0.041481,-0.033333,-0.088889,-0.047407,-0.044444,-0.118519,0.005926,0.011111,0.029630,0.005185,0.005556,-0.005556,-0.005926,0.007407,-0.007407,0.000741,-0.001852,0.001852,-0.010370,-0.022222,0.011111,0.011852,-0.029630,0.014815,-0.001481,0.007407,-0.003704,-0.020741,0.016667,0.022222,0.023704,0.022222,0.029630,-0.002963,-0.005556,-0.007407},{0.022222,0.011852,0.022222,-0.029630,0.005926,0.011111,0.007407,-0.002963,-0.005556,-0.088889,-0.094815,-0.088889,0.118519,-0.047407,-0.044444,-0.029630,0.023704,0.022222,-0.066667,0.082963,-0.066667,0.088889,0.041481,-0.033333,-0.022222,-0.020741,0.016667,0.011111,0.005926,-0.029630,-0.014815,0.002963,-0.014815,0.003704,-0.001481,0.007407,-0.044444,-0.047407,0.118519,0.059259,-0.023704,0.059259,-0.014815,0.011852,-0.029630,-0.033333,0.041481,0.088889,0.044444,0.020741,0.044444,-0.011111,-0.010370,-0.022222,-0.005556,-0.002963,0.007407,0.007407,-0.001481,0.003704,-0.001852,0.000741,-0.001852,0.022222,0.023704,-0.029630,-0.029630,0.011852,-0.014815,0.007407,-0.005926,0.007407,0.016667,-0.020741,-0.022222,-0.022222,-0.010370,-0.011111,0.005556,0.005185,0.005556},{-0.016667,-0.022222,-0.020741,0.022222,-0.011111,-0.010370,-0.005556,0.005556,0.005185,0.033333,0.088889,0.041481,-0.044444,0.044444,0.020741,0.011111,-0.022222,-0.010370,0.066667,-0.066667,0.082963,-0.088889,-0.033333,0.041481,0.022222,0.016667,-0.020741,-0.022222,-0.029630,0.023704,0.029630,-0.014815,0.011852,-0.007407,0.007407,-0.005926,0.044444,0.118519,-0.047407,-0.059259,0.059259,-0.023704,0.014815,-0.029630,0.011852,0.088889,-0.088889,-0.094815,-0.118519,-0.044444,-0.047407,0.029630,0.022222,0.023704,0.005556,0.007407,-0.002963,-0.007407,0.003704,-0.001481,0.001852,-0.001852,0.000741,-0.011111,-0.029630,0.005926,0.014815,-0.014815,0.002963,-0.003704,0.007407,-0.001481,-0.022222,0.022222,0.011852,0.029630,0.011111,0.005926,-0.007407,-0.005556,-0.002963},{0.023704,0.029630,0.022222,-0.047407,0.000000,0.000000,0.023704,-0.029630,-0.022222,-0.047407,-0.118519,-0.044444,0.094815,0.000000,0.000000,-0.047407,0.118519,0.044444,-0.094815,0.088889,-0.088889,0.189630,0.000000,-0.000000,-0.094815,-0.088889,0.088889,0.011852,0.014815,-0.029630,-0.023704,-0.000000,0.000000,0.011852,-0.014815,0.029630,-0.023704,-0.059259,0.059259,0.047407,0.000000,0.000000,-0.023704,0.059259,-0.059259,-0.047407,0.044444,0.118519,0.094815,0.000000,0.000000,-0.047407,-0.044444,-0.118519,-0.005926,-0.007407,0.007407,0.011852,-0.000000,0.000000,-0.005926,0.007407,-0.007407,0.011852,0.029630,-0.014815,-0.023704,0.000000,0.000000,0.011852,-0.029630,0.014815,0.023704,-0.022222,-0.029630,-0.047407,0.000000,-0.000000,0.023704,0.022222,0.029630},{0.029630,0.005926,0.011111,-0.000000,0.047407,0.088889,-0.029630,0.005926,0.011111,-0.118519,-0.047407,-0.044444,-0.000000,-0.379259,-0.355556,0.118519,-0.047407,-0.044444,-0.088889,0.041481,-0.033333,0.000000,0.331852,-0.266667,0.088889,0.041481,-0.033333,0.014815,0.002963,-0.014815,-0.000000,0.023704,-0.118519,-0.014815,0.002963,-0.014815,-0.059259,-0.023704,0.059259,0.000000,-0.189630,0.474074,0.059259,-0.023704,0.059259,-0.044444,0.020741,0.044444,0.000000,0.165926,0.355556,0.044444,0.020741,0.044444,-0.007407,-0.001481,0.003704,0.000000,-0.011852,0.029630,0.007407,-0.001481,0.003704,0.029630,0.011852,-0.014815,0.000000,0.094815,-0.118519,-0.029630,0.011852,-0.014815,0.022222,-0.010370,-0.011111,0.000000,-0.082963,-0.088889,-0.022222,-0.010370,-0.011111},{-0.022222,-0.011111,-0.010370,0.000000,-0.088889,-0.082963,0.022222,-0.011111,-0.010370,0.044444,0.044444,0.020741,-0.000000,0.355556,0.165926,-0.044444,0.044444,0.020741,0.088889,-0.033333,0.041481,-0.000000,-0.266667,0.331852,-0.088889,-0.033333,0.041481,-0.029630,-0.014815,0.011852,-0.000000,-0.118519,0.094815,0.029630,-0.014815,0.011852,0.059259,0.059259,-0.023704,0.000000,0.474074,-0.189630,-0.059259,0.059259,-0.023704,0.118519,-0.044444,-0.047407,0.000000,-0.355556,-0.379259,-0.118519,-0.044444,-0.047407,0.007407,0.003704,-0.001481,-0.000000,0.029630,-0.011852,-0.007407,0.003704,-0.001481,-0.014815,-0.014815,0.002963,0.000000,-0.118519,0.023704,0.014815,-0.014815,0.002963,-0.029630,0.011111,0.005926,0.000000,0.088889,0.047407,0.029630,0.011111,0.005926},{-0.002963,-0.007407,-0.005556,0.023704,0.029630,0.022222,-0.020741,0.022222,0.016667,0.005926,0.029630,0.011111,-0.047407,-0.118519,-0.044444,0.041481,-0.088889,-0.033333,0.011852,-0.022222,0.022222,-0.094815,0.088889,-0.088889,0.082963,0.066667,-0.066667,-0.001481,-0.003704,0.007407,0.011852,0.014815,-0.029630,-0.010370,0.011111,-0.022222,0.002963,0.014815,-0.014815,-0.023704,-0.059259,0.059259,0.020741,-0.044444,0.044444,0.005926,-0.011111,-0.029630,-0.047407,0.044444,0.118519,0.041481,0.033333,0.088889,0.000741,0.001852,-0.001852,-0.005926,-0.007407,0.007407,0.005185,-0.005556,0.005556,-0.001481,-0.007407,0.003704,0.011852,0.029630,-0.014815,-0.010370,0.022222,-0.011111,-0.002963,0.005556,0.007407,0.023704,-0.022222,-0.029630,-0.020741,-0.016667,-0.022222},{-0.007407,-0.002963,-0.005556,0.029630,0.005926,0.011111,-0.022222,0.011852,0.022222,0.029630,0.023704,0.022222,-0.118519,-0.047407,-0.044444,0.088889,-0.094815,-0.088889,0.022222,-0.020741,0.016667,-0.088889,0.041481,-0.033333,0.066667,0.082963,-0.066667,-0.003704,-0.001481,0.007407,0.014815,0.002963,-0.014815,-0.011111,0.005926,-0.029630,0.014815,0.011852,-0.029630,-0.059259,-0.023704,0.059259,0.044444,-0.047407,0.118519,0.011111,-0.010370,-0.022222,-0.044444,0.020741,0.044444,0.033333,0.041481,0.088889,0.001852,0.000741,-0.001852,-0.007407,-0.001481,0.003704,0.005556,-0.002963,0.007407,-0.007407,-0.005926,0.007407,0.029630,0.011852,-0.014815,-0.022222,0.023704,-0.029630,-0.005556,0.005185,0.005556,0.022222,-0.010370,-0.011111,-0.016667,-0.020741,-0.022222},{0.005556,0.005556,0.005185,-0.022222,-0.011111,-0.010370,0.016667,-0.022222,-0.020741,-0.011111,-0.022222,-0.010370,0.044444,0.044444,0.020741,-0.033333,0.088889,0.041481,-0.022222,0.016667,-0.020741,0.088889,-0.033333,0.041481,-0.066667,-0.066667,0.082963,0.007407,0.007407,-0.005926,-0.029630,-0.014815,0.011852,0.022222,-0.029630,0.023704,-0.014815,-0.029630,0.011852,0.059259,0.059259,-0.023704,-0.044444,0.118519,-0.047407,-0.029630,0.022222,0.023704,0.118519,-0.044444,-0.047407,-0.088889,-0.088889,-0.094815,-0.001852,-0.001852,0.000741,0.007407,0.003704,-0.001481,-0.005556,0.007407,-0.002963,0.003704,0.007407,-0.001481,-0.014815,-0.014815,0.002963,0.011111,-0.029630,0.005926,0.007407,-0.005556,-0.002963,-0.029630,0.011111,0.005926,0.022222,0.022222,0.011852},{0.041481,0.033333,0.088889,-0.047407,0.044444,0.118519,0.005926,-0.011111,-0.029630,0.020741,-0.044444,0.044444,-0.023704,-0.059259,0.059259,0.002963,0.014815,-0.014815,-0.010370,0.011111,-0.022222,0.011852,0.014815,-0.029630,-0.001481,-0.003704,0.007407,0.331852,0.266667,-0.000000,-0.379259,0.355556,0.000000,0.047407,-0.088889,0.000000,0.165926,-0.355556,0.000000,-0.189630,-0.474074,0.000000,0.023704,0.118519,0.000000,-0.082963,0.088889,0.000000,0.094815,0.118519,-0.000000,-0.011852,-0.029630,-0.000000,0.041481,0.033333,-0.088889,-0.047407,0.044444,-0.118519,0.005926,-0.011111,0.029630,0.020741,-0.044444,-0.044444,-0.023704,-0.059259,-0.059259,0.002963,0.014815,0.014815,-0.010370,0.011111,0.022222,0.011852,0.014815,0.029630,-0.001481,-0.003704,-0.007407},{0.033333,0.041481,0.088889,-0.044444,0.020741,0.044444,0.011111,-0.010370,-0.022222,0.044444,-0.047407,0.118519,-0.059259,-0.023704,0.059259,0.014815,0.011852,-0.029630,-0.011111,0.005926,-0.029630,0.014815,0.002963,-0.014815,-0.003704,-0.001481,0.007407,0.266667,0.331852,-0.000000,-0.355556,0.165926,0.000000,0.088889,-0.082963,-0.000000,0.355556,-0.379259,0.000000,-0.474074,-0.189630,0.000000,0.118519,0.094815,-0.000000,-0.088889,0.047407,0.000000,0.118519,0.023704,0.000000,-0.029630,-0.011852,-0.000000,0.033333,0.041481,-0.088889,-0.044444,0.020741,-0.044444,0.011111,-0.010370,0.022222,0.044444,-0.047407,-0.118519,-0.059259,-0.023704,-0.059259,0.014815,0.011852,0.029630,-0.011111,0.005926,0.029630,0.014815,0.002963,0.014815,-0.003704,-0.001481,-0.007407},{-0.088889,-0.088889,-0.094815,0.118519,-0.044444,-0.047407,-0.029630,0.022222,0.023704,-0.044444,0.118519,-0.047407,0.059259,0.059259,-0.023704,-0.014815,-0.029630,0.011852,0.022222,-0.029630,0.023704,-0.029630,-0.014815,0.011852,0.007407,0.007407,-0.005926,-0.000000,-0.000000,0.189630,0.000000,0.000000,0.094815,-0.000000,-0.000000,-0.047407,-0.000000,0.000000,0.094815,-0.000000,0.000000,0.047407,0.000000,0.000000,-0.023704,0.000000,-0.000000,-0.047407,0.000000,0.000000,-0.023704,0.000000,0.000000,0.011852,0.088889,0.088889,-0.094815,-0.118519,0.044444,-0.047407,0.029630,-0.022222,0.023704,0.044444,-0.118519,-0.047407,-0.059259,-0.059259,-0.023704,0.014815,0.029630,0.011852,-0.022222,0.029630,0.023704,0.029630,0.014815,0.011852,-0.007407,-0.007407,-0.005926},{-0.047407,-0.044444,-0.118519,0.094815,-0.000000,0.000000,-0.047407,0.044444,0.118519,-0.023704,0.059259,-0.059259,0.047407,0.000000,-0.000000,-0.023704,-0.059259,0.059259,0.011852,-0.014815,0.029630,-0.023704,-0.000000,-0.000000,0.011852,0.014815,-0.029630,-0.379259,-0.355556,0.000000,0.758519,0.000000,0.000000,-0.379259,0.355556,0.000000,-0.189630,0.474074,0.000000,0.379259,-0.000000,0.000000,-0.189630,-0.474074,0.000000,0.094815,-0.118519,0.000000,-0.189630,-0.000000,0.000000,0.094815,0.118519,-0.000000,-0.047407,-0.044444,0.118519,0.094815,-0.000000,-0.000000,-0.047407,0.044444,-0.118519,-0.023704,0.059259,0.059259,0.047407,0.000000,0.000000,-0.023704,-0.059259,-0.059259,0.011852,-0.014815,-0.029630,-0.023704,-0.000000,0.000000,0.011852,0.014815,0.029630},{0.044444,0.020741,0.044444,-0.000000,0.165926,0.355556,-0.044444,0.020741,0.044444,0.059259,-0.023704,0.059259,0.000000,-0.189630,0.474074,-0.059259,-0.023704,0.059259,-0.014815,0.002963,-0.014815,0.000000,0.023704,-0.118519,0.014815,0.002963,-0.014815,0.355556,0.165926,0.000000,0.000000,1.327407,-0.000000,-0.355556,0.165926,-0.000000,0.474074,-0.189630,0.000000,-0.000000,-1.517037,-0.000000,-0.474074,-0.189630,-0.000000,-0.118519,0.023704,0.000000,0.000000,0.189630,0.000000,0.118519,0.023704,0.000000,0.044444,0.020741,-0.044444,-0.000000,0.165926,-0.355556,-0.044444,0.020741,-0.044444,0.059259,-0.023704,-0.059259,0.000000,-0.189630,-0.474074,-0.059259,-0.023704,-0.059259,-0.014815,0.002963,0.014815,0.000000,0.023704,0.118519,0.014815,0.002963,0.014815},{-0.118519,-0.044444,-0.047407,-0.000000,-0.355556,-0.379259,0.118519,-0.044444,-0.047407,-0.059259,0.059259,-0.023704,-0.000000,0.474074,-0.189630,0.059259,0.059259,-0.023704,0.029630,-0.014815,0.011852,0.000000,-0.118519,0.094815,-0.029630,-0.014815,0.011852,0.000000,0.000000,0.094815,0.000000,-0.000000,0.758519,-0.000000,-0.000000,0.094815,0.000000,0.000000,0.047407,0.000000,-0.000000,0.379259,0.000000,0.000000,0.047407,-0.000000,0.000000,-0.023704,0.000000,0.000000,-0.189630,-0.000000,-0.000000,-0.023704,0.118519,0.044444,-0.047407,0.000000,0.355556,-0.379259,-0.118519,0.044444,-0.047407,0.059259,-0.059259,-0.023704,0.000000,-0.474074,-0.189630,-0.059259,-0.059259,-0.023704,-0.029630,0.014815,0.011852,-0.000000,0.118519,0.094815,0.029630,0.014815,0.011852},{0.005926,0.011111,0.029630,-0.047407,-0.044444,-0.118519,0.041481,-0.033333,-0.088889,0.002963,-0.014815,0.014815,-0.023704,0.059259,-0.059259,0.020741,0.044444,-0.044444,-0.001481,0.003704,-0.007407,0.011852,-0.014815,0.029630,-0.010370,-0.011111,0.022222,0.047407,0.088889,-0.000000,-0.379259,-0.355556,-0.000000,0.331852,-0.266667,-0.000000,0.023704,-0.118519,-0.000000,-0.189630,0.474074,0.000000,0.165926,0.355556,-0.000000,-0.011852,0.029630,0.000000,0.094815,-0.118519,-0.000000,-0.082963,-0.088889,0.000000,0.005926,0.011111,-0.029630,-0.047407,-0.044444,0.118519,0.041481,-0.033333,0.088889,0.002963,-0.014815,-0.014815,-0.023704,0.059259,0.059259,0.020741,0.044444,0.044444,-0.001481,0.003704,0.007407,0.011852,-0.014815,-0.029630,-0.010370,-0.011111,-0.022222},{-0.011111,-0.010370,-0.022222,0.044444,0.020741,0.044444,-0.033333,0.041481,0.088889,-0.014815,0.011852,-0.029630,0.059259,-0.023704,0.059259,-0.044444,-0.047407,0.118519,0.003704,-0.001481,0.007407,-0.014815,0.002963,-0.014815,0.011111,0.005926,-0.029630,-0.088889,-0.082963,-0.000000,0.355556,0.165926,-0.000000,-0.266667,0.331852,-0.000000,-0.118519,0.094815,-0.000000,0.474074,-0.189630,0.000000,-0.355556,-0.379259,-0.000000,0.029630,-0.011852,-0.000000,-0.118519,0.023704,0.000000,0.088889,0.047407,0.000000,-0.011111,-0.010370,0.022222,0.044444,0.020741,-0.044444,-0.033333,0.041481,-0.088889,-0.014815,0.011852,0.029630,0.059259,-0.023704,-0.059259,-0.044444,-0.047407,-0.118519,0.003704,-0.001481,-0.007407,-0.014815,0.002963,0.014815,0.011111,0.005926,0.029630},{0.029630,0.022222,0.023704,-0.118519,-0.044444,-0.047407,0.088889,-0.088889,-0.094815,0.014815,-0.029630,0.011852,-0.059259,0.059259,-0.023704,0.044444,0.118519,-0.047407,-0.007407,0.007407,-0.005926,0.029630,-0.014815,0.011852,-0.022222,-0.029630,0.023704,0.000000,-0.000000,-0.047407,0.000000,-0.000000,0.094815,-0.000000,-0.000000,0.189630,0.000000,0.000000,-0.023704,0.000000,0.000000,0.047407,-0.000000,0.000000,0.094815,-0.000000,0.000000,0.011852,0.000000,-0.000000,-0.023704,0.000000,0.000000,-0.047407,-0.029630,-0.022222,0.023704,0.118519,0.044444,-0.047407,-0.088889,0.088889,-0.094815,-0.014815,0.029630,0.011852,0.059259,-0.059259,-0.023704,-0.044444,-0.118519,-0.047407,0.007407,-0.007407,-0.005926,-0.029630,0.014815,0.011852,0.022222,0.029630,0.023704},{0.020741,0.044444,0.044444,-0.023704,0.059259,0.059259,0.002963,-0.014815,-0.014815,0.165926,0.000000,0.355556,-0.189630,0.000000,0.474074,0.023704,-0.000000,-0.118519,0.020741,-0.044444,0.044444,-0.023704,-0.059259,0.059259,0.002963,0.014815,-0.014815,0.165926,0.355556,-0.000000,-0.189630,0.474074,0.000000,0.023704,-0.118519,-0.000000,1.327407,-0.000000,0.000000,-1.517037,0.000000,0.000000,0.189630,0.000000,-0.000000,0.165926,-0.355556,-0.000000,-0.189630,-0.474074,0.000000,0.023704,0.118519,0.000000,0.020741,0.044444,-0.044444,-0.023704,0.059259,-0.059259,0.002963,-0.014815,0.014815,0.165926,-0.000000,-0.355556,-0.189630,0.000000,-0.474074,0.023704,0.000000,0.118519,0.020741,-0.044444,-0.044444,-0.023704,-0.059259,-0.059259,0.002963,0.014815,0.014815},{-0.044444,-0.047407,-0.118519,0.059259,-0.023704,-0.059259,-0.014815,0.011852,0.029630,0.000000,0.094815,0.000000,-0.000000,0.047407,0.000000,0.000000,-0.023704,0.000000,0.044444,-0.047407,0.118519,-0.059259,-0.023704,0.059259,0.014815,0.011852,-0.029630,-0.355556,-0.379259,0.000000,0.474074,-0.189630,0.000000,-0.118519,0.094815,0.000000,-0.000000,0.758519,0.000000,0.000000,0.379259,0.000000,-0.000000,-0.189630,0.000000,0.355556,-0.379259,-0.000000,-0.474074,-0.189630,-0.000000,0.118519,0.094815,0.000000,-0.044444,-0.047407,0.118519,0.059259,-0.023704,0.059259,-0.014815,0.011852,-0.029630,0.000000,0.094815,0.000000,0.000000,0.047407,0.000000,0.000000,-0.023704,0.000000,0.044444,-0.047407,-0.118519,-0.059259,-0.023704,-0.059259,0.014815,0.011852,0.029630},{-0.044444,-0.118519,-0.047407,0.059259,-0.059259,-0.023704,-0.014815,0.029630,0.011852,-0.355556,0.000000,-0.379259,0.474074,-0.000000,-0.189630,-0.118519,-0.000000,0.094815,-0.044444,0.118519,-0.047407,0.059259,0.059259,-0.023704,-0.014815,-0.029630,0.011852,0.000000,0.000000,0.094815,0.000000,0.000000,0.047407,-0.000000,-0.000000,-0.023704,0.000000,-0.000000,0.758519,-0.000000,0.000000,0.379259,-0.000000,0.000000,-0.189630,-0.000000,-0.000000,0.094815,-0.000000,-0.000000,0.047407,-0.000000,0.000000,-0.023704,0.044444,0.118519,-0.047407,-0.059259,0.059259,-0.023704,0.014815,-0.029630,0.011852,0.355556,-0.000000,-0.379259,-0.474074,0.000000,-0.189630,0.118519,0.000000,0.094815,0.044444,-0.118519,-0.047407,-0.059259,-0.059259,-0.023704,0.014815,0.029630,0.011852},{-0.023704,-0.059259,-0.059259,0.047407,0.000000,0.000000,-0.023704,0.059259,0.059259,-0.189630,0.000000,-0.474074,0.379259,0.000000,0.000000,-0.189630,0.000000,0.474074,-0.023704,0.059259,-0.059259,0.047407,0.000000,0.000000,-0.023704,-0.059259,0.059259,-0.189630,-0.474074,0.000000,0.379259,0.000000,0.000000,-0.189630,0.474074,0.000000,-1.517037,0.000000,-0.000000,3.034074,0.000000,0.000000,-1.517037,0.000000,-0.000000,-0.189630,0.474074,0.000000,0.379259,0.000000,0.000000,-0.189630,-0.474074,0.000000,-0.023704,-0.059259,0.059259,0.047407,0.000000,0.000000,-0.023704,0.059259,-0.059259,-0.189630,0.000000,0.474074,0.379259,0.000000,-0.000000,-0.189630,0.000000,-0.474074,-0.023704,0.059259,0.059259,0.047407,0.000000,0.000000,-0.023704,-0.059259,-0.059259},{-0.059259,-0.023704,-0.059259,0.000000,-0.189630,-0.474074,0.059259,-0.023704,-0.059259,0.000000,0.047407,0.000000,0.000000,0.379259,0.000000,0.000000,0.047407,0.000000,0.059259,-0.023704,0.059259,0.000000,-0.189630,0.474074,-0.059259,-0.023704,0.059259,-0.474074,-0.189630,0.000000,-0.000000,-1.517037,-0.000000,0.474074,-0.189630,0.000000,0.000000,0.379259,0.000000,0.000000,3.034074,0.000000,0.000000,0.379259,0.000000,0.474074,-0.189630,-0.000000,0.000000,-1.517037,0.000000,-0.474074,-0.189630,0.000000,-0.059259,-0.023704,0.059259,0.000000,-0.189630,0.474074,0.059259,-0.023704,0.059259,0.000000,0.047407,0.000000,0.000000,0.379259,0.000000,0.000000,0.047407,0.000000,0.059259,-0.023704,-0.059259,0.000000,-0.189630,-0.474074,-0.059259,-0.023704,-0.059259},{-0.059259,-0.059259,-0.023704,-0.000000,-0.474074,-0.189630,0.059259,-0.059259,-0.023704,-0.474074,0.000000,-0.189630,0.000000,0.000000,-1.517037,0.474074,0.000000,-0.189630,-0.059259,0.059259,-0.023704,0.000000,0.474074,-0.189630,0.059259,0.059259,-0.023704,-0.000000,-0.000000,0.047407,0.000000,0.000000,0.379259,-0.000000,0.000000,0.047407,0.000000,0.000000,0.379259,0.000000,0.000000,3.034074,0.000000,0.000000,0.379259,0.000000,-0.000000,0.047407,0.000000,-0.000000,0.379259,0.000000,0.000000,0.047407,0.059259,0.059259,-0.023704,0.000000,0.474074,-0.189630,-0.059259,0.059259,-0.023704,0.474074,0.000000,-0.189630,-0.000000,0.000000,-1.517037,-0.474074,0.000000,-0.189630,0.059259,-0.059259,-0.023704,0.000000,-0.474074,-0.189630,-0.059259,-0.059259,-0.023704},{0.002963,0.014815,0.014815,-0.023704,-0.059259,-0.059259,0.020741,-0.044444,-0.044444,0.023704,0.000000,0.118519,-0.189630,0.000000,-0.474074,0.165926,0.000000,-0.355556,0.002963,-0.014815,0.014815,-0.023704,0.059259,-0.059259,0.020741,0.044444,-0.044444,0.023704,0.118519,-0.000000,-0.189630,-0.474074,0.000000,0.165926,-0.355556,-0.000000,0.189630,-0.000000,-0.000000,-1.517037,0.000000,-0.000000,1.327407,0.000000,0.000000,0.023704,-0.118519,0.000000,-0.189630,0.474074,0.000000,0.165926,0.355556,0.000000,0.002963,0.014815,-0.014815,-0.023704,-0.059259,0.059259,0.020741,-0.044444,0.044444,0.023704,0.000000,-0.118519,-0.189630,0.000000,0.474074,0.165926,0.000000,0.355556,0.002963,-0.014815,-0.014815,-0.023704,0.059259,0.059259,0.020741,0.044444,0.044444},{0.014815,0.011852,0.029630,-0.059259,-0.023704,-0.059259,0.044444,-0.047407,-0.118519,0.000000,-0.023704,0.000000,0.000000,0.047407,0.000000,0.000000,0.094815,0.000000,-0.014815,0.011852,-0.029630,0.059259,-0.023704,0.059259,-0.044444,-0.047407,0.118519,0.118519,0.094815,0.000000,-0.474074,-0.189630,0.000000,0.355556,-0.379259,0.000000,0.000000,-0.189630,0.000000,0.000000,0.379259,0.000000,0.000000,0.758519,0.000000,-0.118519,0.094815,-0.000000,0.474074,-0.189630,0.000000,-0.355556,-0.379259,0.000000,0.014815,0.011852,-0.029630,-0.059259,-0.023704,0.059259,0.044444,-0.047407,0.118519,0.000000,-0.023704,0.000000,0.000000,0.047407,0.000000,0.000000,0.094815,0.000000,-0.014815,0.011852,0.029630,0.059259,-0.023704,-0.059259,-0.044444,-0.047407,-0.118519},{0.014815,0.029630,0.011852,-0.059259,-0.059259,-0.023704,0.044444,-0.118519,-0.047407,0.118519,-0.000000,0.094815,-0.474074,0.000000,-0.189630,0.355556,0.000000,-0.379259,0.014815,-0.029630,0.011852,-0.059259,0.059259,-0.023704,0.044444,0.118519,-0.047407,0.000000,-0.000000,-0.023704,0.000000,-0.000000,0.047407,-0.000000,0.000000,0.094815,-0.000000,0.000000,-0.189630,-0.000000,0.000000,0.379259,0.000000,0.000000,0.758519,0.000000,0.000000,-0.023704,0.000000,0.000000,0.047407,0.000000,0.000000,0.094815,-0.014815,-0.029630,0.011852,0.059259,0.059259,-0.023704,-0.044444,0.118519,-0.047407,-0.118519,0.000000,0.094815,0.474074,0.000000,-0.189630,-0.355556,0.000000,-0.379259,-0.014815,0.029630,0.011852,0.059259,-0.059259,-0.023704,-0.044444,-0.118519,-0.047407},{-0.010370,-0.011111,-0.022222,0.011852,-0.014815,-0.029630,-0.001481,0.003704,0.007407,0.020741,0.044444,0.044444,-0.023704,0.059259,0.059259,0.002963,-0.014815,-0.014815,0.041481,-0.033333,0.088889,-0.047407,-0.044444,0.118519,0.005926,0.011111,-0.029630,-0.082963,-0.088889,0.000000,0.094815,-0.118519,-0.000000,-0.011852,0.029630,0.000000,0.165926,0.355556,-0.000000,-0.189630,0.474074,0.000000,0.023704,-0.118519,0.000000,0.331852,-0.266667,-0.000000,-0.379259,-0.355556,-0.000000,0.047407,0.088889,0.000000,-0.010370,-0.011111,0.022222,0.011852,-0.014815,0.029630,-0.001481,0.003704,-0.007407,0.020741,0.044444,-0.044444,-0.023704,0.059259,-0.059259,0.002963,-0.014815,0.014815,0.041481,-0.033333,-0.088889,-0.047407,-0.044444,-0.118519,0.005926,0.011111,0.029630},{0.011111,0.005926,0.029630,-0.014815,0.002963,0.014815,0.003704,-0.001481,-0.007407,-0.044444,-0.047407,-0.118519,0.059259,-0.023704,-0.059259,-0.014815,0.011852,0.029630,-0.033333,0.041481,-0.088889,0.044444,0.020741,-0.044444,-0.011111,-0.010370,0.022222,0.088889,0.047407,-0.000000,-0.118519,0.023704,0.000000,0.029630,-0.011852,0.000000,-0.355556,-0.379259,-0.000000,0.474074,-0.189630,0.000000,-0.118519,0.094815,-0.000000,-0.266667,0.331852,0.000000,0.355556,0.165926,-0.000000,-0.088889,-0.082963,0.000000,0.011111,0.005926,-0.029630,-0.014815,0.002963,-0.014815,0.003704,-0.001481,0.007407,-0.044444,-0.047407,0.118519,0.059259,-0.023704,0.059259,-0.014815,0.011852,-0.029630,-0.033333,0.041481,0.088889,0.044444,0.020741,0.044444,-0.011111,-0.010370,-0.022222},{0.022222,0.029630,0.023704,-0.029630,0.014815,0.011852,0.007407,-0.007407,-0.005926,-0.044444,-0.118519,-0.047407,0.059259,-0.059259,-0.023704,-0.014815,0.029630,0.011852,-0.088889,0.088889,-0.094815,0.118519,0.044444,-0.047407,-0.029630,-0.022222,0.023704,0.000000,0.000000,-0.047407,0.000000,0.000000,-0.023704,0.000000,-0.000000,0.011852,-0.000000,-0.000000,0.094815,-0.000000,-0.000000,0.047407,0.000000,-0.000000,-0.023704,-0.000000,0.000000,0.189630,0.000000,-0.000000,0.094815,-0.000000,0.000000,-0.047407,-0.022222,-0.029630,0.023704,0.029630,-0.014815,0.011852,-0.007407,0.007407,-0.005926,0.044444,0.118519,-0.047407,-0.059259,0.059259,-0.023704,0.014815,-0.029630,0.011852,0.088889,-0.088889,-0.094815,-0.118519,-0.044444,-0.047407,0.029630,0.022222,0.023704},{0.011852,0.014815,0.029630,-0.023704,0.000000,-0.000000,0.011852,-0.014815,-0.029630,-0.023704,-0.059259,-0.059259,0.047407,0.000000,0.000000,-0.023704,0.059259,0.059259,-0.047407,0.044444,-0.118519,0.094815,0.000000,0.000000,-0.047407,-0.044444,0.118519,0.094815,0.118519,0.000000,-0.189630,0.000000,0.000000,0.094815,-0.118519,0.000000,-0.189630,-0.474074,-0.000000,0.379259,0.000000,0.000000,-0.189630,0.474074,0.000000,-0.379259,0.355556,0.000000,0.758519,0.000000,0.000000,-0.379259,-0.355556,0.000000,0.011852,0.014815,-0.029630,-0.023704,0.000000,0.000000,0.011852,-0.014815,0.029630,-0.023704,-0.059259,0.059259,0.047407,0.000000,0.000000,-0.023704,0.059259,-0.059259,-0.047407,0.044444,0.118519,0.094815,0.000000,0.000000,-0.047407,-0.044444,-0.118519},{0.014815,0.002963,0.014815,-0.000000,0.023704,0.118519,-0.014815,0.002963,0.014815,-0.059259,-0.023704,-0.059259,0.000000,-0.189630,-0.474074,0.059259,-0.023704,-0.059259,-0.044444,0.020741,-0.044444,0.000000,0.165926,-0.355556,0.044444,0.020741,-0.044444,0.118519,0.023704,0.000000,-0.000000,0.189630,0.000000,-0.118519,0.023704,-0.000000,-0.474074,-0.189630,-0.000000,-0.000000,-1.517037,-0.000000,0.474074,-0.189630,0.000000,-0.355556,0.165926,-0.000000,0.000000,1.327407,0.000000,0.355556,0.165926,0.000000,0.014815,0.002963,-0.014815,-0.000000,0.023704,-0.118519,-0.014815,0.002963,-0.014815,-0.059259,-0.023704,0.059259,0.000000,-0.189630,0.474074,0.059259,-0.023704,0.059259,-0.044444,0.020741,0.044444,0.000000,0.165926,0.355556,0.044444,0.020741,0.044444},{0.029630,0.014815,0.011852,0.000000,0.118519,0.094815,-0.029630,0.014815,0.011852,-0.059259,-0.059259,-0.023704,0.000000,-0.474074,-0.189630,0.059259,-0.059259,-0.023704,-0.118519,0.044444,-0.047407,0.000000,0.355556,-0.379259,0.118519,0.044444,-0.047407,-0.000000,0.000000,-0.023704,0.000000,0.000000,-0.189630,-0.000000,0.000000,-0.023704,0.000000,-0.000000,0.047407,0.000000,0.000000,0.379259,0.000000,0.000000,0.047407,0.000000,-0.000000,0.094815,0.000000,0.000000,0.758519,0.000000,0.000000,0.094815,-0.029630,-0.014815,0.011852,-0.000000,-0.118519,0.094815,0.029630,-0.014815,0.011852,0.059259,0.059259,-0.023704,0.000000,0.474074,-0.189630,-0.059259,0.059259,-0.023704,0.118519,-0.044444,-0.047407,0.000000,-0.355556,-0.379259,-0.118519,-0.044444,-0.047407},{-0.001481,-0.003704,-0.007407,0.011852,0.014815,0.029630,-0.010370,0.011111,0.022222,0.002963,0.014815,0.014815,-0.023704,-0.059259,-0.059259,0.020741,-0.044444,-0.044444,0.005926,-0.011111,0.029630,-0.047407,0.044444,-0.118519,0.041481,0.033333,-0.088889,-0.011852,-0.029630,0.000000,0.094815,0.118519,-0.000000,-0.082963,0.088889,0.000000,0.023704,0.118519,-0.000000,-0.189630,-0.474074,-0.000000,0.165926,-0.355556,0.000000,0.047407,-0.088889,-0.000000,-0.379259,0.355556,0.000000,0.331852,0.266667,0.000000,-0.001481,-0.003704,0.007407,0.011852,0.014815,-0.029630,-0.010370,0.011111,-0.022222,0.002963,0.014815,-0.014815,-0.023704,-0.059259,0.059259,0.020741,-0.044444,0.044444,0.005926,-0.011111,-0.029630,-0.047407,0.044444,0.118519,0.041481,0.033333,0.088889},{-0.003704,-0.001481,-0.007407,0.014815,0.002963,0.014815,-0.011111,0.005926,0.029630,0.014815,0.011852,0.029630,-0.059259,-0.023704,-0.059259,0.044444,-0.047407,-0.118519,0.011111,-0.010370,0.022222,-0.044444,0.020741,-0.044444,0.033333,0.041481,-0.088889,-0.029630,-0.011852,0.000000,0.118519,0.023704,-0.000000,-0.088889,0.047407,0.000000,0.118519,0.094815,-0.000000,-0.474074,-0.189630,0.000000,0.355556,-0.379259,0.000000,0.088889,-0.082963,0.000000,-0.355556,0.165926,0.000000,0.266667,0.331852,0.000000,-0.003704,-0.001481,0.007407,0.014815,0.002963,-0.014815,-0.011111,0.005926,-0.029630,0.014815,0.011852,-0.029630,-0.059259,-0.023704,0.059259,0.044444,-0.047407,0.118519,0.011111,-0.010370,-0.022222,-0.044444,0.020741,0.044444,0.033333,0.041481,0.088889},{-0.007407,-0.007407,-0.005926,0.029630,0.014815,0.011852,-0.022222,0.029630,0.023704,0.014815,0.029630,0.011852,-0.059259,-0.059259,-0.023704,0.044444,-0.118519,-0.047407,0.029630,-0.022222,0.023704,-0.118519,0.044444,-0.047407,0.088889,0.088889,-0.094815,-0.000000,-0.000000,0.011852,-0.000000,0.000000,-0.023704,0.000000,0.000000,-0.047407,0.000000,-0.000000,-0.023704,0.000000,0.000000,0.047407,0.000000,0.000000,0.094815,0.000000,0.000000,-0.047407,0.000000,0.000000,0.094815,0.000000,0.000000,0.189630,0.007407,0.007407,-0.005926,-0.029630,-0.014815,0.011852,0.022222,-0.029630,0.023704,-0.014815,-0.029630,0.011852,0.059259,0.059259,-0.023704,-0.044444,0.118519,-0.047407,-0.029630,0.022222,0.023704,0.118519,-0.044444,-0.047407,-0.088889,-0.088889,-0.094815},{-0.020741,-0.016667,-0.022222,0.023704,-0.022222,-0.029630,-0.002963,0.005556,0.007407,-0.010370,0.022222,-0.011111,0.011852,0.029630,-0.014815,-0.001481,-0.007407,0.003704,0.005185,-0.005556,0.005556,-0.005926,-0.007407,0.007407,0.000741,0.001852,-0.001852,0.041481,0.033333,0.088889,-0.047407,0.044444,0.118519,0.005926,-0.011111,-0.029630,0.020741,-0.044444,0.044444,-0.023704,-0.059259,0.059259,0.002963,0.014815,-0.014815,-0.010370,0.011111,-0.022222,0.011852,0.014815,-0.029630,-0.001481,-0.003704,0.007407,0.082963,0.066667,-0.066667,-0.094815,0.088889,-0.088889,0.011852,-0.022222,0.022222,0.041481,-0.088889,-0.033333,-0.047407,-0.118519,-0.044444,0.005926,0.029630,0.011111,-0.020741,0.022222,0.016667,0.023704,0.029630,0.022222,-0.002963,-0.007407,-0.005556},{-0.016667,-0.020741,-0.022222,0.022222,-0.010370,-0.011111,-0.005556,0.005185,0.005556,-0.022222,0.023704,-0.029630,0.029630,0.011852,-0.014815,-0.007407,-0.005926,0.007407,0.005556,-0.002963,0.007407,-0.007407,-0.001481,0.003704,0.001852,0.000741,-0.001852,0.033333,0.041481,0.088889,-0.044444,0.020741,0.044444,0.011111,-0.010370,-0.022222,0.044444,-0.047407,0.118519,-0.059259,-0.023704,0.059259,0.014815,0.011852,-0.029630,-0.011111,0.005926,-0.029630,0.014815,0.002963,-0.014815,-0.003704,-0.001481,0.007407,0.066667,0.082963,-0.066667,-0.088889,0.041481,-0.033333,0.022222,-0.020741,0.016667,0.088889,-0.094815,-0.088889,-0.118519,-0.047407,-0.044444,0.029630,0.023704,0.022222,-0.022222,0.011852,0.022222,0.029630,0.005926,0.011111,-0.007407,-0.002963,-0.005556},{0.022222,0.022222,0.011852,-0.029630,0.011111,0.005926,0.007407,-0.005556,-0.002963,0.011111,-0.029630,0.005926,-0.014815,-0.014815,0.002963,0.003704,0.007407,-0.001481,-0.005556,0.007407,-0.002963,0.007407,0.003704,-0.001481,-0.001852,-0.001852,0.000741,-0.088889,-0.088889,-0.094815,0.118519,-0.044444,-0.047407,-0.029630,0.022222,0.023704,-0.044444,0.118519,-0.047407,0.059259,0.059259,-0.023704,-0.014815,-0.029630,0.011852,0.022222,-0.029630,0.023704,-0.029630,-0.014815,0.011852,0.007407,0.007407,-0.005926,-0.066667,-0.066667,0.082963,0.088889,-0.033333,0.041481,-0.022222,0.016667,-0.020741,-0.033333,0.088889,0.041481,0.044444,0.044444,0.020741,-0.011111,-0.022222,-0.010370,0.016667,-0.022222,-0.020741,-0.022222,-0.011111,-0.010370,0.005556,0.005556,0.005185},{0.023704,0.022222,0.029630,-0.047407,0.000000,0.000000,0.023704,-0.022222,-0.029630,0.011852,-0.029630,0.014815,-0.023704,0.000000,0.000000,0.011852,0.029630,-0.014815,-0.005926,0.007407,-0.007407,0.011852,0.000000,-0.000000,-0.005926,-0.007407,0.007407,-0.047407,-0.044444,-0.118519,0.094815,-0.000000,0.000000,-0.047407,0.044444,0.118519,-0.023704,0.059259,-0.059259,0.047407,0.000000,0.000000,-0.023704,-0.059259,0.059259,0.011852,-0.014815,0.029630,-0.023704,-0.000000,-0.000000,0.011852,0.014815,-0.029630,-0.094815,-0.088889,0.088889,0.189630,-0.000000,-0.000000,-0.094815,0.088889,-0.088889,-0.047407,0.118519,0.044444,0.094815,0.000000,-0.000000,-0.047407,-0.118519,-0.044444,0.023704,-0.029630,-0.022222,-0.047407,-0.000000,0.000000,0.023704,0.029630,0.022222},{-0.022222,-0.010370,-0.011111,0.000000,-0.082963,-0.088889,0.022222,-0.010370,-0.011111,-0.029630,0.011852,-0.014815,0.000000,0.094815,-0.118519,0.029630,0.011852,-0.014815,0.007407,-0.001481,0.003704,-0.000000,-0.011852,0.029630,-0.007407,-0.001481,0.003704,0.044444,0.020741,0.044444,-0.000000,0.165926,0.355556,-0.044444,0.020741,0.044444,0.059259,-0.023704,0.059259,0.000000,-0.189630,0.474074,-0.059259,-0.023704,0.059259,-0.014815,0.002963,-0.014815,0.000000,0.023704,-0.118519,0.014815,0.002963,-0.014815,0.088889,0.041481,-0.033333,-0.000000,0.331852,-0.266667,-0.088889,0.041481,-0.033333,0.118519,-0.047407,-0.044444,-0.000000,-0.379259,-0.355556,-0.118519,-0.047407,-0.044444,-0.029630,0.005926,0.011111,0.000000,0.047407,0.088889,0.029630,0.005926,0.011111},{0.029630,0.011111,0.005926,-0.000000,0.088889,0.047407,-0.029630,0.011111,0.005926,0.014815,-0.014815,0.002963,-0.000000,-0.118519,0.023704,-0.014815,-0.014815,0.002963,-0.007407,0.003704,-0.001481,0.000000,0.029630,-0.011852,0.007407,0.003704,-0.001481,-0.118519,-0.044444,-0.047407,-0.000000,-0.355556,-0.379259,0.118519,-0.044444,-0.047407,-0.059259,0.059259,-0.023704,0.000000,0.474074,-0.189630,0.059259,0.059259,-0.023704,0.029630,-0.014815,0.011852,0.000000,-0.118519,0.094815,-0.029630,-0.014815,0.011852,-0.088889,-0.033333,0.041481,-0.000000,-0.266667,0.331852,0.088889,-0.033333,0.041481,-0.044444,0.044444,0.020741,-0.000000,0.355556,0.165926,0.044444,0.044444,0.020741,0.022222,-0.011111,-0.010370,0.000000,-0.088889,-0.082963,-0.022222,-0.011111,-0.010370},{-0.002963,-0.005556,-0.007407,0.023704,0.022222,0.029630,-0.020741,0.016667,0.022222,-0.001481,0.007407,-0.003704,0.011852,-0.029630,0.014815,-0.010370,-0.022222,0.011111,0.000741,-0.001852,0.001852,-0.005926,0.007407,-0.007407,0.005185,0.005556,-0.005556,0.005926,0.011111,0.029630,-0.047407,-0.044444,-0.118519,0.041481,-0.033333,-0.088889,0.002963,-0.014815,0.014815,-0.023704,0.059259,-0.059259,0.020741,0.044444,-0.044444,-0.001481,0.003704,-0.007407,0.011852,-0.014815,0.029630,-0.010370,-0.011111,0.022222,0.011852,0.022222,-0.022222,-0.094815,-0.088889,0.088889,0.082963,-0.066667,0.066667,0.005926,-0.029630,-0.011111,-0.047407,0.118519,0.044444,0.041481,0.088889,0.033333,-0.002963,0.007407,0.005556,0.023704,-0.029630,-0.022222,-0.020741,-0.022222,-0.016667},{0.005556,0.005185,0.005556,-0.022222,-0.010370,-0.011111,0.016667,-0.020741,-0.022222,0.007407,-0.005926,0.007407,-0.029630,0.011852,-0.014815,0.022222,0.023704,-0.029630,-0.001852,0.000741,-0.001852,0.007407,-0.001481,0.003704,-0.005556,-0.002963,0.007407,-0.011111,-0.010370,-0.022222,0.044444,0.020741,0.044444,-0.033333,0.041481,0.088889,-0.014815,0.011852,-0.029630,0.059259,-0.023704,0.059259,-0.044444,-0.047407,0.118519,0.003704,-0.001481,0.007407,-0.014815,0.002963,-0.014815,0.011111,0.005926,-0.029630,-0.022222,-0.020741,0.016667,0.088889,0.041481,-0.033333,-0.066667,0.082963,-0.066667,-0.029630,0.023704,0.022222,0.118519,-0.047407,-0.044444,-0.088889,-0.094815,-0.088889,0.007407,-0.002963,-0.005556,-0.029630,0.005926,0.011111,0.022222,0.011852,0.022222},{-0.007407,-0.005556,-0.002963,0.029630,0.011111,0.005926,-0.022222,0.022222,0.011852,-0.003704,0.007407,-0.001481,0.014815,-0.014815,0.002963,-0.011111,-0.029630,0.005926,0.001852,-0.001852,0.000741,-0.007407,0.003704,-0.001481,0.005556,0.007407,-0.002963,0.029630,0.022222,0.023704,-0.118519,-0.044444,-0.047407,0.088889,-0.088889,-0.094815,0.014815,-0.029630,0.011852,-0.059259,0.059259,-0.023704,0.044444,0.118519,-0.047407,-0.007407,0.007407,-0.005926,0.029630,-0.014815,0.011852,-0.022222,-0.029630,0.023704,0.022222,0.016667,-0.020741,-0.088889,-0.033333,0.041481,0.066667,-0.066667,0.082963,0.011111,-0.022222,-0.010370,-0.044444,0.044444,0.020741,0.033333,0.088889,0.041481,-0.005556,0.005556,0.005185,0.022222,-0.011111,-0.010370,-0.016667,-0.022222,-0.020741},{-0.010370,-0.022222,-0.011111,0.011852,-0.029630,-0.014815,-0.001481,0.007407,0.003704,-0.082963,0.000000,-0.088889,0.094815,0.000000,-0.118519,-0.011852,0.000000,0.029630,-0.010370,0.022222,-0.011111,0.011852,0.029630,-0.014815,-0.001481,-0.007407,0.003704,0.020741,0.044444,0.044444,-0.023704,0.059259,0.059259,0.002963,-0.014815,-0.014815,0.165926,0.000000,0.355556,-0.189630,0.000000,0.474074,0.023704,0.000000,-0.118519,0.020741,-0.044444,0.044444,-0.023704,-0.059259,0.059259,0.002963,0.014815,-0.014815,0.041481,0.088889,-0.033333,-0.047407,0.118519,-0.044444,0.005926,-0.029630,0.011111,0.331852,0.000000,-0.266667,-0.379259,0.000000,-0.355556,0.047407,0.000000,0.088889,0.041481,-0.088889,-0.033333,-0.047407,-0.118519,-0.044444,0.005926,0.029630,0.011111},{0.022222,0.023704,0.029630,-0.029630,0.011852,0.014815,0.007407,-0.005926,-0.007407,0.000000,-0.047407,0.000000,-0.000000,-0.023704,0.000000,0.000000,0.011852,0.000000,-0.022222,0.023704,-0.029630,0.029630,0.011852,-0.014815,-0.007407,-0.005926,0.007407,-0.044444,-0.047407,-0.118519,0.059259,-0.023704,-0.059259,-0.014815,0.011852,0.029630,-0.000000,0.094815,-0.000000,0.000000,0.047407,0.000000,-0.000000,-0.023704,0.000000,0.044444,-0.047407,0.118519,-0.059259,-0.023704,0.059259,0.014815,0.011852,-0.029630,-0.088889,-0.094815,0.088889,0.118519,-0.047407,0.044444,-0.029630,0.023704,-0.022222,0.000000,0.189630,0.000000,0.000000,0.094815,0.000000,0.000000,-0.047407,0.000000,0.088889,-0.094815,-0.088889,-0.118519,-0.047407,-0.044444,0.029630,0.023704,0.022222},{0.011111,0.029630,0.005926,-0.014815,0.014815,0.002963,0.003704,-0.007407,-0.001481,0.088889,0.000000,0.047407,-0.118519,0.000000,0.023704,0.029630,0.000000,-0.011852,0.011111,-0.029630,0.005926,-0.014815,-0.014815,0.002963,0.003704,0.007407,-0.001481,-0.044444,-0.118519,-0.047407,0.059259,-0.059259,-0.023704,-0.014815,0.029630,0.011852,-0.355556,0.000000,-0.379259,0.474074,0.000000,-0.189630,-0.118519,0.000000,0.094815,-0.044444,0.118519,-0.047407,0.059259,0.059259,-0.023704,-0.014815,-0.029630,0.011852,-0.033333,-0.088889,0.041481,0.044444,-0.044444,0.020741,-0.011111,0.022222,-0.010370,-0.266667,0.000000,0.331852,0.355556,0.000000,0.165926,-0.088889,0.000000,-0.082963,-0.033333,0.088889,0.041481,0.044444,0.044444,0.020741,-0.011111,-0.022222,-0.010370},{0.011852,0.029630,0.014815,-0.023704,0.000000,0.000000,0.011852,-0.029630,-0.014815,0.094815,-0.000000,0.118519,-0.189630,0.000000,0.000000,0.094815,0.000000,-0.118519,0.011852,-0.029630,0.014815,-0.023704,0.000000,0.000000,0.011852,0.029630,-0.014815,-0.023704,-0.059259,-0.059259,0.047407,0.000000,0.000000,-0.023704,0.059259,0.059259,-0.189630,0.000000,-0.474074,0.379259,0.000000,-0.000000,-0.189630,0.000000,0.474074,-0.023704,0.059259,-0.059259,0.047407,0.000000,0.000000,-0.023704,-0.059259,0.059259,-0.047407,-0.118519,0.044444,0.094815,0.000000,-0.000000,-0.047407,0.118519,-0.044444,-0.379259,0.000000,0.355556,0.758519,0.000000,-0.000000,-0.379259,0.000000,-0.355556,-0.047407,0.118519,0.044444,0.094815,0.000000,0.000000,-0.047407,-0.118519,-0.044444},{0.029630,0.011852,0.014815,0.000000,0.094815,0.118519,-0.029630,0.011852,0.014815,0.000000,-0.023704,0.000000,0.000000,-0.189630,0.000000,0.000000,-0.023704,0.000000,-0.029630,0.011852,-0.014815,0.000000,0.094815,-0.118519,0.029630,0.011852,-0.014815,-0.059259,-0.023704,-0.059259,0.000000,-0.189630,-0.474074,0.059259,-0.023704,-0.059259,0.000000,0.047407,0.000000,0.000000,0.379259,0.000000,0.000000,0.047407,0.000000,0.059259,-0.023704,0.059259,0.000000,-0.189630,0.474074,-0.059259,-0.023704,0.059259,-0.118519,-0.047407,0.044444,0.000000,-0.379259,0.355556,0.118519,-0.047407,0.044444,0.000000,0.094815,0.000000,0.000000,0.758519,0.000000,0.000000,0.094815,0.000000,0.118519,-0.047407,-0.044444,0.000000,-0.379259,-0.355556,-0.118519,-0.047407,-0.044444},{0.014815,0.014815,0.002963,-0.000000,0.118519,0.023704,-0.014815,0.014815,0.002963,0.118519,0.000000,0.023704,0.000000,0.000000,0.189630,-0.118519,0.000000,0.023704,0.014815,-0.014815,0.002963,0.000000,-0.118519,0.023704,-0.014815,-0.014815,0.002963,-0.059259,-0.059259,-0.023704,0.000000,-0.474074,-0.189630,0.059259,-0.059259,-0.023704,-0.474074,0.000000,-0.189630,-0.000000,0.000000,-1.517037,0.474074,0.000000,-0.189630,-0.059259,0.059259,-0.023704,0.000000,0.474074,-0.189630,0.059259,0.059259,-0.023704,-0.044444,-0.044444,0.020741,-0.000000,-0.355556,0.165926,0.044444,-0.044444,0.020741,-0.355556,0.000000,0.165926,-0.000000,0.000000,1.327407,0.355556,0.000000,0.165926,-0.044444,0.044444,0.020741,0.000000,0.355556,0.165926,0.044444,0.044444,0.020741},{-0.001481,-0.007407,-0.003704,0.011852,0.029630,0.014815,-0.010370,0.022222,0.011111,-0.011852,0.000000,-0.029630,0.094815,0.000000,0.118519,-0.082963,0.000000,0.088889,-0.001481,0.007407,-0.003704,0.011852,-0.029630,0.014815,-0.010370,-0.022222,0.011111,0.002963,0.014815,0.014815,-0.023704,-0.059259,-0.059259,0.020741,-0.044444,-0.044444,0.023704,0.000000,0.118519,-0.189630,0.000000,-0.474074,0.165926,0.000000,-0.355556,0.002963,-0.014815,0.014815,-0.023704,0.059259,-0.059259,0.020741,0.044444,-0.044444,0.005926,0.029630,-0.011111,-0.047407,-0.118519,0.044444,0.041481,-0.088889,0.033333,0.047407,0.000000,-0.088889,-0.379259,0.000000,0.355556,0.331852,0.000000,0.266667,0.005926,-0.029630,-0.011111,-0.047407,0.118519,0.044444,0.041481,0.088889,0.033333},{-0.007407,-0.005926,-0.007407,0.029630,0.011852,0.014815,-0.022222,0.023704,0.029630,0.000000,0.011852,0.000000,0.000000,-0.023704,0.000000,0.000000,-0.047407,0.000000,0.007407,-0.005926,0.007407,-0.029630,0.011852,-0.014815,0.022222,0.023704,-0.029630,0.014815,0.011852,0.029630,-0.059259,-0.023704,-0.059259,0.044444,-0.047407,-0.118519,0.000000,-0.023704,0.000000,0.000000,0.047407,0.000000,0.000000,0.094815,0.000000,-0.014815,0.011852,-0.029630,0.059259,-0.023704,0.059259,-0.044444,-0.047407,0.118519,0.029630,0.023704,-0.022222,-0.118519,-0.047407,0.044444,0.088889,-0.094815,0.088889,0.000000,-0.047407,0.000000,0.000000,0.094815,0.000000,0.000000,0.189630,0.000000,-0.029630,0.023704,0.022222,0.118519,-0.047407,-0.044444,-0.088889,-0.094815,-0.088889},{-0.003704,-0.007407,-0.001481,0.014815,0.014815,0.002963,-0.011111,0.029630,0.005926,-0.029630,0.000000,-0.011852,0.118519,0.000000,0.023704,-0.088889,0.000000,0.047407,-0.003704,0.007407,-0.001481,0.014815,-0.014815,0.002963,-0.011111,-0.029630,0.005926,0.014815,0.029630,0.011852,-0.059259,-0.059259,-0.023704,0.044444,-0.118519,-0.047407,0.118519,0.000000,0.094815,-0.474074,0.000000,-0.189630,0.355556,0.000000,-0.379259,0.014815,-0.029630,0.011852,-0.059259,0.059259,-0.023704,0.044444,0.118519,-0.047407,0.011111,0.022222,-0.010370,-0.044444,-0.044444,0.020741,0.033333,-0.088889,0.041481,0.088889,0.000000,-0.082963,-0.355556,0.000000,0.165926,0.266667,0.000000,0.331852,0.011111,-0.022222,-0.010370,-0.044444,0.044444,0.020741,0.033333,0.088889,0.041481},{0.005185,0.005556,0.005556,-0.005926,0.007407,0.007407,0.000741,-0.001852,-0.001852,-0.010370,-0.022222,-0.011111,0.011852,-0.029630,-0.014815,-0.001481,0.007407,0.003704,-0.020741,0.016667,-0.022222,0.023704,0.022222,-0.029630,-0.002963,-0.005556,0.007407,-0.010370,-0.011111,-0.022222,0.011852,-0.014815,-0.029630,-0.001481,0.003704,0.007407,0.020741,0.044444,0.044444,-0.023704,0.059259,0.059259,0.002963,-0.014815,-0.014815,0.041481,-0.033333,0.088889,-0.047407,-0.044444,0.118519,0.005926,0.011111,-0.029630,-0.020741,-0.022222,0.016667,0.023704,-0.029630,0.022222,-0.002963,0.007407,-0.005556,0.041481,0.088889,-0.033333,-0.047407,0.118519,-0.044444,0.005926,-0.029630,0.011111,0.082963,-0.066667,-0.066667,-0.094815,-0.088889,-0.088889,0.011852,0.022222,0.022222},{-0.005556,-0.002963,-0.007407,0.007407,-0.001481,-0.003704,-0.001852,0.000741,0.001852,0.022222,0.023704,0.029630,-0.029630,0.011852,0.014815,0.007407,-0.005926,-0.007407,0.016667,-0.020741,0.022222,-0.022222,-0.010370,0.011111,0.005556,0.005185,-0.005556,0.011111,0.005926,0.029630,-0.014815,0.002963,0.014815,0.003704,-0.001481,-0.007407,-0.044444,-0.047407,-0.118519,0.059259,-0.023704,-0.059259,-0.014815,0.011852,0.029630,-0.033333,0.041481,-0.088889,0.044444,0.020741,-0.044444,-0.011111,-0.010370,0.022222,0.022222,0.011852,-0.022222,-0.029630,0.005926,-0.011111,0.007407,-0.002963,0.005556,-0.088889,-0.094815,0.088889,0.118519,-0.047407,0.044444,-0.029630,0.023704,-0.022222,-0.066667,0.082963,0.066667,0.088889,0.041481,0.033333,-0.022222,-0.020741,-0.016667},{-0.005556,-0.007407,-0.002963,0.007407,-0.003704,-0.001481,-0.001852,0.001852,0.000741,0.011111,0.029630,0.005926,-0.014815,0.014815,0.002963,0.003704,-0.007407,-0.001481,0.022222,-0.022222,0.011852,-0.029630,-0.011111,0.005926,0.007407,0.005556,-0.002963,0.022222,0.029630,0.023704,-0.029630,0.014815,0.011852,0.007407,-0.007407,-0.005926,-0.044444,-0.118519,-0.047407,0.059259,-0.059259,-0.023704,-0.014815,0.029630,0.011852,-0.088889,0.088889,-0.094815,0.118519,0.044444,-0.047407,-0.029630,-0.022222,0.023704,0.016667,0.022222,-0.020741,-0.022222,0.011111,-0.010370,0.005556,-0.005556,0.005185,-0.033333,-0.088889,0.041481,0.044444,-0.044444,0.020741,-0.011111,0.022222,-0.010370,-0.066667,0.066667,0.082963,0.088889,0.033333,0.041481,-0.022222,-0.016667,-0.020741},{-0.005926,-0.007407,-0.007407,0.011852,-0.000000,-0.000000,-0.005926,0.007407,0.007407,0.011852,0.029630,0.014815,-0.023704,0.000000,0.000000,0.011852,-0.029630,-0.014815,0.023704,-0.022222,0.029630,-0.047407,0.000000,0.000000,0.023704,0.022222,-0.029630,0.011852,0.014815,0.029630,-0.023704,0.000000,-0.000000,0.011852,-0.014815,-0.029630,-0.023704,-0.059259,-0.059259,0.047407,0.000000,0.000000,-0.023704,0.059259,0.059259,-0.047407,0.044444,-0.118519,0.094815,0.000000,0.000000,-0.047407,-0.044444,0.118519,0.023704,0.029630,-0.022222,-0.047407,0.000000,0.000000,0.023704,-0.029630,0.022222,-0.047407,-0.118519,0.044444,0.094815,0.000000,0.000000,-0.047407,0.118519,-0.044444,-0.094815,0.088889,0.088889,0.189630,0.000000,0.000000,-0.094815,-0.088889,-0.088889},{-0.007407,-0.001481,-0.003704,0.000000,-0.011852,-0.029630,0.007407,-0.001481,-0.003704,0.029630,0.011852,0.014815,0.000000,0.094815,0.118519,-0.029630,0.011852,0.014815,0.022222,-0.010370,0.011111,0.000000,-0.082963,0.088889,-0.022222,-0.010370,0.011111,0.014815,0.002963,0.014815,-0.000000,0.023704,0.118519,-0.014815,0.002963,0.014815,-0.059259,-0.023704,-0.059259,0.000000,-0.189630,-0.474074,0.059259,-0.023704,-0.059259,-0.044444,0.020741,-0.044444,0.000000,0.165926,-0.355556,0.044444,0.020741,-0.044444,0.029630,0.005926,-0.011111,-0.000000,0.047407,-0.088889,-0.029630,0.005926,-0.011111,-0.118519,-0.047407,0.044444,-0.000000,-0.379259,0.355556,0.118519,-0.047407,0.044444,-0.088889,0.041481,0.033333,0.000000,0.331852,0.266667,0.088889,0.041481,0.033333},{-0.007407,-0.003704,-0.001481,0.000000,-0.029630,-0.011852,0.007407,-0.003704,-0.001481,0.014815,0.014815,0.002963,-0.000000,0.118519,0.023704,-0.014815,0.014815,0.002963,0.029630,-0.011111,0.005926,-0.000000,-0.088889,0.047407,-0.029630,-0.011111,0.005926,0.029630,0.014815,0.011852,0.000000,0.118519,0.094815,-0.029630,0.014815,0.011852,-0.059259,-0.059259,-0.023704,0.000000,-0.474074,-0.189630,0.059259,-0.059259,-0.023704,-0.118519,0.044444,-0.047407,0.000000,0.355556,-0.379259,0.118519,0.044444,-0.047407,0.022222,0.011111,-0.010370,0.000000,0.088889,-0.082963,-0.022222,0.011111,-0.010370,-0.044444,-0.044444,0.020741,0.000000,-0.355556,0.165926,0.044444,-0.044444,0.020741,-0.088889,0.033333,0.041481,0.000000,0.266667,0.331852,0.088889,0.033333,0.041481},{0.000741,0.001852,0.001852,-0.005926,-0.007407,-0.007407,0.005185,-0.005556,-0.005556,-0.001481,-0.007407,-0.003704,0.011852,0.029630,0.014815,-0.010370,0.022222,0.011111,-0.002963,0.005556,-0.007407,0.023704,-0.022222,0.029630,-0.020741,-0.016667,0.022222,-0.001481,-0.003704,-0.007407,0.011852,0.014815,0.029630,-0.010370,0.011111,0.022222,0.002963,0.014815,0.014815,-0.023704,-0.059259,-0.059259,0.020741,-0.044444,-0.044444,0.005926,-0.011111,0.029630,-0.047407,0.044444,-0.118519,0.041481,0.033333,-0.088889,-0.002963,-0.007407,0.005556,0.023704,0.029630,-0.022222,-0.020741,0.022222,-0.016667,0.005926,0.029630,-0.011111,-0.047407,-0.118519,0.044444,0.041481,-0.088889,0.033333,0.011852,-0.022222,-0.022222,-0.094815,0.088889,0.088889,0.082963,0.066667,0.066667},{0.001852,0.000741,0.001852,-0.007407,-0.001481,-0.003704,0.005556,-0.002963,-0.007407,-0.007407,-0.005926,-0.007407,0.029630,0.011852,0.014815,-0.022222,0.023704,0.029630,-0.005556,0.005185,-0.005556,0.022222,-0.010370,0.011111,-0.016667,-0.020741,0.022222,-0.003704,-0.001481,-0.007407,0.014815,0.002963,0.014815,-0.011111,0.005926,0.029630,0.014815,0.011852,0.029630,-0.059259,-0.023704,-0.059259,0.044444,-0.047407,-0.118519,0.011111,-0.010370,0.022222,-0.044444,0.020741,-0.044444,0.033333,0.041481,-0.088889,-0.007407,-0.002963,0.005556,0.029630,0.005926,-0.011111,-0.022222,0.011852,-0.022222,0.029630,0.023704,-0.022222,-0.118519,-0.047407,0.044444,0.088889,-0.094815,0.088889,0.022222,-0.020741,-0.016667,-0.088889,0.041481,0.033333,0.066667,0.082963,0.066667},{0.001852,0.001852,0.000741,-0.007407,-0.003704,-0.001481,0.005556,-0.007407,-0.002963,-0.003704,-0.007407,-0.001481,0.014815,0.014815,0.002963,-0.011111,0.029630,0.005926,-0.007407,0.005556,-0.002963,0.029630,-0.011111,0.005926,-0.022222,-0.022222,0.011852,-0.007407,-0.007407,-0.005926,0.029630,0.014815,0.011852,-0.022222,0.029630,0.023704,0.014815,0.029630,0.011852,-0.059259,-0.059259,-0.023704,0.044444,-0.118519,-0.047407,0.029630,-0.022222,0.023704,-0.118519,0.044444,-0.047407,0.088889,0.088889,-0.094815,-0.005556,-0.005556,0.005185,0.022222,0.011111,-0.010370,-0.016667,0.022222,-0.020741,0.011111,0.022222,-0.010370,-0.044444,-0.044444,0.020741,0.033333,-0.088889,0.041481,0.022222,-0.016667,-0.020741,-0.088889,0.033333,0.041481,0.066667,0.066667,0.082963}};
+
+int i,j;
+
+for(i = 0; i< 81; i++)
+	for(j = 0; j<81; j++)
+	{
+		Global.theK1_quad[i][j] = Kmu[i][j];
+		Global.theK2_quad[i][j] = Klambda[i][j];
+	}
+
+	return;
+}
+
 static void constract_Quality_Factor_Table()
 {
 int i,j;
@@ -5927,6 +6456,7 @@ compute_addforce_s( int32_t timestep )
     }
 }
 
+
 /**
  * compute_adjust: Either distribute the values from LOCAL dangling nodes
  *                 to LOCAL anchored nodes, or assign values from LOCAL
@@ -6038,6 +6568,133 @@ compute_adjust(void *valuetable, int32_t itemsperentry, int32_t how)
     return;
 }
 
+
+
+/*
+ * HAYDAR QUADRATIC EFFORT
+ */
+
+/**
+ * compute_adjust: Either distribute the values from LOCAL dangling nodes
+ *                 to LOCAL anchored nodes, or assign values from LOCAL
+ *                 anchored nodes to LOCAL dangling nodes.
+ *
+ */
+static void
+compute_adjust_quadratic(void *valuetable, int32_t itemsperentry, int32_t how)
+{
+    solver_float *vtable = (solver_float *)valuetable;
+    int32_t dnindex;
+
+    if (how == DISTRIBUTION) {
+	for (dnindex = 0; dnindex < Global.myMesh->ldnnum; dnindex++) {
+	    dnode_t *dnode;
+	    solver_float *myvalue, *parentvalue;
+	    solver_float darray[7]; /* A hack to avoid memory allocation */
+	    int32link_t *int32link;
+	    int32_t idx, parentlnid;
+	    double weight;
+#ifdef DEBUG
+	    int32_t deps = 0;
+#endif /* DEBUG */
+
+	    dnode = &Global.myMesh->dnodeTable[dnindex];
+	    myvalue = vtable + dnode->ldnid * itemsperentry;
+
+//	    printf("%lf\n",weight);
+
+	    for (idx = 0; idx < itemsperentry; idx++) {
+		darray[idx] = (*(myvalue + idx));
+	    }
+
+	    /* Distribute my darray value to my anchors */
+	    int32link = dnode->lanid;
+	    while (int32link != NULL) {
+
+#ifdef DEBUG
+		deps++;
+#endif
+
+		parentlnid = int32link->id;
+		weight     = int32link->weight;
+		parentvalue = vtable + parentlnid * itemsperentry;
+
+		for (idx = 0; idx < itemsperentry; idx++) {
+		    /* Accumulation the distributed values */
+		    *(parentvalue + idx) += darray[idx] * weight;
+		}
+
+//	    printf("%lf\n",weight);
+
+		int32link = int32link->next;
+	    }
+
+#ifdef DEBUG
+	    if (deps != (int)dnode->deps) {
+		fprintf(stderr, "Thread %d: compute_adjust distri: ", Global.myID);
+		fprintf(stderr, "deps don't match\n");
+		MPI_Abort(MPI_COMM_WORLD, ERROR);
+		exit(1);
+	    }
+#endif /* DEBUG */
+	} /* for all my LOCAL dangling nodes */
+
+    } else {
+	/* Assign the value of the anchored parents to the dangling nodes*/
+
+	for (dnindex = 0; dnindex < Global.myMesh->ldnnum; dnindex++) {
+	    dnode_t *dnode;
+	    solver_float *myvalue, *parentvalue;
+	    int32link_t *int32link;
+	    int32_t idx, parentlnid;
+
+	    double weight;
+
+#ifdef DEBUG
+	    int32_t deps = 0;
+#endif /* DEBUG */
+
+	    dnode = &Global.myMesh->dnodeTable[dnindex];
+	    myvalue = vtable + dnode->ldnid * itemsperentry;
+
+	    /* Zero out the residual values the dangling node might
+	       still hold */
+	    memset(myvalue, 0, sizeof(solver_float) * itemsperentry);
+
+	    /* Assign prorated anchored values to a dangling node */
+	    int32link = dnode->lanid;
+	    while (int32link != NULL) {
+
+#ifdef DEBUG
+		deps++;
+#endif
+
+		parentlnid = int32link->id;
+		weight     = int32link->weight;
+		parentvalue = vtable + parentlnid * itemsperentry;
+
+		for (idx = 0; idx < itemsperentry; idx++) {
+		    *(myvalue + idx) += (*(parentvalue + idx)) * weight;
+		}
+
+		int32link = int32link->next;
+	    }
+
+#ifdef DEBUG
+	    if (deps != (int)dnode->deps) {
+		fprintf(stderr, "Thread %d: compute_adjust assign: ", Global.myID);
+		fprintf(stderr, "deps don't match\n");
+		MPI_Abort(MPI_COMM_WORLD, ERROR);
+		exit(1);
+	    }
+#endif /* DEBUG */
+
+	} /* for all my LOCAL dangling nodes */
+    }
+
+    return;
+}
+
 static void print_timing_stat()
 {
 
@@ -6051,7 +6708,8 @@ static void print_timing_stat()
                      + Timer_Value("Mesh Stats Print"       , 0);
 
     if ( Param.includeBuildings == YES ) {
-        TotalMeshingTime += Timer_Value("Carve Buildings", 0);
+        TotalMeshingTime += Timer_Value("First Carve Buildings", 0)
+                          + Timer_Value("Second Carve Buildings", 0);
     }
 
     printf("\n\n__________________________Raw Timers__________________________\n\n");
@@ -6087,64 +6745,15 @@ static void print_timing_stat()
     printf("    Octor Newtree                   : %.2f seconds\n", Timer_Value("Octor Newtree",0) );
     printf("    Octor Refinetree                : %.2f seconds\n", Timer_Value("Octor Refinetree",0));
     printf("    Octor Balancetree               : %.2f seconds\n", Timer_Value("Octor Balancetree",0));
-    if ( Timer_Exists("Carve Buildings") )
-        printf("    Octor Carve Buildings           : %.2f seconds\n", Timer_Value("Carve Buildings",0));
+    if ( Timer_Exists("First Carve Buildings") )
+        printf("    Octor First Carve Buildings     : %.2f seconds\n", Timer_Value("First Carve Buildings",0));
     printf("    Octor Partitiontree             : %.2f seconds\n", Timer_Value("Octor Partitiontree",0));
+    if ( Timer_Exists("Second Carve Buildings") )
+        printf("    Octor Second Carve Buildings    : %.2f seconds\n", Timer_Value("Second Carve Buildings",0));
     printf("    Octor Extractmesh               : %.2f seconds\n", Timer_Value("Octor Extractmesh",0));
     printf("    Mesh correct properties         : %.2f seconds\n", Timer_Value("Mesh correct properties",0));
     printf("    Mesh Stats Print                : %.2f seconds\n", Timer_Value("Mesh Stats Print",0));
     printf("\n");
-
-    if(Param.drmImplement == YES) {
-
-    	printf("DRM INIT PARAMETERS                 : %.2f (Max) %.2f (Min) seconds\n",
-    			Timer_Value("Init Drm Parameters",MAX), Timer_Value("Init Drm Parameters",MIN));
-    	printf("\n");
-
-    	printf("DRM INITIALIZATION                  : %.2f (Max) %.2f (Min) seconds\n",
-    			Timer_Value("Drm Init",MAX), Timer_Value("Drm Init",MIN));
-
-    	if(Param.theDrmPart == PART2) {
-
-    		printf("    Find Drm File To Readjust       : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
-    				Timer_Value("Find Drm File To Readjust",AVERAGE),
-    				Timer_Value("Find Drm File To Readjust",MAX),
-    				Timer_Value("Find Drm File To Readjust",MIN));
-
-    		printf("    Fill Drm Struct                 : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
-    				Timer_Value("Fill Drm Struct",AVERAGE),
-    				Timer_Value("Fill Drm Struct",MAX),
-    				Timer_Value("Fill Drm Struct",MIN));
-
-    		printf("    Comm of Drm Coordinates         : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
-    				Timer_Value("Comm of Drm Coordinates",AVERAGE),
-    				Timer_Value("Comm of Drm Coordinates",MAX),
-    				Timer_Value("Comm of Drm Coordinates",MIN));
-
-    		printf("    Find Which Drm Files To Print   : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
-    				Timer_Value("Find Which Drm Files To Print",AVERAGE),
-    				Timer_Value("Find Which Drm Files To Print",MAX),
-    				Timer_Value("Find Which Drm Files To Print",MIN));
-
-    		printf("    Read And Rearrange Drm Files    : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
-    				Timer_Value("Read And Rearrange Drm Files",AVERAGE),
-    				Timer_Value("Read And Rearrange Drm Files",MAX),
-    				Timer_Value("Read And Rearrange Drm Files",MIN));
-
-    		printf("    Find Which Drm Files To Read    : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
-    				Timer_Value("Find Which Drm Files To Read",AVERAGE),
-    				Timer_Value("Find Which Drm Files To Read",MAX),
-    				Timer_Value("Find Which Drm Files To Read",MIN));
-
-    		printf("    Locate where I am in file       : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
-    				Timer_Value("Locate where I am in file",AVERAGE),
-    				Timer_Value("Locate where I am in file",MAX),
-    				Timer_Value("Locate where I am in file",MIN));
-
-    	}
-    	printf("\n");
-    }
-
     printf("SOURCE INITIALIZATION               : %.2f (Max) %.2f (Min) seconds\n",
 	   Timer_Value("Source Init",MAX), Timer_Value("Source Init",MIN));
     printf("\n");
@@ -6180,13 +6789,6 @@ static void print_timing_stat()
                 Timer_Value("Compute addforces gravity",MAX),
                 Timer_Value("Compute addforces gravity",MIN));
     }
-
-    if ( Timer_Exists("Solver drm force compute") ) {
-    	printf("    Solver drm force compute        : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
-    			Timer_Value("Solver drm force compute",AVERAGE),
-    			Timer_Value("Solver drm force compute",MAX),
-    			Timer_Value("Solver drm force compute",MIN));
-    }
     printf("    1st schedule send data          : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
 	   Timer_Value("1st schedule send data (contribution)",AVERAGE),
 	   Timer_Value("1st schedule send data (contribution)",MAX),
@@ -6216,19 +6818,6 @@ static void print_timing_stat()
 	   Timer_Value("4th schadule send data (sharing)",MAX),
 	   Timer_Value("4th schadule send data (sharing)",MIN));
     printf("    IO\n");
-
-    if ( Timer_Exists("Solver drm output") ) {
-    	printf("        Drm Output                  : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
-    			Timer_Value("Solver drm output",AVERAGE),
-    			Timer_Value("Solver drm output",MAX),
-    			Timer_Value("Solver drm output",MIN));
-    }
-    if ( Timer_Exists("Solver drm read displacements") ) {
-    	printf("        Solver drm read disp        : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
-    			Timer_Value("Solver drm read displacements",AVERAGE),
-    			Timer_Value("Solver drm read displacements",MAX),
-    			Timer_Value("Solver drm read displacements",MIN));
-    }
     printf("        Solver Stats Print          : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
 	   Timer_Value("Solver Stats Print",AVERAGE),
 	   Timer_Value("Solver Stats Print",MAX),
@@ -6274,73 +6863,70 @@ static void print_timing_stat()
 static void
 source_init( const char* physicsin )
 {
-	if(( Param.drmImplement == NO )||( Param.drmImplement == YES && Param.theDrmPart == PART1 )){
+    double globalDelayT = 0;
+    double surfaceShift = 0;
 
-		double globalDelayT = 0;
-		double surfaceShift = 0;
+    /* Load to Global.theMPIInformation */
+    Global.theMPIInformation.myid      = Global.myID;
+    Global.theMPIInformation.groupsize = Global.theGroupSize;
 
-		/* Load to Global.theMPIInformation */
-		Global.theMPIInformation.myid      = Global.myID;
-		Global.theMPIInformation.groupsize = Global.theGroupSize;
+    /* Load to theNumericsInforamation */
+    Global.theNumericsInformation.numberoftimesteps = Param.theTotalSteps;
+    Global.theNumericsInformation.deltat	     = Param.theDeltaT;
+    Global.theNumericsInformation.validfrequency    = Param.theFreq;
 
-		/* Load to theNumericsInforamation */
-		Global.theNumericsInformation.numberoftimesteps = Param.theTotalSteps;
-		Global.theNumericsInformation.deltat	     = Param.theDeltaT;
-		Global.theNumericsInformation.validfrequency    = Param.theFreq;
+    Global.theNumericsInformation.xlength = theDomainX;
+    Global.theNumericsInformation.ylength = theDomainY;
+    Global.theNumericsInformation.zlength = theDomainZ;
 
-		Global.theNumericsInformation.xlength = Param.theDomainX;
-		Global.theNumericsInformation.ylength = Param.theDomainY;
-		Global.theNumericsInformation.zlength = Param.theDomainZ;
+    if ( Param.includeNonlinearAnalysis == YES ) {
+        globalDelayT = get_geostatic_total_time();
+    }
 
-		if ( Param.includeNonlinearAnalysis == YES ) {
-			globalDelayT = get_geostatic_total_time();
-		}
+    if ( Param.includeBuildings == YES ) {
+        surfaceShift = get_surface_shift();
+    }
 
-		if ( Param.includeBuildings == YES ) {
-			surfaceShift = get_surface_shift();
-		}
-
-		/* it will create the files to be read each time step to
+    /* it will create the files to be read each time step to
        load (force) the mesh */
-		if ( compute_print_source( physicsin, Global.myOctree, Global.myMesh,
-				Global.theNumericsInformation, Global.theMPIInformation,
-				globalDelayT, surfaceShift ) )
-		{
-			fprintf(stdout,"Err:cannot create source forces");
-			MPI_Abort(MPI_COMM_WORLD, ERROR);
-			exit(1);
-		}
+    if ( compute_print_source( physicsin, Global.myOctree, Global.myMesh,
+                               Global.theNumericsInformation, Global.theMPIInformation,
+                               globalDelayT, surfaceShift, Param.theElement ) )
+    {
+	fprintf(stdout,"Err:cannot create source forces");
+	MPI_Abort(MPI_COMM_WORLD, ERROR);
+	exit(1);
+    }
 
-		Global.theNodesLoaded = source_get_local_loaded_nodes_count();
+    Global.theNodesLoaded = source_get_local_loaded_nodes_count();
 
-		if (Global.theNodesLoaded != 0) {
-			size_t ret;
-			int32_t node_count;
+    if (Global.theNodesLoaded != 0) {
+	size_t ret;
+	int32_t node_count;
 
-			Global.fpsource = source_open_forces_file( "r" );
+	Global.fpsource = source_open_forces_file( "r" );
 
-			hu_fread( &node_count, sizeof(int32_t), 1, Global.fpsource );
+	hu_fread( &node_count, sizeof(int32_t), 1, Global.fpsource );
 
-			/* \todo add assertion for node_count == Global.theNodesLoaded */
+	/* \todo add assertion for node_count == Global.theNodesLoaded */
 
-			Global.theNodesLoadedList = malloc( sizeof(int32_t) * Global.theNodesLoaded );
-			Global.myForces	   = calloc( Global.theNodesLoaded, sizeof(vector3D_t) );
+	Global.theNodesLoadedList = malloc( sizeof(int32_t) * Global.theNodesLoaded );
+	Global.myForces	   = calloc( Global.theNodesLoaded, sizeof(vector3D_t) );
 
-			if (Global.myForces == NULL || Global.theNodesLoadedList == NULL) {
-				solver_abort( "source_init", "memory allocation failed",
-						"Cannot allocate memory for Global.myForces or "
-						"loaded nodes list arrays\n" );
-			}
-
-			ret = hu_fread( Global.theNodesLoadedList, sizeof(int32_t), Global.theNodesLoaded,
-					Global.fpsource );
-
-			if (ret != Global.theNodesLoaded) {
-				solver_abort( "source_init(", "fread failed",
-						"Could not read nodal force file");
-			}
-		}
+	if (Global.myForces == NULL || Global.theNodesLoadedList == NULL) {
+	    solver_abort( "source_init", "memory allocation failed",
+			  "Cannot allocate memory for Global.myForces or "
+			  "loaded nodes list arrays\n" );
 	}
+
+	ret = hu_fread( Global.theNodesLoadedList, sizeof(int32_t), Global.theNodesLoaded,
+			Global.fpsource );
+
+	if (ret != Global.theNodesLoaded) {
+	    solver_abort( "source_init(", "fread failed",
+			  "Could not read nodal force file");
+	}
+    }
 }
 
 
@@ -6439,6 +7025,143 @@ compute_csi_eta_dzeta( octant_t* octant, vector3D_t pointcoords,
     return 1;
 }
 
+/*
+ * HAYDAR QUADRATIC EFFORT
+ *
+ * Related nodes for quadratic element are listed.
+ */
+
+/**
+ * \param octant where the point is located.
+ * \param pointcoords coordinates of the point.
+ * \param localcoords[out] the displacment.
+ */
+extern int
+compute_csi_eta_dzeta_quadratic( octant_t* octant, vector3D_t pointcoords,
+		       vector3D_t* localcoords, int32_t* localNodeID )
+{
+    tick_t  edgeticks;
+    int32_t eindex;
+    int32_t child_no;
+    double  center_x, center_y, center_z, center_quad_x, center_quad_y, center_quad_z;
+
+    /* various convienient variables */
+    double xGlobal = pointcoords.x[0];
+    double yGlobal = pointcoords.x[1];
+    double zGlobal = pointcoords.x[2];
+    double h;
+
+    edgeticks = (tick_t)1 << (PIXELLEVEL - octant->level);
+    h =  Global.myMesh->ticksize * edgeticks;
+
+    /* Calculate the center coordinate of the element */
+    center_x = Global.myMesh->ticksize * (octant->lx + edgeticks / 2);
+    center_y = Global.myMesh->ticksize * (octant->ly + edgeticks / 2);
+    center_z = Global.myMesh->ticksize * (octant->lz + edgeticks / 2);
+
+
+    /* Go through my local elements to find which one matches the
+     * containing octant. I should have a better solution than this.
+     */
+    for (eindex = 0; eindex < Global.myMesh->lenum; eindex++) {
+    	int32_t lnid0 = Global.myMesh->elemTable[eindex].lnid[0];
+
+    	if ((Global.myMesh->nodeTable[lnid0].x == octant->lx) &&
+    			(Global.myMesh->nodeTable[lnid0].y == octant->ly) &&
+    			(Global.myMesh->nodeTable[lnid0].z == octant->lz)) {
+
+    		/* Sanity check */
+    		if (Global.myMesh->elemTable[eindex].level != octant->level) {
+    			fprintf(stderr, "Thread %d: source_init: internal error\n",
+    					Global.myID);
+    			MPI_Abort(MPI_COMM_WORLD, ERROR);
+    			exit(1);
+    		}
+
+    		/*
+    		 * HAYDAR QUADRATIC EFFORT
+    		 * Organize local node ids for neighboring 8 elements constituting one quadratic element
+    		 */
+
+    		int parent_node_order[8][8] = {{0,1,3,4,9,10,12,13},{1,2,4,5,10,11,13,14},{3,4,6,7,12,13,15,16},{4,5,7,8,13,14,16,17},
+    				{9,10,12,13,18,19,21,22},{10,11,13,14,19,20,22,23},{12,13,15,16,21,22,24,25},{13,14,16,17,22,23,25,26}};
+
+    		int child_picked_nodes[8][8] = {{0,1,2,3,4,5,6,7},{1,3,5,7,-1,-1,-1,-1},{2,3,6,7,-1,-1,-1,-1},
+    				{3,7,-1,-1,-1,-1,-1,-1},{4,5,6,7,-1,-1,-1,-1},{5,7,-1,-1,-1,-1,-1,-1},{6,7,-1,-1,-1,-1,-1,-1},
+    				{7,-1,-1,-1,-1,-1,-1,-1}};
+
+    		int lim[8] = {8,4,4,2,4,2,2,1};
+
+    		int32_t quad_nid_list[27];
+
+    		child_no = eindex % 8;
+
+    		int32_t ecounter = eindex - child_no;
+    		int el,k;
+
+    		for(el = 0; el < 8; el++){
+
+    			elem_t *elemp;
+    			elemp  = &Global.myMesh->elemTable[ecounter + el];
+
+    			for (k = 0; k < lim[el]; k++){
+
+    				int child_nid   = child_picked_nodes[el][k];
+    				int32_t nodeJ   = elemp->lnid[child_nid];
+
+    				int parent_nid = parent_node_order[el][child_nid];
+
+    				quad_nid_list[parent_nid] = nodeJ;
+
+    			}
+    		}
+
+
+    		/* Fill in the local node ids of the containing element */
+    		memcpy( localNodeID, quad_nid_list, sizeof(int32_t) * 27 );
+
+    		break;
+    	}
+    }  /* for all the local elements */
+
+
+    if (eindex == Global.myMesh->lenum) {
+        fprintf(stderr, "Thread %d: source_init: ", Global.myID);
+        fprintf(stderr, "No element matches the containing octant.\n");
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
+    /*
+     * HAYDAR QUADRATIC EFFORT
+     *
+     * Get the local coordinate with respect to the center of quadratic element
+     */
+
+    if(child_no == 1 || child_no == 3 || child_no == 5 || child_no == 7)
+    	center_quad_x = center_x - Global.myMesh->ticksize * (edgeticks / 2);
+    else
+    	center_quad_x = center_x + Global.myMesh->ticksize * (edgeticks / 2);
+
+    if(child_no == 2 || child_no == 3 || child_no == 6 || child_no == 7)
+    	center_quad_y = center_y - Global.myMesh->ticksize * (edgeticks / 2);
+    else
+    	center_quad_y = center_y + Global.myMesh->ticksize * (edgeticks / 2);
+
+    if(child_no == 4 || child_no == 5 || child_no == 6 || child_no == 7)
+    	center_quad_z = center_z - Global.myMesh->ticksize * (edgeticks / 2);
+    else
+    	center_quad_z = center_z + Global.myMesh->ticksize * (edgeticks / 2);
+
+
+    /* Derive the local coordinate of the source inside the quadratic element --- h : edgesize of linear elements*/
+    localcoords->x[0] =  (xGlobal- center_quad_x)/h;
+    localcoords->x[1] =  (yGlobal- center_quad_y)/h;
+    localcoords->x[2] =  (zGlobal- center_quad_z)/h;
+
+    return 1;
+}
+
 
 /**
  * Read stations info.  This is called by PE 0.
@@ -6469,8 +7192,8 @@ read_stations_info( const char* numericalin )
     }
 
     for ( iCorner = 0; iCorner < 4; iCorner++){
-	Param.theSurfaceCornersLong[ iCorner ] = auxiliar [ iCorner * 2 ];
-	Param.theSurfaceCornersLat [ iCorner ] = auxiliar [ iCorner * 2 +1 ];
+	theSurfaceCornersLong[ iCorner ] = auxiliar [ iCorner * 2 ];
+	theSurfaceCornersLat [ iCorner ] = auxiliar [ iCorner * 2 +1 ];
     }
     free(auxiliar);
 
@@ -6506,9 +7229,9 @@ read_stations_info( const char* numericalin )
 	lon    = auxiliar [ iStation * 3 +1 ];
 	depth  = auxiliar [ iStation * 3 +2 ];
 	coords = compute_domain_coords_linearinterp(lon,lat,
-						    Param.theSurfaceCornersLong,
-						    Param.theSurfaceCornersLat,
-						    Param.theDomainY,Param.theDomainX);
+						    theSurfaceCornersLong,
+						    theSurfaceCornersLat,
+						    theDomainY,theDomainX);
 	Param.theStationX [ iStation ] = coords.x[0];
 	Param.theStationY [ iStation ] = coords.x[1];
 	Param.theStationZ [ iStation ] = depth;
@@ -6602,27 +7325,33 @@ void setup_stations_data()
 	    Param.myStations[iLCStation].coords=stationCoords;
 	    sprintf(stationFile, "%s/station.%d",Param.theStationsDirOut,iStation);
 	    Param.myStations[iLCStation].fpoutputfile = hu_fopen( stationFile,"w" );
-	    compute_csi_eta_dzeta( octant, Param.myStations[iLCStation].coords,
-				   &(Param.myStations[iLCStation].localcoords),
-				   Param.myStations[iLCStation].nodestointerpolate);
+
+	    if(Param.theElement == ELINEAR)
+	    	compute_csi_eta_dzeta( octant, Param.myStations[iLCStation].coords,
+	    			&(Param.myStations[iLCStation].localcoords),
+	    			Param.myStations[iLCStation].nodestointerpolate);
+	    else if(Param.theElement == EQUADRATIC)
+	    	compute_csi_eta_dzeta_quadratic( octant, Param.myStations[iLCStation].coords,
+	    			&(Param.myStations[iLCStation].localcoords),
+	    			Param.myStations[iLCStation].nodestointerpolate);
 
 	    /*
 	     * This section now enclosed in a DEBUG def because its information
 	     * is only useful for debugging purposes and otherwise it just
 	     * introduce noise to the post-processing.
 	     */
-#ifdef DEBUG
-	    fprintf( Param.myStations[iLCStation].fpoutputfile,
-		     "# Node identifiers:\n" );
-
-	    int iNode;
-
-	    for (iNode = 0; iNode < 8; iNode++) {
-		fprintf( Param.myStations[iLCStation].fpoutputfile,
-			 "#  %13" INT64_FMT "\n",
-			 Global.myMesh->nodeTable[Param.myStations[iLCStation].nodestointerpolate[iNode]].gnid );
-	    }
-#endif /* DEBUG */
+//#ifdef DEBUG
+//	    fprintf( Param.myStations[iLCStation].fpoutputfile,
+//		     "# Node identifiers:\n" );
+//
+//	    int iNode;
+//
+//	    for (iNode = 0; iNode < 27; iNode++) {
+//		fprintf( Param.myStations[iLCStation].fpoutputfile,
+//			 "#  %13" INT64_FMT "\n",
+//			 Global.myMesh->nodeTable[Param.myStations[iLCStation].nodestointerpolate[iNode]].gnid );
+//	    }
+//#endif /* DEBUG */
 
 	    /*
 	     * This is a one line heading for the station files. Spacing is
@@ -6633,8 +7362,10 @@ void setup_stations_data()
 	     * means the Z axis goes in(+) and out(-) of the screen.
 	     */
 
-	    fputs( "#  Time(s)         X|(m)         Y-(m)         Z.(m)",
-	            Param.myStations[iLCStation].fpoutputfile );
+	    /* TEMPORARY CHAGE */
+
+//	    fputs( "#  Time(s)         X|(m)         Y-(m)         Z.(m)",
+//	            Param.myStations[iLCStation].fpoutputfile );
 
 	    if ( ( Param.printStationVelocities    == YES ) ||
 	         ( Param.printStationAccelerations == YES ) ) {
@@ -6794,6 +7525,178 @@ interpolate_station_displacements( int32_t step )
     return 1;
 }
 
+
+/*
+ * HAYDAR QUADRATIC EFFORT
+ *
+ * Interpolate station displacements for quadratic elements. Modified version of the original method.
+ */
+
+/**
+ * Interpolate the displacements for the stations.
+ */
+static int
+interpolate_station_displacements_quadratic( int32_t step )
+{
+    int iPhi;
+
+    /* Auxiliary array to handle shape functions in a loop */
+//    double  xi[3][8]={ {-1,  1, -1,  1, -1,  1, -1, 1} ,
+//                       {-1, -1,  1,  1, -1, -1,  1, 1} ,
+//                       {-1, -1, -1, -1,  1,  1,  1, 1} };
+
+    double     phi[27];
+    double     dis_x, dis_y, dis_z;
+    double     vel_x, vel_y, vel_z;
+    double     acc_x, acc_y, acc_z;
+    int32_t    iStation,nodesToInterpolate[27];;
+    vector3D_t localCoords; /* convenient renaming */
+
+    for (iStation=0;iStation<Param.myNumberOfStations; iStation++) {
+
+        localCoords = Param.myStations[iStation].localcoords;
+
+        for (iPhi=0; iPhi<27; iPhi++) {
+            nodesToInterpolate[iPhi]
+                    = Param.myStations[iStation].nodestointerpolate[iPhi];
+        }
+
+        /* Compute interpolation function (phi) for each node and
+         * load the displacements
+         */
+        dis_x = 0;
+        dis_y = 0;
+        dis_z = 0;
+
+        for (iPhi = 0; iPhi < 27; iPhi++) {
+
+            if(iPhi == 0)
+            	phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] - 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] - 1.))/8.;
+            if(iPhi == 1)
+            	phi[ iPhi ] = -(localCoords.x[2]*localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] - 1.))/4.;
+            if(iPhi == 2)
+            	phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] + 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] - 1.))/8.;
+            if(iPhi == 3)
+            	phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[2]*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] - 1.)*(localCoords.x[2] - 1.))/4.;
+            if(iPhi == 4)
+            	phi[ iPhi ] = (localCoords.x[2]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[2] - 1.))/2.;
+            if(iPhi == 5)
+            	phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[2]*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] + 1.)*(localCoords.x[2] - 1.))/4.;
+            if(iPhi == 6)
+            	phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] - 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] + 1.))/8.;
+            if(iPhi == 7)
+            	phi[ iPhi ] = -(localCoords.x[2]*localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] + 1.))/4.;
+            if(iPhi == 8)
+            	phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] + 1.)*(localCoords.x[2] - 1.)*(localCoords.x[1] + 1.))/8.;
+            if(iPhi == 9)
+            	phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[1]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[0] - 1.)*(localCoords.x[1] - 1.))/4.;
+            if(iPhi == 10)
+            	phi[ iPhi ] = (localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[1] - 1.))/2.;
+            if(iPhi == 11)
+            	phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[1]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[0] + 1.)*(localCoords.x[1] - 1.))/4.;
+            if(iPhi == 12)
+            	phi[ iPhi ] = (localCoords.x[0]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] - 1.))/2.;
+            if(iPhi == 13)
+            	phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[1]*localCoords.x[1] - 1.);
+            if(iPhi == 14)
+            	phi[ iPhi ] = (localCoords.x[0]*(localCoords.x[2]*localCoords.x[2] - 1)*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] + 1.))/2.;
+            if(iPhi == 15)
+            	phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[1]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[0] - 1.)*(localCoords.x[1] + 1.))/4;
+            if(iPhi == 16)
+            	phi[ iPhi ] = (localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[1] + 1.))/2.;
+            if(iPhi == 17)
+            	phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[1]*(localCoords.x[2]*localCoords.x[2] - 1.)*(localCoords.x[0] + 1.)*(localCoords.x[1] + 1.))/4.;
+            if(iPhi == 18)
+            	phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] - 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] - 1.))/8.;
+            if(iPhi == 19)
+            	phi[ iPhi ] = -(localCoords.x[2]*localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] - 1.))/4.;
+            if(iPhi == 20)
+            	phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] + 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] - 1.))/8.;
+            if(iPhi == 21)
+            	phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[2]*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] - 1.)*(localCoords.x[2] + 1.))/4.;
+            if(iPhi == 22)
+            	phi[ iPhi ] = (localCoords.x[2]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[2] + 1.))/2.;
+            if(iPhi == 23)
+            	phi[ iPhi ] = -(localCoords.x[0]*localCoords.x[2]*(localCoords.x[1]*localCoords.x[1] - 1.)*(localCoords.x[0] + 1.)*(localCoords.x[2] + 1.))/4.;
+            if(iPhi == 24)
+            	phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] - 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] + 1.))/8.;
+            if(iPhi == 25)
+            	phi[ iPhi ] = -(localCoords.x[2]*localCoords.x[1]*(localCoords.x[0]*localCoords.x[0] - 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] + 1.))/4.;
+            if(iPhi == 26)
+            	phi[ iPhi ] = (localCoords.x[0]*localCoords.x[2]*localCoords.x[1]*(localCoords.x[0] + 1.)*(localCoords.x[2] + 1.)*(localCoords.x[1] + 1.))/8.;
+
+
+            dis_x += phi[iPhi] * Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[0];
+            dis_y += phi[iPhi] * Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[1];
+            dis_z += phi[iPhi] * Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[2];
+        }
+
+        double time = Param.theDeltaT * step;
+
+        /*
+         * Please DO NOT CHANGE the format for printing the displacements.
+         * It has to be *this* one because it goes in hand with the printing
+         * format for the nonlinear information.
+         */
+        fprintf( Param.myStations[iStation].fpoutputfile,
+                 "\n%10.6f % 8e % 8e % 8e",
+                 time, dis_x, dis_y, dis_z );
+
+        /*
+         * Addition for printing velocities on the fly
+         */
+
+        if ( ( Param.printStationVelocities    == YES ) ||
+             ( Param.printStationAccelerations == YES ) ) {
+
+            for (iPhi = 0; iPhi < 27; iPhi++) {
+
+                dis_x -= phi[iPhi] * Global.mySolver->tm2[ nodesToInterpolate[iPhi] ].f[0];
+                dis_y -= phi[iPhi] * Global.mySolver->tm2[ nodesToInterpolate[iPhi] ].f[1];
+                dis_z -= phi[iPhi] * Global.mySolver->tm2[ nodesToInterpolate[iPhi] ].f[2];
+            }
+
+            vel_x = dis_x / Param.theDeltaT;
+            vel_y = dis_y / Param.theDeltaT;
+            vel_z = dis_z / Param.theDeltaT;
+
+            fprintf( Param.myStations[iStation].fpoutputfile,
+                     " % 8e % 8e % 8e", vel_x, vel_y, vel_z );
+        }
+
+        /*
+         * Addition for printing accelerations on the fly
+         */
+
+        if ( Param.printStationAccelerations == YES ) {
+
+            for (iPhi = 0; iPhi < 8; iPhi++) {
+
+                dis_x -= phi[iPhi] * Global.mySolver->tm2[ nodesToInterpolate[iPhi] ].f[0];
+                dis_y -= phi[iPhi] * Global.mySolver->tm2[ nodesToInterpolate[iPhi] ].f[1];
+                dis_z -= phi[iPhi] * Global.mySolver->tm2[ nodesToInterpolate[iPhi] ].f[2];
+
+                dis_x += phi[iPhi] * Global.mySolver->tm3[ nodesToInterpolate[iPhi] ].f[0];
+                dis_y += phi[iPhi] * Global.mySolver->tm3[ nodesToInterpolate[iPhi] ].f[1];
+                dis_z += phi[iPhi] * Global.mySolver->tm3[ nodesToInterpolate[iPhi] ].f[2];
+            }
+
+            acc_x = dis_x / Param.theDeltaTSquared;
+            acc_y = dis_y / Param.theDeltaTSquared;
+            acc_z = dis_z / Param.theDeltaTSquared;
+
+            fprintf( Param.myStations[iStation].fpoutputfile,
+                     " % 8e % 8e % 8e", acc_x, acc_y, acc_z );
+        }
+
+	/* TODO: Have this 10 as a parameter with a default value */
+        if ( (step % (Param.theStationsPrintRate*10)) == 0 ) {
+            fflush(Param.myStations[iStation].fpoutputfile);
+        }
+    }
+
+    return 1;
+}
 
 /**
  * Init stations info and data structures
@@ -6975,9 +7878,9 @@ output_init_parameters (const char* numericalin, output_parameters_t* params)
     params->total_nodes    = Global.theNTotal;
     params->total_elements = Global.theETotal;
     params->output_rate	   = Param.theRate;
-    params->domain_x	   = Param.theDomainX;
-    params->domain_y	   = Param.theDomainY;
-    params->domain_z	   = Param.theDomainZ;
+    params->domain_x	   = theDomainX;
+    params->domain_y	   = theDomainY;
+    params->domain_z	   = theDomainZ;
     params->mesh	   = Global.myMesh;
     params->solver	   = (solver_t*)Global.mySolver;
     params->delta_t	   = Param.theDeltaT;
@@ -7018,7 +7921,7 @@ output_init_parameters (const char* numericalin, output_parameters_t* params)
 	}
 
 	/* set the expected file size */
-	Param.the4DOutSize = params->output_size;
+	the4DOutSize = params->output_size;
     }
 
     return 0;
@@ -7069,8 +7972,8 @@ output_get_stats( void )
     double avg_tput = 0;
 
 
-    if (Param.theOutputParameters.parallel_output) {
-	ret = output_collect_io_stats( Param.theOutputParameters.stats_filename,
+    if (theOutputParameters.parallel_output) {
+	ret = output_collect_io_stats( theOutputParameters.stats_filename,
 				       &disp_stats, &vel_stats, Timer_Value("Total Wall Clock",0) );
 
 	/* magic trick so print_timing_stat() prints something sensible
@@ -7079,11 +7982,11 @@ output_get_stats( void )
 	 * if both displacement and velocity where written out, prefer
 	 * the displacement stat.
 	 */
-	if (Param.theOutputParameters.output_velocity) {
+	if (theOutputParameters.output_velocity) {
 	    avg_tput = vel_stats.tput_avg;
 	}
 
-	if (Param.theOutputParameters.output_displacement) {
+	if (theOutputParameters.output_displacement) {
 	    avg_tput = disp_stats.tput_avg;
 	}
     }
@@ -7114,7 +8017,7 @@ mesh_correct_properties( etree_t* cvm )
 
     // INTRODUCE BKT MODEL
 
-    double Qs, Qp, Qk, L, vs_vp_Ratio, vksquared, w;
+    double Qs, Qp, Qk, L, vs_vp_Ratio, vksquared, w, shear_vel_corr_factor, kappa_vel_corr_factor;
     int index_Qs, index_Qk;
     int QTable_Size = (int)(sizeof(Global.theQTABLE)/( 6 * sizeof(double)));
 
@@ -7122,10 +8025,10 @@ mesh_correct_properties( etree_t* cvm )
     points[1] = 0.5;
     points[2] = 0.995;
 
-//    if (Global.myID == 0) {
-//        fprintf( stdout,"mesh_correct_properties  ... " );
-//        fflush( stdout );
-//    }
+    if (Global.myID == 0) {
+        fprintf( stdout,"mesh_correct_properties  ... " );
+        fflush( stdout );
+    }
 
     /* iterate over mesh elements */
     for (eindex = 0; eindex < Global.myMesh->lenum; eindex++) {
@@ -7146,47 +8049,47 @@ mesh_correct_properties( etree_t* cvm )
 
         for (iNorth = 0; iNorth < numPoints; iNorth++) {
 
-        	north_m = (Global.myMesh->ticksize) * (double)Global.myMesh->nodeTable[lnid0].x
-        			+ edata->edgesize * points[iNorth] + Global.theXForMeshOrigin ;
+            north_m = (Global.myMesh->ticksize) * (double)Global.myMesh->nodeTable[lnid0].x
+                    + edata->edgesize * points[iNorth] ;
 
-        	for (iEast = 0; iEast < numPoints; iEast++) {
+            for (iEast = 0; iEast < numPoints; iEast++) {
 
-        		east_m = ( (Global.myMesh->ticksize)
-        				* (double)Global.myMesh->nodeTable[lnid0].y
-        				+ edata->edgesize * points[iEast] + Global.theYForMeshOrigin  );
+                east_m = ( (Global.myMesh->ticksize)
+                        * (double)Global.myMesh->nodeTable[lnid0].y
+                        + edata->edgesize * points[iEast] );
 
-        		for (iDepth = 0; iDepth < numPoints; iDepth++) {
-        			cvmpayload_t g_props; /* ground properties record */
+                for (iDepth = 0; iDepth < numPoints; iDepth++) {
+                    cvmpayload_t g_props; /* ground properties record */
 
-        			depth_m = ( (Global.myMesh->ticksize)
-        					* (double)Global.myMesh->nodeTable[lnid0].z
-        					+ edata->edgesize * points[iDepth] + Global.theZForMeshOrigin );
+                    depth_m = ( (Global.myMesh->ticksize)
+                            * (double)Global.myMesh->nodeTable[lnid0].z
+                            + edata->edgesize * points[iDepth] );
 
-        			/* NOTE: If you want to see the carving process,
-        			 *       activate this and comment the query below */
-        			if ( Param.includeBuildings == YES ) {
-        				//                        if ( depth_m < get_surface_shift() ) {
-        				//                            g_props.Vp  = NAN;
-        				//                            g_props.Vs  = NAN;
-        				//                            g_props.rho = NAN;
-        				//                        } else {
-        				depth_m -= get_surface_shift();
-        				//                            res = cvm_query( Global.theCVMEp, east_m, north_m,
-        				//                                             depth_m, &g_props );
-        				//                        }
-        			}
+                    /* NOTE: If you want to see the carving process,
+                     *       activate this and comment the query below */
+                    if ( Param.includeBuildings == YES ) {
+//                        if ( depth_m < get_surface_shift() ) {
+//                            g_props.Vp  = NAN;
+//                            g_props.Vs  = NAN;
+//                            g_props.rho = NAN;
+//                        } else {
+                            depth_m -= get_surface_shift();
+//                            res = cvm_query( theCVMEp, east_m, north_m,
+//                                             depth_m, &g_props );
+//                        }
+                    }
 
-        			res = cvm_query( Global.theCVMEp, east_m, north_m,
-        					depth_m, &g_props );
+                    res = cvm_query( theCVMEp, east_m, north_m,
+                                     depth_m, &g_props );
 
-        			if (res != 0) {
-        				fprintf(stderr, "Cannot find the query point\n");
-        				exit(1);
-        			}
+                    if (res != 0) {
+                        fprintf(stderr, "Cannot find the query point\n");
+                        exit(1);
+                    }
 
-        			vp  += g_props.Vp;
-        			vs  += g_props.Vs;
-        			rho += g_props.rho;
+                    vp  += g_props.Vp;
+                    vs  += g_props.Vs;
+                    rho += g_props.rho;
                 }
             }
         }
@@ -7228,110 +8131,183 @@ mesh_correct_properties( etree_t* cvm )
             edata->Vp  = Param.theVsCut  * VpVsRatio;
             /* edata->rho = edata->Vp * RhoVpRatio; */ /* Discuss with Jacobo */
         }
-
-
-        // IMPLEMENT BKT MODEL
-
-        /* CALCULATE QUALITY FACTOR VALUES AND READ CORRESPONDING VISCOELASTICITY COEFFICIENTS FROM THE TABLE */
-
-        	/* L IS THE COEFFICIENT DEFINED BY "SHEARER-2009" TO RELATE QK, QS AND QP */
-
-        if(Param.theTypeOfDamping == BKT)
-        {
-
-            vksquared = edata->Vp * edata->Vp - 4. / 3. * edata->Vs * edata->Vs;
-        	vs_vp_Ratio = edata->Vs / edata->Vp;
-        	vs = edata->Vs * 0.001;
-        	L = 4. / 3. * vs_vp_Ratio * vs_vp_Ratio;
-
-          	//Qs = 0.02 * edata->Vs;
-
-        	// Ricardo's Formula based on Brocher's paper (2008) on the subject. In the paper Qp = 2*Qs is given.
-        	//TODO : Make sure Qp Qs relation is correct...
-
-        	Qs = 10.5 + vs * (-16. + vs * (153. + vs * (-103. + vs * (34.7 + vs * (-5.29 + vs * 0.31)))));
-        	Qp = 2. * Qs;
-
-        	if (Param.useInfQk == YES) {
-        	    Qk = 1000;
-        	} else {
-                Qk = (1. - L) / (1. / Qp - L / Qs);
-        	}
-
-        	index_Qs = Search_Quality_Table(Qs, &(Global.theQTABLE[0][0]), QTable_Size);
-
-//        	printf("Quality Factor Table\n Qs : %lf \n Vs : %lf\n",Qs,edata->Vs);
-
-        	if(index_Qs == -2 || index_Qs >= QTable_Size)
-        	{
-        		fprintf(stderr,"Problem with the Quality Factor Table\n Qs : %lf \n Vs : %lf\n",Qs,edata->Vs);
-        		exit(1);
-        	}
-        	else if(index_Qs == -1)
-        	{
-        		edata->a0_shear = 0;
-        		edata->a1_shear = 0;
-        		edata->g0_shear = 0;
-        		edata->g1_shear = 0;
-        		edata->b_shear  = 0;
-        	}
-        	else
-        	{
-        		edata->a0_shear = Global.theQTABLE[index_Qs][1];
-        		edata->a1_shear = Global.theQTABLE[index_Qs][2];
-        		edata->g0_shear = Global.theQTABLE[index_Qs][3];
-        		edata->g1_shear = Global.theQTABLE[index_Qs][4];
-        		edata->b_shear  = Global.theQTABLE[index_Qs][5];
-        	}
-
-        	index_Qk = Search_Quality_Table(Qk, &(Global.theQTABLE[0][0]), QTable_Size);
-
-//        	printf("Quality Factor Table\n Qs : %lf \n Vs : %lf\n",Qs,edata->Vs);
-
-        	if(index_Qk == -2 || index_Qk >= QTable_Size)
-        	{
-        		fprintf(stderr,"Problem with the Quality Factor Table\n Qk : %lf \n Vs : %lf\n",Qk,edata->Vs);
-        		exit(1);
-        	}
-        	else if(index_Qk == -1)
-        	{
-        		edata->a0_kappa = 0;
-        		edata->a1_kappa = 0;
-        		edata->g0_kappa = 0;
-        		edata->g1_kappa = 0;
-        		edata->b_kappa  = 0;
-        	}
-        	else
-        	{
-        		edata->a0_kappa = Global.theQTABLE[index_Qk][1];
-        		edata->a1_kappa = Global.theQTABLE[index_Qk][2];
-        		edata->g0_kappa = Global.theQTABLE[index_Qk][3];
-        		edata->g1_kappa = Global.theQTABLE[index_Qk][4];
-        		edata->b_kappa  = Global.theQTABLE[index_Qk][5];
-        	}
-
-        	if(Param.theFreq_Vel != 0.)
-        	{
-        		w = Param.theFreq_Vel / Param.theFreq;
-
-        		if ( (edata->a0_shear != 0) && (edata->a1_shear != 0) ) {
-        		    double shear_vel_corr_factor;
-        		    shear_vel_corr_factor = sqrt(1. - (edata->a0_shear * edata->g0_shear * edata->g0_shear / (edata->g0_shear * edata->g0_shear + w * w) + edata->a1_shear * edata->g1_shear * edata->g1_shear / (edata->g1_shear * edata->g1_shear + w * w)));
-                    edata->Vs = shear_vel_corr_factor * edata->Vs;
-        		}
-
-        		if ( (edata->a0_kappa != 0) && (edata->a0_kappa != 0) ) {
-        		    double kappa_vel_corr_factor;
-        		    kappa_vel_corr_factor = sqrt(1. - (edata->a0_kappa * edata->g0_kappa * edata->g0_kappa / (edata->g0_kappa * edata->g0_kappa + w * w) + edata->a1_kappa * edata->g1_kappa * edata->g1_kappa / (edata->g1_kappa * edata->g1_kappa + w * w)));
-                    edata->Vp = sqrt(kappa_vel_corr_factor * kappa_vel_corr_factor * vksquared + 4. / 3. * edata->Vs * edata->Vs);
-        		}
-        	}
-        }
     }
+
+    if (Global.myID == 0) {
+        fputs( "done", stdout );
+        fflush( stdout );
+    }
+
 }
 
+/*
+ * HAYDAR QUADRATIC ELEMENT
+ *
+ * Mesh Correct Properties, assign the same averaged properties to all 8 local linear elements within each quadratic element
+ */
 
-/*** Program's standard entry point. ***/
+
+/**
+ * Adjust the values of the properties (Vp, Vs, Rho) for the mesh elements.
+ * Initial implementation (by Leo) querying the middle point.1D.
+ * Modified implementation (Ricardo) querying the 27 points and averaging.
+ *
+ * \param cvm the material model database (CVM etree).
+ */
+static void
+mesh_correct_properties_quadratic( etree_t* cvm )
+{
+	elem_t*  elemp;
+	edata_t* edata;
+	int32_t  eindex, ecounter;
+	double   east_m, north_m, depth_m, VpVsRatio, RhoVpRatio;
+	int	     res, iNorth, iEast, iDepth, numPoints = 3;
+	double   vs, vp, rho;
+	double   points[3];
+	int32_t  lnid0;
+
+	points[0] = 0.005;
+	points[1] = 0.5;
+	points[2] = 0.995;
+
+	if (Global.myID == 0) {
+		fprintf( stdout,"mesh_correct_properties  ... " );
+		fflush( stdout );
+	}
+
+	/* iterate over mesh elements */
+	for (ecounter = 0; ecounter < Global.myMesh->lenum; ecounter = ecounter + 8) {
+
+		vp  = 0;
+		vs  = 0;
+		rho = 0;
+
+		for(eindex = ecounter; eindex < ecounter + 8 ; eindex++){
+
+			elemp = &Global.myMesh->elemTable[eindex];
+			edata = (edata_t*)elemp->data;
+			lnid0 = Global.myMesh->elemTable[eindex].lnid[0];
+
+			if ( Param.includeBuildings == YES ) {
+				if( bldgs_correctproperties( Global.myMesh, edata, lnid0) ) {
+					continue;
+				}
+			}
+
+			for (iNorth = 0; iNorth < numPoints; iNorth++) {
+
+				north_m = (Global.myMesh->ticksize) * (double)Global.myMesh->nodeTable[lnid0].x
+						+ edata->edgesize * points[iNorth] ;
+
+				for (iEast = 0; iEast < numPoints; iEast++) {
+
+					east_m = ( (Global.myMesh->ticksize)
+							* (double)Global.myMesh->nodeTable[lnid0].y
+							+ edata->edgesize * points[iEast] );
+
+					for (iDepth = 0; iDepth < numPoints; iDepth++) {
+						cvmpayload_t g_props; /* ground properties record */
+
+						depth_m = ( (Global.myMesh->ticksize)
+								* (double)Global.myMesh->nodeTable[lnid0].z
+								+ edata->edgesize * points[iDepth] );
+
+						/* NOTE: If you want to see the carving process,
+						 *       activate this and comment the query below */
+						if ( Param.includeBuildings == YES ) {
+							//                        if ( depth_m < get_surface_shift() ) {
+							//                            g_props.Vp  = NAN;
+							//                            g_props.Vs  = NAN;
+							//                            g_props.rho = NAN;
+							//                        } else {
+							depth_m -= get_surface_shift();
+							//                            res = cvm_query( theCVMEp, east_m, north_m,
+							//                                             depth_m, &g_props );
+							//                        }
+						}
+
+						res = cvm_query( theCVMEp, east_m, north_m,
+								depth_m, &g_props );
+
+						if (res != 0) {
+							fprintf(stderr, "Cannot find the query point\n");
+							exit(1);
+						}
+
+						vp  += g_props.Vp;
+						vs  += g_props.Vs;
+						rho += g_props.rho;
+					}
+				}
+			}
+
+		}
+
+		vp = vp / 27. / 8.;
+		vs = vs / 27. / 8.;
+		rho = rho / 27. / 8.;
+
+		for(eindex = ecounter; eindex < ecounter + 8 ; eindex++){
+
+			elemp = &Global.myMesh->elemTable[eindex];
+			edata = (edata_t*)elemp->data;
+
+			edata->Vp  =  vp;;
+			edata->Vs  =  vs;
+			edata->rho = rho;
+
+			/* Auxiliary ratios for adjustments */
+			VpVsRatio  = edata->Vp  / edata->Vs;
+			RhoVpRatio = edata->rho / edata->Vp;
+
+			/* Adjust material properties according to the element size and
+			 * softening factor.
+			 *
+			 * A factor of 1 means perfect compliance between the mesh and the
+			 * elements' material properties resulting in strong changes to the
+			 * results. A factor of 4 tends to double the simulation delta_t
+			 * without affecting too much the results. Testing is needed but for
+			 * now I recommend factors > 4.
+			 */
+			if ( Param.theSofteningFactor > 0 ) {
+
+				double idealVs, factoredVs;
+
+				idealVs    = edata->edgesize * Param.theFactor;
+				factoredVs = idealVs * Param.theSofteningFactor;
+
+				if ( edata->Vs > factoredVs ) {
+					edata->Vs  = factoredVs;
+					edata->Vp  = factoredVs * VpVsRatio;
+					edata->rho = edata->Vp  * RhoVpRatio;
+				}
+			}
+
+			/* Readjust Vs, Vp and Density according to VsCut */
+			if ( edata->Vs < Param.theVsCut ) {
+				edata->Vs  = Param.theVsCut;
+				edata->Vp  = Param.theVsCut  * VpVsRatio;
+				/* edata->rho = edata->Vp * RhoVpRatio; */ /* Discuss with Jacobo */
+			}
+		}
+
+	}
+
+	if (Global.myID == 0) {
+		fputs( "done", stdout );
+		fflush( stdout );
+	}
+
+}
+
+/**
+ * Program's standard entry point.
+ * Here's the list of valid command line arguments
+ * -1 cvmdb
+ * -2 paramters.in
+ * -3 meshetree
+ * -4 4D-output
+ */
 int main( int argc, char** argv )
 {
 
@@ -7347,33 +8323,30 @@ int main( int argc, char** argv )
     MPI_Comm_rank(MPI_COMM_WORLD, &Global.myID);
     MPI_Comm_size(MPI_COMM_WORLD, &Global.theGroupSize);
 
-    /* Make sure using correct input arguments */
-    if (argc != 2) {
-        if (Global.myID == 0) {
-            fputs ( "Usage: psolve <parameters.in>\n", stderr);
-        }
-        MPI_Finalize();
-        exit(1);
-    }
-
     /*Read in and verify IO Pool Configuration */
     char * IO_PES_ENV_VAR;
     IO_PES_ENV_VAR = getenv("IO_PES");
     if (IO_PES_ENV_VAR==NULL)
-        Param.IO_pool_pe_count = 0;
+        IO_pool_pe_count = 0;
     else
-        Param.IO_pool_pe_count = atoi(IO_PES_ENV_VAR);
-    if (Param.IO_pool_pe_count >= Global.theGroupSize)
+        IO_pool_pe_count = atoi(IO_PES_ENV_VAR);
+    if (IO_pool_pe_count >= Global.theGroupSize)
     {
-        Param.IO_pool_pe_count = 0;
+        IO_pool_pe_count = 0;
         if (Global.myID==0)
             printf("Warning: IO_PES too large.  Set to 0.\n");
+    }
+
+    if (Global.myID == 0) {
+        printf( "Starting psolve $Revision: 1.155 $ on %d PEs (%d IO Pool PEs).\n\n",
+                Global.theGroupSize, IO_pool_pe_count );
+        fflush( stdout );
     }
 
     /* Split off PEs into IO Pool */
     MPI_Comm_dup(MPI_COMM_WORLD, &comm_IO);
     int in_io_pool, color;
-    Global.theGroupSize -= Param.IO_pool_pe_count;
+    Global.theGroupSize -= IO_pool_pe_count;
     if (Global.myID >= Global.theGroupSize)
         in_io_pool = 1;
     else
@@ -7388,35 +8361,19 @@ int main( int argc, char** argv )
         goto IO_PES_REJOIN;
     }
 
-    if (Global.myID == 0) {
-        printf( "Starting psolve $Revision: 1.166 $ on %d PEs (%d IO Pool PEs).\n\n",
-                Global.theGroupSize, Param.IO_pool_pe_count );
-        fflush( stdout );
-    }
-
-    /* Read input parameters from file */
-    read_parameters(argc, argv);
-
-    /* Create and open database */
-    open_cvmdb();
+    local_init(argc, argv);
 
     /* Initialize nonlinear parameters */
     if ( Param.includeNonlinearAnalysis == YES ) {
-        nonlinear_init(Global.myID, Param.parameters_input_file, Param.theDeltaT, Param.theEndT);
+        nonlinear_init(Global.myID, argv[2], Param.theDeltaT, Param.theEndT);
     }
 
     if ( Param.includeBuildings == YES ){
-        bldgs_init( Global.myID, Param.parameters_input_file );
-    }
-
-    if ( Param.drmImplement == YES ){
-    	Timer_Start("Init Drm Parameters");
-    	Param.theDrmPart = drm_init(Global.myID, Param.parameters_input_file , Param.includeBuildings);
-    	Timer_Stop("Init Drm Parameters");
-    	Timer_Reduce("Init Drm Parameters", MAX | MIN | AVERAGE , comm_solver);
+        bldgs_init( Global.myID, argv[2] );
     }
 
     // INTRODUCE BKT MODEL
+
     /* Init Quality Factor Table */
     constract_Quality_Factor_Table();
 
@@ -7430,55 +8387,35 @@ int main( int argc, char** argv )
         bldgs_finalize();
     }
 
-    if ( Param.drmImplement == YES ) {
-    	Timer_Start("Drm Init");
-    	if ( Param.theDrmPart == PART0 ) {
-    		find_drm_nodes(Global.myMesh, Global.myID, Param.parameters_input_file,
-    				Global.myOctree->ticksize, Global.theGroupSize);
-    	}
-    	if (Param.theDrmPart == PART1) {
-    		setup_drm_data(Global.myMesh, Global.myID, Global.theGroupSize);
-    	}
-    	if (Param.theDrmPart == PART2) {
-    		proc_drm_elems(Global.myMesh, Global.myID, Global.theGroupSize, Param.theTotalSteps);
-    	}
-    	drm_stats(Global.myID, Global.theGroupSize, Global.theXForMeshOrigin,
-    			 Global.theYForMeshOrigin, Global.theZForMeshOrigin);
-    	Timer_Stop("Drm Init");
-    	Timer_Reduce("Drm Init", MAX | MIN | AVERAGE , comm_solver);
-    }
-
-    if (Param.theMeshOutFlag && DO_OUTPUT) {
+    if (theMeshOutFlag && DO_OUTPUT) {
         mesh_output();
     }
 
     if ( Param.storeMeshCoordinatesForMatlab == YES ) {
-        saveMeshCoordinatesForMatlab( Global.myMesh, Global.myID, Param.parameters_input_file,
-				      Global.myOctree->ticksize,Param.theTypeOfDamping,Global.theXForMeshOrigin,
-				      Global.theYForMeshOrigin,Global.theZForMeshOrigin, Param.includeBuildings);
+        saveMeshCoordinatesForMatlab( Global.myMesh, Global.myID, argv[2], Global.myOctree->ticksize);
     }
 
     Timer_Start("Mesh Stats Print");
-    mesh_print_stat(Global.myOctree, Global.myMesh, Global.myID, Global.theGroupSize,
-		    Param.theMeshStatFilename);
+    mesh_print_stat(Global.myOctree, Global.myMesh, Global.myID, Global.theGroupSize, Param.theMeshStatFilename);
     Timer_Stop("Mesh Stats Print");
     Timer_Reduce("Mesh Stats Print", MAX | MIN, comm_solver);
 
+
     /* Initialize the output planes */
-    if ( Param.theNumberOfPlanes != 0 ) {
-        planes_setup(Global.myID, &Param.thePlanePrintRate, Param.IO_pool_pe_count,
-		     Param.theNumberOfPlanes, Param.parameters_input_file, get_surface_shift(),
-		     Param.theSurfaceCornersLong, Param.theSurfaceCornersLat,
-		     Param.theDomainX, Param.theDomainY, Param.theDomainZ,
-		     Param.planes_input_file);
+    if ( theNumberOfPlanes != 0 ) {
+        planes_setup(Global.myID, argv[2], get_surface_shift() );
     }
 
     if ( Param.theNumberOfStations !=0 ){
-        output_stations_init(Param.parameters_input_file);
+        output_stations_init(argv[2]);
     }
 
     /* Initialize the solver, source and output structures */
+    if(Param.theElement == ELINEAR)
     solver_init();
+    else if(Param.theElement == EQUADRATIC)
+    solver_init_quadratic();
+
     Timer_Start("Solver Stats Print");
     solver_printstat( Global.mySolver );
     Timer_Stop("Solver Stats Print");
@@ -7486,7 +8423,7 @@ int main( int argc, char** argv )
 
     /* Initialize nonlinear solver analysis structures */
     if ( Param.includeNonlinearAnalysis == YES ) {
-        nonlinear_solver_init(Global.myID, Global.myMesh, Param.theDomainZ);
+        nonlinear_solver_init(Global.myID, Global.myMesh, theDomainZ);
         if ( Param.theNumberOfStations !=0 ){
             nonlinear_stations_init(Global.myMesh, Param.myStations, Param.myNumberOfStations);
         }
@@ -7494,7 +8431,7 @@ int main( int argc, char** argv )
     }
 
     Timer_Start("Source Init");
-    source_init(Param.parameters_input_file);
+    source_init(argv[2]);
     Timer_Stop("Source Init");
     Timer_Reduce("Source Init", MAX | MIN, comm_solver);
 
@@ -7504,10 +8441,11 @@ int main( int argc, char** argv )
      */
     stiffness_init(Global.myID, Global.myMesh);
 
+
     /* this is a little too late to check for output parameters,
      * but let's do this in the mean time
      */
-    output_init (Param.parameters_input_file, &Param.theOutputParameters);
+    output_init (argv[2], &theOutputParameters);
 
     /* Run the solver and output the results */
     MPI_Barrier(comm_solver);
@@ -7517,8 +8455,7 @@ int main( int argc, char** argv )
     MPI_Barrier(comm_solver);
 
     if ( Param.includeNonlinearAnalysis == YES ) {
-        nonlinear_yield_stats( Global.myMesh, Global.myID, Param.theTotalSteps,
-			       Global.theGroupSize );
+        nonlinear_yield_stats( Global.myMesh, Global.myID, Param.theTotalSteps, Global.theGroupSize );
     }
 
     output_fini();
@@ -7557,8 +8494,8 @@ int main( int argc, char** argv )
     }
 
     /* Send a message to IO pool PEs to close output files and goto here */
-    if (Param.theNumberOfPlanes != 0) {
-        planes_close(Global.myID, Param.IO_pool_pe_count, Param.theNumberOfPlanes);
+    if (theNumberOfPlanes != 0) {
+        planes_close(Global.myID);
     }
     IO_PES_REJOIN:
 

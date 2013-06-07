@@ -100,7 +100,7 @@ typedef struct ptsrc_t {
 
   source_function_t sourceFunctionType;
 
-  int32_t lnid[8];
+  int32_t lnid[27];
 
   vector3D_t localCoords;  /*Local Coords in the plane to be mapped used only
                              for terashake type earthquakes */
@@ -109,7 +109,9 @@ typedef struct ptsrc_t {
 
   vector3D_t domainCoords;
 
-  double x, y, z;                   /* Local coordinate inside an element */
+  double x, y, z;                   /* Local coordinate inside a linear element */
+
+  double quad_x, quad_y, quad_z;                   /* Local coordinate inside a quadratic element */
 
   double strike, dip, rake;
 
@@ -119,7 +121,7 @@ typedef struct ptsrc_t {
 
   double edgesize;                  /* Edge size of the containing element */
 
-  double nodalForce[8][3];          /* nodal forces on the containing elem */
+  double nodalForce[27][3];          /* nodal forces on the containing elem */
 
   double *displacement;              /* Displacement vector time dependant  */
 
@@ -132,6 +134,8 @@ typedef struct ptsrc_t {
   double *slipfundiscrete;
 
   int nt1;
+
+  int32_t leid;     				/* Local element id (0...7) within the quadratic element */
 
 
 } ptsrc_t;
@@ -221,7 +225,7 @@ int FilterSignal ( double *signal, int signalsize,
 int compute_print_source (const char *physicsin, octree_t *myoctree,
 			  mesh_t *mymesh, numerics_info_t numericsinformation,
 			  mpi_info_t mpiinformation, double globalDelayT,
-			  double surfaceShift );
+			  double surfaceShift, element_type_t element_type );
 
 
 void update_forceinprocessor(int32_t iForce, char *inoutprocessor, int onoff);

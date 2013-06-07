@@ -30,6 +30,8 @@ void stiffness_init          (int32_t myID, mesh_t *myMesh);
 
 void compute_addforce_conventional( mesh_t* myMesh, mysolver_t* mySolver, fmatrix_t (*theK1)[8],
 				    fmatrix_t (*theK2)[8] );
+void compute_addforce_conventional_quadratic( mesh_t* myMesh, mysolver_t* mySolver, double *theK1_quad,
+				    double *theK2_quad );
 void compute_addforce_effective( mesh_t* myMesh, mysolver_t* mySolver );
 void aTransposeU( fvector_t* un, double* atu );
 void firstVector( const double* atu, double* finalVector, double a, double c, double b );

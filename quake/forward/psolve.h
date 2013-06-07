@@ -78,6 +78,8 @@ struct corner_ref_t {
 
 typedef struct corner_ref_t corner_ref_t;
 
+extern double theGlobalDeltaT; /* delta time (sec) per timestep */
+
 /**
  * Mesh database (element) record payload.
  */
@@ -194,7 +196,7 @@ typedef struct out_hdr_t out_hdr_t;
  * Constants initialized element structure.
  */
 struct e_t {
-    double c1, c2, c3, c4;
+    double c1, c2, c3, c4, c1_quad, c2_quad;
 };
 
 typedef struct e_t e_t;
@@ -331,7 +333,7 @@ typedef struct vector3D_t vector3D_t;
  * ------------------------------------------------------------------------- */
 
 struct station_t {
-    int32_t    id, nodestointerpolate[8];
+    int32_t    id, nodestointerpolate[27];
     double*    displacementsX;
     double*    displacementsY;
     double*    displacementsZ;
@@ -373,6 +375,12 @@ void mu_and_lambda(double *theMu, double *theLambda, edata_t *edata, int32_t ein
  *  output: 0 fail 1 success
  */
 int32_t search_point( vector3D_t point, octant_t **octant );
+
+/* HAYDAR QUADRATIC EFFORT */
+
+void assign_mass_to_nodes(elem_t *elemp, edata_t *edata, e_t *ep, n_t *nTable, double a, double dashpot[][3], char flag, double mass, int32_t eindex);
+
+int isintheList(int d, int *array, int array_length, int s);
 
 
 #ifdef __cplusplus

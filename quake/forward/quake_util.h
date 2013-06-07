@@ -35,10 +35,12 @@ typedef enum {
 /* -------------------------------------------------------------------------- */
 
 int  vector_is_zero( const fvector_t* v );
+int vector_is_zero_quadratic( fvector_t **v );
 int  vector_is_all_zero( const fvector_t* v );
 
 void MultAddMatVec( fmatrix_t* M, fvector_t* V1, double c, fvector_t* V2 );
-
+void MultAddMatVec_Quadratic( double *K, fvector_t **disp, double c, fvector_t **force, int32_t ecounter );
+void Make_Zero(fvector_t **force, int id );
 int  Search_Quality_Table(double Q, double *theQTABLE, int QTable_Size);
 
 int  parsedarray( FILE *fp, const char *querystring,int size, double *array );

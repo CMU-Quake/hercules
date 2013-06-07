@@ -173,6 +173,88 @@ void compute_addforce_conventional( mesh_t* myMesh, mysolver_t* mySolver,
     } /* for all the elements */
 }
 
+/* HAYDAR QUADRATIC EFFORT */
+
+/**
+ * Compute and add the force due to the element stiffness matrices.
+ *
+ * \param myMesh   Pointer to the solver mesh structure.
+ * \param mySolver Pointer to the solver main data structures.
+ * \param theK1    First stiffness matrix (K1).
+ * \param theK2    Second stiffness matrix (K2).
+ */
+void compute_addforce_conventional_quadratic( mesh_t* myMesh, mysolver_t* mySolver,
+		double *theK1_quad, double *theK2_quad )
+{
+	fvector_t *parent_force[27];
+	fvector_t *parent_disp[27];
+	int       j;
+	int32_t   eindex, ecounter;
+	int32_t   lin_eindex;
+	double coef1, coef2;
+
+
+	int parent_node_order[8][8] = {{0,1,3,4,9,10,12,13},{1,2,4,5,10,11,13,14},{3,4,6,7,12,13,15,16},{4,5,7,8,13,14,16,17},
+				   {9,10,12,13,18,19,21,22},{10,11,13,14,19,20,22,23},{12,13,15,16,21,22,24,25},{13,14,16,17,22,23,25,26}};
+
+	int child_picked_nodes[8][8] = {{0,1,2,3,4,5,6,7},{1,3,5,7,-1,-1,-1,-1},{2,3,6,7,-1,-1,-1,-1},
+			{3,7,-1,-1,-1,-1,-1,-1},{4,5,6,7,-1,-1,-1,-1},{5,7,-1,-1,-1,-1,-1,-1},{6,7,-1,-1,-1,-1,-1,-1},
+			{7,-1,-1,-1,-1,-1,-1,-1}};
+
+	int lim[8] = {8,4,4,2,4,2,2,1};
+
+	/* Organize the displacement and force vector */
+	for(ecounter = 0; ecounter < myLinearElementsCount; ecounter = ecounter + 8)
+	{
+
+		for (lin_eindex = ecounter; lin_eindex < ecounter + 8; lin_eindex++)
+		{
+			int child_no = lin_eindex - ecounter;
+
+			elem_t *elemp;
+			e_t    *ep;
+
+			eindex = myLinearElementsMapper[lin_eindex];
+			elemp  = &myMesh->elemTable[eindex];
+			ep     = &mySolver->eTable[eindex];
+
+
+			if(child_no == 0)
+			{
+				coef1 = -ep->c1_quad;
+				coef2 = -ep->c2_quad;
+			}
+
+			for (j = 0; j < lim[child_no]; j++)
+			{
+
+				int child_nid = child_picked_nodes[child_no][j];
+				int32_t    nodeJ  = elemp->lnid[child_nid];
+				fvector_t* myDisp = mySolver->tm1 + nodeJ;
+				fvector_t* nodalForce = mySolver->force + nodeJ;
+				int parent_nid = parent_node_order[child_no][child_nid];
+
+				parent_disp[parent_nid] = myDisp;
+
+				parent_force[parent_nid] = nodalForce;
+
+			}
+
+		} /* for neighboring 8 elements */
+
+//		Make_Zero(parent_force,0);
+
+		if (vector_is_zero_quadratic( parent_disp ) != 0)
+		{
+
+				MultAddMatVec_Quadratic( theK1_quad, parent_disp, coef1, parent_force, ecounter);
+				MultAddMatVec_Quadratic( theK2_quad, parent_disp, coef2, parent_force, ecounter);
+		}
+	} /* for all elements */
+
+	return;
+
+}
 
 /**
  * Compute and add the force due to the element stiffness matrices with the effective method.
