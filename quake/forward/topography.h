@@ -70,7 +70,6 @@ int    BelongstoTopography    (mesh_t *myMesh, int32_t eindex);
 etreetype_t get_theetree_type ();
 int    topo_correctproperties ( edata_t *edata );
 
-int    topo_setrec              ( octant_t *leaf, double    ticksize, edata_t  *edata, etree_t  *cvm );
 int    topo_toexpand            ( octant_t *leaf, double    ticksize, edata_t  *edata );
 void   topo_init                ( int32_t myID, const char *parametersin );
 void   topo_solver_init         ( int32_t  myID, mesh_t *myMesh );
@@ -86,6 +85,9 @@ int    compute_tetra_displ      (double *dis_x, double *dis_y, double *dis_z,
 						 	 	 double *accel_x, double *accel_y, double *accel_z,
 						 	 	 double theDeltaT, double theDeltaTSquared,
 						 	 	 int32_t statID, mysolver_t *mySolver);
+int    topo_setrec              ( octant_t *leaf, double    ticksize, edata_t  *edata, etree_t  *cvm );
+double point_elevation          ( double xo, double yo );
+
 
 /* ERASE LATER THESE FUNCTIONS, ARE JUST FOR A QUICK CHECKING*/
 void topo_DRM_init ( mesh_t *myMesh, mysolver_t *mySolver);

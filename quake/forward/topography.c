@@ -28,11 +28,12 @@
 #include "util.h"
 #include "stiffness.h"
 #include "quake_util.h"
-#include "commutil.h"
+//#include "commutil.h"
 #include "cvm.h"
-#include "nonlinear.h"
+//#include "nonlinear.h"
 #include "topography.h"
 #include "geometrics.h"
+
 
 /* -------------------------------------------------------------------------- */
 /*                             Global Variables                               */
@@ -738,8 +739,8 @@ double interp_z( double xp, double yp, double xo, double yo, double h, double zc
 
 }
 
-/* gives the z value of a topography point respect to the surface (Z global)*/
-double point_elevation ( double xo, double yo, double esize, double So ) {
+/* gives the z value of a topography point respect to the base surface (Z global)*/
+double point_elevation ( double xo, double yo ) {
 
 	int i, j;
 	double xp, yp, x_o, y_o, remi, remj, mesh_cz[4], zp;
@@ -1111,7 +1112,7 @@ void TetraHVol ( double xo, double yo, double zo, double esize, double So,
 	                ym = ( 1 - eta - psi - gam ) * MCy[m][0] + psi * MCy[m][1] + eta * MCy[m][2] + gam * MCy[m][3];
 	                zm = ( 1 - eta - psi - gam ) * MCz[m][0] + psi * MCz[m][1] + eta * MCz[m][2] + gam * MCz[m][3];
 
-					zt = point_elevation ( xm, ym, esize, So );
+					zt = point_elevation ( xm, ym );
 
 					if ( zm >= zt ) {
 						Vpr +=  ( 1 - lz ) * ( 1 - lz ) * ( 1 - ly ) * qpx * qpy * qpz / 8;

@@ -38,6 +38,9 @@
 #include "geometrics.h"
 #include "quake_util.h"
 #include "util.h"
+#include "cvm.h"
+#include "topography.h"
+
 
 extern int compute_csi_eta_dzeta( octant_t *octant, vector3D_t pointcoords,
 				  vector3D_t *localcoords, int32_t *localNodeID );
@@ -95,6 +98,7 @@ typedef struct plane_t {
 
     int stripstart[MAX_STRIPS_PER_PLANE];
     int stripend[MAX_STRIPS_PER_PLANE];
+    int topo_plane;
     plane_strip_element_t * strip[MAX_STRIPS_PER_PLANE];
 
 } plane_t;
@@ -122,6 +126,7 @@ void planes_setup(int32_t myID, int32_t *thePlanePrintRate, int IO_pool_pe_count
 		  double theDomainX, double theDomainY, double theDomainZ,
 		  char* planes_input_file){
 
+//	IO_pool_pe_count = 1;
     if (IO_pool_pe_count)
 	New_planes_setup(myID, thePlanePrintRate, theNumberOfPlanes, numericalin, surfaceShift,
 			 theSurfaceCornersLong, theSurfaceCornersLat,
@@ -385,13 +390,14 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
                     thePlanes[iPlane].origincoords.x[0]=originPlaneCoords.x[0];
                     thePlanes[iPlane].origincoords.x[1]=originPlaneCoords.x[1];
 
-                    fret1 = fscanf(fp_planes," %lf %d %lf %d %lf %lf",
+                    fret1 = fscanf(fp_planes," %lf %d %lf %d %lf %lf %d",
                                    &thePlanes[iPlane].stepalongstrike,
                                    &thePlanes[iPlane].numberofstepsalongstrike,
                                    &thePlanes[iPlane].stepdowndip,
 				   &thePlanes[iPlane].numberofstepsdowndip,
                                    &thePlanes[iPlane].strike,
-                                   &thePlanes[iPlane].dip);
+                                   &thePlanes[iPlane].dip,
+                                   &thePlanes[iPlane].topo_plane);
                     /*Find largest plane for output buffer allocation */
                     if ( (thePlanes[iPlane].numberofstepsdowndip
                           * thePlanes[iPlane].numberofstepsalongstrike)
@@ -423,6 +429,8 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
 
 	fclose(fp_planes);
 
+
+
     } /* if (myID == 0) */
 
     /* broadcast plane info */
@@ -441,6 +449,7 @@ void Old_planes_setup ( int32_t     myID, int32_t *thePlanePrintRate,
     for ( iPlane = 0; iPlane < theNumberOfPlanes; iPlane++ ) {
 	MPI_Bcast( &(thePlanes[iPlane].numberofstepsalongstrike), 1, MPI_INT, 0, comm_solver);
 	MPI_Bcast( &(thePlanes[iPlane].numberofstepsdowndip), 1, MPI_INT, 0, comm_solver);
+	MPI_Bcast( &(thePlanes[iPlane].topo_plane), 1, MPI_INT, 0, comm_solver);
 	MPI_Bcast( &(thePlanes[iPlane].stepalongstrike), 1, MPI_DOUBLE,0, comm_solver);
 	MPI_Bcast( &(thePlanes[iPlane].stepdowndip), 1, MPI_DOUBLE,0, comm_solver);
 	MPI_Bcast( &(thePlanes[iPlane].strike), 1, MPI_DOUBLE,0, comm_solver);
@@ -492,6 +501,17 @@ static void Old_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 	origin.x[1] = thePlanes[ iPlane ].origincoords.x[1];
 	origin.x[2] = thePlanes[ iPlane ].origincoords.x[2];
 
+	/*Dorian. sanity check for topo-planes "Only horizontal planes are supported" */
+    if ( ( thePlanes[ iPlane ].topo_plane == 1 ) &&
+    	 ( ( thePlanes[ iPlane ].dip > 0 ) && ( thePlanes[ iPlane ].dip < 180 ) ) ) {
+        fprintf(stderr,
+                "Old_output_planes_construct_strips: "
+                "Topo-plane must be horizontal IPlane=%d, dip %f\n",iPlane, thePlanes[ iPlane ].dip);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
+
 	/*Find limits of consecutive strips*/
 	onstrip = 0;
 	for ( iStrike = 0;
@@ -511,6 +531,11 @@ static void Old_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 			    = compute_global_coords( origin, pointLocal,
 						     thePlanes[ iPlane ].dip, 0,
 						     thePlanes[ iPlane ].strike );
+
+			/* Dorian: correct z coordinate if topo-plane */
+			if ( thePlanes[ iPlane ].topo_plane == 1 ) {
+				pointGlobal.x[2] =  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
+			}
 
 			if (search_point( pointGlobal, &octant ) == 1) {
 			    if (!onstrip) { /* start new strip */
@@ -610,6 +635,12 @@ static void Old_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 			    =  compute_global_coords( origin, pointLocal,
 						      thePlanes[ iPlane ].dip, 0,
 						      thePlanes[ iPlane ].strike );
+
+			/* Dorian: correct z coordinate if topo-plane */
+			if ( thePlanes[ iPlane ].topo_plane == 1 ) {
+				pointGlobal.x[2] =  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
+			}
+
 			if (search_point( pointGlobal, &octant) == 1) {
 			    compute_csi_eta_dzeta( octant, pointGlobal,
 						   &(thePlanes[ iPlane ].strip[stripnum][elemnum].localcoords),
@@ -617,6 +648,7 @@ static void Old_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 			}
 		    }
 	    }
+
     } /* end of plane loop: for (stripnum = 0; ...) */
 
     MPI_Reduce( &planes_LocalLargestStripCount,
@@ -808,13 +840,14 @@ void New_planes_setup( int32_t     PENum, int32_t *thePlanePrintRate,
                     thePlanes[iPlane].origincoords.x[0]=originPlaneCoords.x[0];
                     thePlanes[iPlane].origincoords.x[1]=originPlaneCoords.x[1];
 
-                    fret1 = fscanf(fp_planes," %lf %d %lf %d %lf %lf",
+                    fret1 = fscanf(fp_planes," %lf %d %lf %d %lf %lf %d",
                                    &thePlanes[iPlane].stepalongstrike,
                                    &thePlanes[iPlane].numberofstepsalongstrike,
                                    &thePlanes[iPlane].stepdowndip,
 				   &thePlanes[iPlane].numberofstepsdowndip,
                                    &thePlanes[iPlane].strike,
-                                   &thePlanes[iPlane].dip);
+                                   &thePlanes[iPlane].dip,
+                                   &thePlanes[iPlane].topo_plane);
                     /*Find largest plane for output buffer allocation */
                     if ( (thePlanes[iPlane].numberofstepsdowndip
                           * thePlanes[iPlane].numberofstepsalongstrike)
@@ -858,6 +891,7 @@ void New_planes_setup( int32_t     PENum, int32_t *thePlanePrintRate,
     for ( iPlane = 0; iPlane < theNumberOfPlanes; iPlane++ ) {
 	MPI_Bcast( &(thePlanes[iPlane].numberofstepsalongstrike), 1, MPI_INT, 0, comm_IO);
 	MPI_Bcast( &(thePlanes[iPlane].numberofstepsdowndip), 1, MPI_INT, 0, comm_IO);
+	MPI_Bcast( &(thePlanes[iPlane].topo_plane), 1, MPI_INT, 0, comm_solver);
 	MPI_Bcast( &(thePlanes[iPlane].stepalongstrike), 1, MPI_DOUBLE,0, comm_IO);
 	MPI_Bcast( &(thePlanes[iPlane].stepdowndip), 1, MPI_DOUBLE,0, comm_IO);
 	MPI_Bcast( &(thePlanes[iPlane].strike), 1, MPI_DOUBLE,0, comm_IO);
@@ -904,6 +938,16 @@ static void New_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 	origin.x[1] = thePlanes[ iPlane ].origincoords.x[1];
 	origin.x[2] = thePlanes[ iPlane ].origincoords.x[2];
 
+	/*Dorian. sanity check for topo-planes "Only horizontal planes are supported" */
+    if ( ( thePlanes[ iPlane ].topo_plane == 1 ) &&
+    	 ( ( thePlanes[ iPlane ].dip > 0 ) && ( thePlanes[ iPlane ].dip < 180 ) ) ) {
+        fprintf(stderr,
+                "Old_output_planes_construct_strips: "
+                "Topo-plane must be horizontal IPlane=%d, dip %f\n",iPlane, thePlanes[ iPlane ].dip);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
 	/*Find limits of consecutive strips*/
 	onstrip = 0;
 	for ( iStrike = 0;
@@ -923,6 +967,11 @@ static void New_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 			    = compute_global_coords( origin, pointLocal,
 						     thePlanes[ iPlane ].dip, 0,
 						     thePlanes[ iPlane ].strike );
+
+			/* Dorian: correct z coordinate if topo-plane */
+			if ( thePlanes[ iPlane ].topo_plane == 1 ) {
+				pointGlobal.x[2] =  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
+			}
 
 			if (search_point( pointGlobal, &octant ) == 1) {
 			    if (!onstrip) { /* start new strip */
@@ -1023,6 +1072,12 @@ static void New_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 			    =  compute_global_coords( origin, pointLocal,
 						      thePlanes[ iPlane ].dip, 0,
 						      thePlanes[ iPlane ].strike );
+
+			/* Dorian: correct z coordinate if topo-plane */
+			if ( thePlanes[ iPlane ].topo_plane == 1 ) {
+				pointGlobal.x[2] =  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
+			}
+
 			if (search_point( pointGlobal, &octant) == 1) {
 			    compute_csi_eta_dzeta( octant, pointGlobal,
 						   &(thePlanes[ iPlane ].strip[stripnum][elemnum].localcoords),
