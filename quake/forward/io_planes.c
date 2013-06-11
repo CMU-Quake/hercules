@@ -641,6 +641,10 @@ static void Old_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 				pointGlobal.x[2] =  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
 			}
 
+			//TODO: local coordinates must be updated to consider tetrahedra elements
+			//      in simulations including topography. However, because planes are used mostly
+			//      to get general features of the wavefields, conventional interpolation based upon
+			//      cubic elements is a fairly good approximation. Dorian
 			if (search_point( pointGlobal, &octant) == 1) {
 			    compute_csi_eta_dzeta( octant, pointGlobal,
 						   &(thePlanes[ iPlane ].strip[stripnum][elemnum].localcoords),
@@ -1078,6 +1082,10 @@ static void New_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 				pointGlobal.x[2] =  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
 			}
 
+			//TODO: local coordinates must be updated to consider tetrahedra elements
+			//      in simulations including topography. However, because planes are used mostly
+			//      to get general features of the wavefields, conventional interpolation based upon
+			//      cubic elements is a fairly good approximation. Dorian.
 			if (search_point( pointGlobal, &octant) == 1) {
 			    compute_csi_eta_dzeta( octant, pointGlobal,
 						   &(thePlanes[ iPlane ].strip[stripnum][elemnum].localcoords),
