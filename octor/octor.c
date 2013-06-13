@@ -3442,8 +3442,6 @@ node_setproperty ( tree_t             *tree,
      * to make this stable in the case of multiple processors. Let's see...
      * */
 
-
-
     /* My friend, If you uncomment the following you can see the mesh after
      *  carving. This makes every node anchored, so the results would be errorneous.*/
 
