@@ -203,7 +203,7 @@ void saveMeshCoordinatesForMatlab( mesh_t      *myMesh,       int32_t myID,
 
 						int32_t   n_0;
 						double    x_m,y_m,z_m;
-						float     zeta;
+						float     zeta =-1;
 
 						n_0 = myMesh->elemTable[i].lnid[0];
 						z_m = zoriginm + (ticksize)*myMesh->nodeTable[n_0].z;
