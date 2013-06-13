@@ -3327,6 +3327,7 @@ node_setproperty ( tree_t             *tree,
     tick_t   masterMask;
     int8_t   masterLevel;
 
+
     /* Yigit says: This function is vastly cleaned as buildings assume only
      * anchored nodes now.
      */
@@ -3414,6 +3415,42 @@ node_setproperty ( tree_t             *tree,
     		return -901;
     	}
     }
+
+
+
+    /* My friend, you should include a function here to check whether the node
+     * belongs to the topographic surface. You have the coordinates of the nodes
+     * nx,ny,nz (in tick i guess). If (and only if) the node is at the surface,
+     * you should  set *pproperty = 0X80; and  return 0; ( means the node is
+     * anchored). But please note that
+     * a node could belong to a special element, but may not be on the surface,
+     * and could be a dangling node. this is why topography_elements_mapping
+     * won't work here.
+     * But you should not worry about that case,
+     * the rest of the code will take care of it
+     * Moral of the story: You should come up with a function that identifies
+     * any node that is neighbor with air.
+     *
+     * Another thing: Do you force  only a single layer of elements to be the same
+     * sized ? Actually, it helps alot( and put us on a safe side) to have
+     * an additional buffer layer which consist of the same sized elements( but
+     * not necessarily treated specially in terms of stiffness.) If you can do
+     * this, then we can use topography_elements_mapping to identify the surface
+     * nodes, as any node that belongs to the element would be anchored.
+     *
+     * Finally, we may or may not need to do extra modifications in octor.c
+     * to make this stable in the case of multiple processors. Let's see...
+     * */
+
+
+
+    /* My friend, If you uncomment the following you can see the mesh after
+     *  carving. This makes every node anchored, so the results would be errorneous.*/
+
+//        *pproperty = 0X80;
+//        return 0;
+
+
 
     /* Yigit says: Every node that belongs to a building+foundation should be anchored*/
 
@@ -4728,12 +4765,12 @@ octor_carvebuildings(octree_t *octree, int flag,
 
 	/* Yigit says: If you want to keep toleaf updated switch on this block.*/
 	/* Link LOCAL leaf octs at the same level together */
-		memset(tree->toleaf, 0, sizeof(oct_t *) * TOTALLEVEL);
-		oct = tree->firstleaf;
-		while ((oct != NULL) && (oct->where == LOCAL)) {
-			oct_linkleaf(oct, tree->toleaf);
-			oct = oct_getnextleaf(oct);
-		}
+	memset(tree->toleaf, 0, sizeof(oct_t *) * TOTALLEVEL);
+	oct = tree->firstleaf;
+	while ((oct != NULL) && (oct->where == LOCAL)) {
+		oct_linkleaf(oct, tree->toleaf);
+		oct = oct_getnextleaf(oct);
+	}
 	/* Block ends here */
 
 	ecount = tree_countleaves(tree);
@@ -4761,9 +4798,10 @@ octor_carvebuildings(octree_t *octree, int flag,
 		edata = (edata_t *)oct->payload.leaf->data;
 
 		/* Octants belonging to pushdowns are eliminated here. yigit */
-
-		if (pushdowns_search(oct->lx,oct->ly,oct->lz,tree->ticksize) ) {
-			edata->Vp = -1;
+		if(flag == 1) {
+			if (pushdowns_search(oct->lx,oct->ly,oct->lz,tree->ticksize) ) {
+				edata->Vp = -1;
+			}
 		}
 
 		Vp = edata->Vp;

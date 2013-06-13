@@ -2122,40 +2122,43 @@ mesh_generate()
     /* gggg */
 
     /* Buildings Carving */
-    if ( Param.includeBuildings == YES ) {
+    if ( Param.includeBuildings == YES ||  Param.includeTopography == YES ) {
+    	int flag = 0;
+    	Timer_Start("Carve Buildings");
+    	if (Global.myID == 0) {
+    		fprintf(stdout, "Carving buildings");
+    		fflush(stdout);
+    	}
 
-        Timer_Start("Carve Buildings");
-        if (Global.myID == 0) {
-            fprintf(stdout, "Carving buildings");
-            fflush(stdout);
-        }
+    	if(Param.includeBuildings == YES) flag = 1;
 
-        /* NOTE: If you want to see the carving process, comment next line */
-        octor_carvebuildings(Global.myOctree, 1, bldgs_nodesearch_com,pushdowns_search);
-        MPI_Barrier(comm_solver);
-        Timer_Stop("Carve Buildings");
-        if (Global.myID == 0) {
-            fprintf(stdout, "%9.2f\n", Timer_Value("Carve Buildings", 0) );
-            fflush(stdout);
-        }
+    	/* NOTE: If you want to see the carving process, comment next line */
 
-        Timer_Start("Octor Partitiontree");
-        if (Global.myID == 0) {
-            fprintf(stdout, "Repartitioning");
-            fflush(stdout);
-        }
-        if (octor_partitiontree(Global.myOctree, bldgs_nodesearch_com,pushdowns_nodesearch) != 0) {
-            fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",
-                    Global.myID);
-            MPI_Abort(MPI_COMM_WORLD, ERROR);
-            exit(1);
-        }
-        MPI_Barrier(comm_solver);
-        Timer_Stop("Octor Partitiontree");
-        if (Global.myID == 0) {
-            fprintf(stdout, "%9.2f\n", Timer_Value("Octor Partitiontree", 0));
-            fflush(stdout);
-        }
+    	octor_carvebuildings(Global.myOctree, flag, bldgs_nodesearch_com,pushdowns_search);
+    	MPI_Barrier(comm_solver);
+    	Timer_Stop("Carve Buildings");
+    	if (Global.myID == 0) {
+    		fprintf(stdout, "%9.2f\n", Timer_Value("Carve Buildings", 0) );
+    		fflush(stdout);
+    	}
+
+    	Timer_Start("Octor Partitiontree");
+    	if (Global.myID == 0) {
+    		fprintf(stdout, "Repartitioning");
+    		fflush(stdout);
+    	}
+    	if (octor_partitiontree(Global.myOctree, bldgs_nodesearch_com,pushdowns_nodesearch) != 0) {
+    		fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",
+    				Global.myID);
+    		MPI_Abort(MPI_COMM_WORLD, ERROR);
+    		exit(1);
+    	}
+    	MPI_Barrier(comm_solver);
+    	Timer_Stop("Octor Partitiontree");
+    	if (Global.myID == 0) {
+    		fprintf(stdout, "%9.2f\n", Timer_Value("Octor Partitiontree", 0));
+    		fflush(stdout);
+    	}
     }
 
     if ( Global.myID == 0 && Param.theStepMeshingFactor !=0 ) {
@@ -7718,8 +7721,11 @@ int main( int argc, char** argv )
         nonlinear_stats(Global.myID, Global.theGroupSize);
     }
 
-    /*TODO: this is a checking. erase later. Dorian */
-    topo_DRM_init( Global.myMesh, Global.mySolver);
+    if ( Param.includeTopography == YES ) {
+    	/*TODO: this is a checking. erase later. Dorian */
+    	topo_DRM_init( Global.myMesh, Global.mySolver);
+    }
+
     
     Timer_Start("Source Init");
     source_init(Param.parameters_input_file);
