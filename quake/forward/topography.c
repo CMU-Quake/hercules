@@ -1444,6 +1444,33 @@ int crossings_faces_34 ( double xp, double yp, double zp, double So, double esiz
 
 }
 
+/* 5x5 point checking.
+Returns 1 if cube has topography within, zero (0) if it does not  */
+int check_crossingsII ( double xo, double yo, double zo, double esize ) {
+
+	int i,j;
+	double xp, yp, zp,  Del = esize / 4.0;
+
+	/* 1) 25 point check */
+	for ( i = 0; i < 5; ++i ) {
+		xp = xo + Del * i;
+
+		for ( j = 0; j < 5; ++j ) {
+			yp = yo + Del * j;
+			zp = point_elevation ( xp, yp );
+
+			if ( ( zp > zo ) && ( zp < (zo + esize) ) ) {
+				return 1;
+			}
+		}
+	}
+
+
+	/* 2) conventional element */
+	return 0;
+
+}
+
 int check_crossings ( double xo, double yo, double zo, double esize, double So ) {
 
 	double elem_corners[4];
