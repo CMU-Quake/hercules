@@ -3988,11 +3988,15 @@ static void solver_load_fixedbase_displacements( mysolver_t* solver, int step )
  */
 static void solver_update_constrained_slab_displacements( mysolver_t* solver, int step )
 {
-    //Timer_Start( "Load Fixedbase Disps" );
-    if ( get_constrained_slab_flag() == YES ) {
-        bldgs_update_constrainedslabs_disps ( solver, Param.theDeltaT, step);
-    }
-    //Timer_Stop( "Load Fixedbase Disps" );
+	if ( get_constrained_slab_flag() == YES ) {
+
+		Timer_Start( "Update constrained dis" );
+
+		bldgs_update_constrainedslabs_disps ( solver, Param.theDeltaT, step, Global.myID );
+
+		Timer_Stop( "Update constrained dis" );
+
+	}
 }
 
 
@@ -4263,6 +4267,11 @@ static void solver_run_collect_timers( void )
     if ( Timer_Exists("Solver drm force compute") ) {
         Timer_Reduce("Solver drm force compute", MAX | MIN | AVERAGE, comm_solver);
     }
+
+    if( Timer_Exists("Update constrained dis") ) {
+    	Timer_Reduce("Update constrained dis", MAX | MIN | AVERAGE, comm_solver);
+    }
+
 
     Timer_Reduce("Read My Forces",                        MAX | MIN | AVERAGE, comm_solver);
     Timer_Reduce("Compute addforces s",                   MAX | MIN | AVERAGE, comm_solver);
@@ -6251,6 +6260,10 @@ static void print_timing_stat()
 	   Timer_Value("Compute new displacement",AVERAGE),
 	   Timer_Value("Compute new displacement",MAX),
 	   Timer_Value("Compute new displacement",MIN));
+    printf("    Update constrained dis          : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
+  	   Timer_Value("Update constrained dis",AVERAGE),
+  	   Timer_Value("Update constrained dis",MAX),
+  	   Timer_Value("Update constrained dis",MIN));
     printf("    3rd schedule send data          : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
 	   Timer_Value("3rd schedule send data (sharing)",AVERAGE),
 	   Timer_Value("3rd schedule send data (sharing)",MAX),
@@ -7476,7 +7489,7 @@ int main( int argc, char** argv )
     		bldgs_fixedbase_init( Global.myMesh, Param.theEndT-Param.theStartT );
     	}
     	if ( get_constrained_slab_flag() == YES ) {
-    		constrained_slabs_init( Global.myMesh, Param.theEndT-Param.theStartT );
+    		constrained_slabs_init( Global.myMesh, Param.theEndT-Param.theStartT, Global.theGroupSize, Global.myID );
     	}
     	bldgs_finalize();
     }

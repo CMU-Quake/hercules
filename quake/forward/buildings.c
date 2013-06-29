@@ -17,7 +17,7 @@
  *  @copyright_notice_end
  */
 
-
+#include <mpi.h>
 #include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,7 +55,7 @@ typedef struct bldg_t {
 	cvmpayload_t fdtnprops;
 
 	/* These two are active if asymmetric_buildings=yes.If so, for buildings, there is a linear
-	 * variation in Vs^2 and Vp^2 along the EW direction (y coordinate in Hercules).
+	 * variation in Vs^2 and Vp^2  along the EW direction (y coordinate in Hercules).
 	 * Nodes at the leftmost are assigned the values in bldgprops_left and
 	 * nodes at the rightmost have the values in bldgprops_right. The values
 	 * for the intermediate nodes are linearly interpolated. In other words, stiffness
@@ -86,14 +86,17 @@ typedef struct basenode_t {
 } basenode_t;
 
 
-
+/* If I am responsible for calculating the average values */
 /* rows have information for each node at a given level in a building.
  * columns have the same type of nodal information for different levels.
  * l = # of plan-levels in each building
  * n = # of nodes in each level
- * matrix L, T and R are constant for each time step.
+ * matrix L, T are constant for each time step.
  */
-typedef struct constrained_slab_bldg {
+typedef struct master_constrained_slab_bldg {
+
+	/* general building information */
+
 	int l; /* # of plan-levels in each building */
 	int n; /* # of nodes in each level node_x*node_y */
 	int node_x; /* # of nodes in x direction for each building */
@@ -101,22 +104,44 @@ typedef struct constrained_slab_bldg {
 	double x_bldg_length; /* length of building in x (m) - NS */
 	double y_bldg_length; /* length of building in y (m) - EW */
 
+	/* information needed to calculate the average reference values */
+
 	double area; /* area of the plan section of the building(x_m * y_m) */
 	double Ix; /* area moment of inertia of the building top view wrt x axis at
-	 the center of building */
+		 the center of building */
 	double Iy; /* area moment of inertia of the building top view wrt y axis at
-	 the center of building */
+		 the center of building */
 	double Ixy; /* area moment of inertia of the building top view */
+	double**  tributary_areas; /* matrix TA - tributary areas matrix. same
+			 for each level in a building. dim : node_x x node_y */
+
+	/* information needed for communication with the sharers */
+
+	int32_t which_bldg; /*  global id of the building. */
+
+	int32_t  sharer_count; /*  total number of procs that owns a node in the
+	building. */
+	int32_t* owner_ids; /*  id of the sharer processors who will send its data.
+	size = sharer_count */
+	int32_t* node_counts; /* total number of nodes that each sharer proc will
+	send. size = sharer_count */
+
+	double* average_values; /* average values for each level in the building.
+	size = 6*l */
+
+	fvector_t** incoming_disp; /*  displacements sent by the sharers.
+	size = sharer_count x node_counts  */
+	intvector_t** incoming_disp_map; /* which node is sent. l,i,j index of each
+	node. size = sharer_count x node_counts  */
+
+	fvector_t**  dis_by_level;  /* matrix Dis - displacements of each point at
+	each plan-level of buildings. dim : l x (node_x x node_y) */
+
+	/* information for updating the displacements */
 
 	lnid_t**  local_ids_by_level;  /* matrix L - local ids of each point at
-	each plan-level of buildings. dim : l x n */
-	double**  transformation_matrix; /* matrix T - transformation matrix. same
-	 for each level in a building. dim : 3n x 6 */
-	lnid_t**  local_ids_reference_nodes; /* matrix R - local ids of 5 reference
-	 nodes at each plan-level. l x 5 - (center node is also included) */
-
-	double**  tributary_areas; /* matrix TA - tributary areas matrix. same
-		 for each level in a building. dim : node_x x node_y */
+	each plan-level of buildings. value is set to be  -1 if the node does not
+	belong to me. dim :l x (node_x x node_y) */
 
 	double**  distance_to_centroid_xm; /* matrix Dx - distance (x) matrix wrt to
 	the centroid. same or each level in a building in meter. dim : node_x x node_y */
@@ -124,7 +149,56 @@ typedef struct constrained_slab_bldg {
 	double**  distance_to_centroid_ym; /* matrix Dy - distance (y) matrix wrt to
 	the centroid. same or each level in a building in meter. dim : node_x x node_y */
 
-} constrained_slab_bldg_t;
+} master_constrained_slab_bldg_t;
+
+
+/* If I own nodes in a building. I need to send info to buildings master proc.*/
+
+/* rows have information for each node at a given level in a building.
+ * columns have the same type of nodal information for different levels.
+ * l = # of plan-levels in each building
+ * n = # of nodes in each level
+ * matrix L, T and R are constant for each time step.
+ */
+typedef struct sharer_constrained_slab_bldg {
+	/* general building information */
+
+	int l; /* # of plan-levels in each building */
+	int n; /* # of nodes in each level node_x*node_y */
+	int node_x; /* # of nodes in x direction for each building */
+	int node_y; /* # of nodes in y direction for each building */
+
+
+	/* information needed for communication with the master */
+
+	int32_t which_bldg; /*  global id of the building. */
+	int32_t responsible_id; /*  global id of the responsible proc. */
+
+	int32_t  my_nodes_count; /*  total number of nodes in the building that I
+	own */
+
+	double* average_values; /* average values for each level in the building.
+	size = 6*l */
+
+	intvector_t* outgoing_disp_map; /* which node is sent. l,i,j index of each
+		node. size = my_nodes_count  */
+
+	fvector_t* outgoing_disp; /* displacements sent to the master  */
+
+	/* information for updating the displacements */
+
+	lnid_t**  local_ids_by_level;  /* matrix L - local ids of each point at
+		each plan-level of buildings. value is set to be  -1 if the node does not
+		belong to me. dim :l x (node_x x node_y) */
+
+	double**  distance_to_centroid_xm; /* matrix Dx - distance (x) matrix wrt to
+		the centroid. same or each level in a building in meter. dim : node_x x node_y */
+
+	double**  distance_to_centroid_ym; /* matrix Dy - distance (y) matrix wrt to
+		the centroid. same or each level in a building in meter. dim : node_x x node_y */
+
+} sharer_constrained_slab_bldg_t;
+
 
 
 /* -------------------------------------------------------------------------- */
@@ -143,18 +217,22 @@ static int          theBaseFixedStartIndex;
 static int32_t      theBaseNodesCount;
 static basenode_t  *theBaseNodes;
 static fvector_t  **theBaseSignals;
-static constrained_slab_bldg_t  *theConstrainedSlab;
+static master_constrained_slab_bldg_t  *theMasterConstrainedSlab;
+static sharer_constrained_slab_bldg_t  *theSharerConstrainedSlab;
 
 /* Permanent */
 
 static int      theNumberOfBuildings;
+static int      theNumberOfBuildingsMaster = 0;
+static int      theNumberOfBuildingsSharer = 0;
+
 static int      theNumberOfPushdowns;
 static double   theMinOctSizeMeters;
 static double   theSurfaceShift = 0;
 static bldg_t   *theBuilding;
 static pdown_t  *thePushdown;
 
-static double   eccentricity = 0;
+//static double  eccentricity = 0;
 
 /* Transient */
 
@@ -311,20 +389,22 @@ cvmpayload_t get_props( int i, double z ) {
 	if ( z >= theSurfaceShift ) {
 		/* Element is in the foundation */
 		return theBuilding[i].fdtnprops;
-	} else {
-		/* Element is in the building */
-		if ( asymmetricBuildings == NO ) {
-			return theBuilding[i].bldgprops;
-		}
-
-		/* Return the lowest Vs */
-		if ( asymmetricBuildings == YES ) {
-			if( theBuilding[i].bldgprops_left.Vs > theBuilding[i].bldgprops_right.Vs )
-				return theBuilding[i].bldgprops_right;
-			else
-				return theBuilding[i].bldgprops_left;
-		}
 	}
+	/* Element is in the building */
+	if ( asymmetricBuildings == NO ) {
+		return theBuilding[i].bldgprops;
+	}
+
+	/* Return the lowest Vs */
+	if ( asymmetricBuildings == YES ) {
+		if( theBuilding[i].bldgprops_left.Vs > theBuilding[i].bldgprops_right.Vs )
+			return theBuilding[i].bldgprops_right;
+		else
+			return theBuilding[i].bldgprops_left;
+	}
+
+	/* should not reach here */
+	return theBuilding[i].bldgprops;
 }
 
 void get_airprops( octant_t *leaf, double ticksize, edata_t *edata,
@@ -1035,8 +1115,9 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 						edata->Vp = pow(pow(theBuilding[i].bldgprops_left.Vp, 2) + increment_Vp*location + increment_Vp/2, 0.5) ;
 						edata->Vs = pow(pow(theBuilding[i].bldgprops_left.Vs, 2) + increment_Vs*location + increment_Vs/2, 0.5) ;
 
-						eccentricity += (y_physical - theBuilding[i].bounds.ymin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
-								(pow(350,2) * 6 * 12 * 7);
+
+//						eccentricity += (y_physical - theBuilding[i].bounds.ymin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
+//								(pow(350,2) * 6 * 12 * 7);
 
 					}
 				}
@@ -1795,373 +1876,715 @@ void bldgs_fixedbase_init ( mesh_t *myMesh, double simTime ) {
     return;
 }
 
-void constrained_slabs_init ( mesh_t *myMesh, double simTime ) {
+void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_number, int32_t myID ) {
 
-	int iBldg,i,j;
+	int iBldg, i, j, k, l, iMaster = -1, iSharer = -1;
 	int nodes_x, nodes_y;
 	double ticksize;
+	int* masterproc; /* how many nodes do I have in each building only if I am master. 0 otherwise*/
+	int* sharerproc; /* how many nodes do I have in each building if I am the sharer*/
+
+	int* masterproc_all; /* how many nodes does the master proc have in each building. 0 if I am the sharer of the building.
+	First the information of Proc0 for each building, then Proc1 for each building and goes on like this... */
+	int* sharerproc_all; /* how many nodes does the procs( only sharers)  have in each building. 0 if I am the master.
+	First the information of Proc0 for each building, then Proc1 for each building and goes on like this... */
+
 	ticksize = myMesh->ticksize;
 
-	//printf ("\n\n\n %f \n\n", eccentricity);
 
-	/* Allocate memory for the  theConstrainedSlab */
-	theConstrainedSlab =
-			(constrained_slab_bldg_t*)malloc(sizeof(constrained_slab_bldg_t)*theNumberOfBuildings);
-	if ( theConstrainedSlab == NULL ) {
+	masterproc = calloc(theNumberOfBuildings,sizeof(int));
+	sharerproc = calloc(theNumberOfBuildings,sizeof(int));
+
+	masterproc_all = (int*)malloc( sizeof(int) * theNumberOfBuildings * group_number);
+	if ( masterproc_all == NULL ) {
 		solver_abort ( __FUNCTION_NAME, "NULL from malloc",
-				"Error allocating theConstrainedSlab memory" );
+				"Error allocating masterproc_all memory" );
 	}
 
-	/* Fill theConstrainedSlab struct*/
 
-	for (iBldg = 0; iBldg < theNumberOfBuildings; iBldg++) {
-		double x_m;
-		double y_m;
-
-		theConstrainedSlab[iBldg].l = (theBuilding[iBldg].height)/
-				theMinOctSizeMeters + 1;
-		nodes_x = (theBuilding[iBldg].bounds.xmax -
-				theBuilding[iBldg].bounds.xmin)/theMinOctSizeMeters + 1;
-		nodes_y = (theBuilding[iBldg].bounds.ymax -
-				theBuilding[iBldg].bounds.ymin)/theMinOctSizeMeters + 1;
-
-		theConstrainedSlab[iBldg].node_x = nodes_x;
-		theConstrainedSlab[iBldg].node_y = nodes_y;
-		theConstrainedSlab[iBldg].n = nodes_y * nodes_x;
-		theConstrainedSlab[iBldg].x_bldg_length =
-				(theBuilding[iBldg].bounds.xmax - theBuilding[iBldg].bounds.xmin);
-		theConstrainedSlab[iBldg].y_bldg_length =
-				(theBuilding[iBldg].bounds.ymax - theBuilding[iBldg].bounds.ymin);
-
-		x_m = theConstrainedSlab[iBldg].x_bldg_length;
-		y_m = theConstrainedSlab[iBldg].y_bldg_length;
-
-		theConstrainedSlab[iBldg].area = x_m*y_m;
-
-		theConstrainedSlab[iBldg].Ix  = x_m*y_m*y_m*y_m/12;
-		theConstrainedSlab[iBldg].Iy  = y_m * x_m * x_m * x_m/12;
-		theConstrainedSlab[iBldg].Ixy = 0;
-
-		//		printf ("\n l=%d nodes_x=%d nodes_y=%d n=%d x_bldg_length=%f y_bldg_length=%f"
-		//				"Ix=%f Iy=%f Ixy=%f  \n",
-		//				theConstrainedSlab[iBldg].l, theConstrainedSlab[iBldg].node_x,
-		//				theConstrainedSlab[iBldg].node_y,theConstrainedSlab[iBldg].n,
-		//				theConstrainedSlab[iBldg].x_bldg_length ,
-		//				theConstrainedSlab[iBldg].y_bldg_length,
-		//				theConstrainedSlab[iBldg].Ix,
-		//				theConstrainedSlab[iBldg].Iy,
-		//				theConstrainedSlab[iBldg].Ixy );
-	}
-
-	/* Allocate memory for the two dimensional arrays; L T R  and TA */
-	for (iBldg = 0; iBldg < theNumberOfBuildings; iBldg++) {
-
-		/* Matrix L */
-		theConstrainedSlab[iBldg].local_ids_by_level =
-				(lnid_t**)malloc(theConstrainedSlab[iBldg].l * sizeof(lnid_t*));
-		for ( i = 0; i < theConstrainedSlab[iBldg].l; i++) {
-			theConstrainedSlab[iBldg].local_ids_by_level[i] =
-					(lnid_t*)malloc(theConstrainedSlab[iBldg].n * sizeof(lnid_t));
-		}
-
-		/* Matrix T */
-		theConstrainedSlab[iBldg].transformation_matrix =
-				(double**)malloc(theConstrainedSlab[iBldg].n * 3 * sizeof(double*));
-		for ( i = 0; i < theConstrainedSlab[iBldg].n * 3; i++) {
-			theConstrainedSlab[iBldg].transformation_matrix[i] =
-					(double*)malloc(6 * sizeof(double));
-		}
-
-		/* Matrix R */
-		theConstrainedSlab[iBldg].local_ids_reference_nodes =
-				(lnid_t**)malloc(theConstrainedSlab[iBldg].l * sizeof(lnid_t*));
-		for ( i = 0; i < theConstrainedSlab[iBldg].l; i++) {
-			theConstrainedSlab[iBldg].local_ids_reference_nodes[i] =
-					(lnid_t*)malloc( 5 * sizeof(lnid_t));
-		}
-
-		/* Matrix TA */
-		theConstrainedSlab[iBldg].tributary_areas =
-				(double**)malloc(theConstrainedSlab[iBldg].node_x * sizeof(double*));
-		for ( i = 0; i < theConstrainedSlab[iBldg].node_x; i++) {
-			theConstrainedSlab[iBldg].tributary_areas[i] =
-					(double*)malloc( theConstrainedSlab[iBldg].node_y * sizeof(double));
-		}
-
-		/* Matrix Dx */
-		theConstrainedSlab[iBldg].distance_to_centroid_xm =
-				(double**)malloc(theConstrainedSlab[iBldg].node_x * sizeof(double*));
-		for ( i = 0; i < theConstrainedSlab[iBldg].node_x; i++) {
-			theConstrainedSlab[iBldg].distance_to_centroid_xm[i] =
-					(double*)malloc( theConstrainedSlab[iBldg].node_y * sizeof(double));
-		}
-
-		/* Matrix Dy */
-		theConstrainedSlab[iBldg].distance_to_centroid_ym =
-				(double**)malloc(theConstrainedSlab[iBldg].node_x * sizeof(double*));
-		for ( i = 0; i < theConstrainedSlab[iBldg].node_x; i++) {
-			theConstrainedSlab[iBldg].distance_to_centroid_ym[i] =
-					(double*)malloc( theConstrainedSlab[iBldg].node_y * sizeof(double));
+	sharerproc_all = (int*)malloc( sizeof(int) * theNumberOfBuildings * group_number);
+	if ( sharerproc_all == NULL ) {
+			solver_abort ( __FUNCTION_NAME, "NULL from malloc",
+					"Error allocating sharerproc_all memory" );
 		}
 
 
-	}
-
-	/* Find local ids of nodes at each level for each building.( level0 -> base ) - matrix L  */
-	/* Find local_ids_reference_nodes matrix for each building and each level. - matrix R  */
-	/* l is from basement to roof */
-
+	/* Find out if I am a master or a sharer */
 	for ( iBldg = 0; iBldg < theNumberOfBuildings; iBldg++ ) {
-		int32_t l;
-		tick_t bldg_center_x, bldg_center_y;
+		int sharer = 0, master = 0;
 
-		bldg_center_x = (theBuilding[iBldg].bounds.xmax +
-				theBuilding[iBldg].bounds.xmin)/2/ticksize;
-		bldg_center_y = (theBuilding[iBldg].bounds.ymax +
-				theBuilding[iBldg].bounds.ymin)/2/ticksize;
+		for ( i = 0; i < myMesh->nharbored; ++i ) {
+			if ( myMesh->nodeTable[i].ismine == 1) {
 
-		for ( l = 0; l < theConstrainedSlab[iBldg].l; l++) {
-			tick_t    z_tick, counter = 0;
-			z_tick = (theSurfaceShift - theMinOctSizeMeters*l)/ticksize;
-			for ( i = 0; i <  theConstrainedSlab[iBldg].node_x; i++ ) {
-				for ( j = 0; j <  theConstrainedSlab[iBldg].node_y; j++) {
+				double x_m, y_m, z_m;
 
-					int32_t   k;
-					tick_t    x_tick, y_tick;
-					x_tick = (theBuilding[iBldg].bounds.xmin + theMinOctSizeMeters*i)/ticksize;
-					y_tick = (theBuilding[iBldg].bounds.ymin + theMinOctSizeMeters*j)/ticksize;
+				x_m = (myMesh->nodeTable[i].x) * ticksize;
+				y_m = (myMesh->nodeTable[i].y) * ticksize;
+				z_m = (myMesh->nodeTable[i].z) * ticksize;
 
-					/* Loop each node.
-					 */
-					for ( k = 0; k < myMesh->nharbored; ++k ) {
-						if( myMesh->nodeTable[k].ismine == 1 ) {
-							if ( myMesh->nodeTable[k].z == z_tick) {
-								if ( myMesh->nodeTable[k].x == x_tick) {
-									if ( myMesh->nodeTable[k].y == y_tick) {
 
-										/* Local ids -- matrix L*/
-										theConstrainedSlab[iBldg].local_ids_by_level[l][counter] = k;
-										counter++;
+				/* If the buildings S-W roof corner node belongs to me, I am the master */
+				if ( ( z_m == theBuilding[iBldg].bounds.zmin) &&
+						( x_m == theBuilding[iBldg].bounds.xmin) &&
+						( y_m == theBuilding[iBldg].bounds.ymin) )
+				{
+					master = 1;
+				}
 
-										/* tributary_areas -- matrix TA*/
-										theConstrainedSlab[iBldg].tributary_areas[i][j] =
-												theMinOctSizeMeters * theMinOctSizeMeters;
+				/* If I am a sharer */
+				if (( z_m <= theSurfaceShift) &&
+						inclusivesearch( x_m, y_m, z_m, theBuilding[iBldg].bounds) == 1 )
+				{
+					sharer++;
+				}
 
-										if ( (y_tick == theBuilding[iBldg].bounds.ymin/ticksize) ||
-												(y_tick == theBuilding[iBldg].bounds.ymax/ticksize) ||
-												(x_tick == theBuilding[iBldg].bounds.xmin/ticksize) ||
-												(x_tick == theBuilding[iBldg].bounds.xmax/ticksize) ) {
-											/* tributary_areas -- matrix TA*/
-											theConstrainedSlab[iBldg].tributary_areas[i][j] =
-													theMinOctSizeMeters * theMinOctSizeMeters / 2;
+			}
+		}
+
+		/* means I am a sharer of this building */
+		if (sharer != 0 && master == 0) {
+			sharerproc[iBldg] = sharer;
+			theNumberOfBuildingsSharer++;
+		}
+
+		/* means I am the master of this building */
+		if (master != 0) {
+			masterproc[iBldg] = sharer;
+			theNumberOfBuildingsMaster++;
+		}
+
+	}
+
+	/*  information sharing among processors */
+	/*  building_info_proc1  building_info_proc2  building_info_proc3 ...*/
+	MPI_Allgather( masterproc, theNumberOfBuildings, MPI_INT,
+			masterproc_all, theNumberOfBuildings, MPI_INT, comm_solver );
+
+	MPI_Allgather( sharerproc, theNumberOfBuildings, MPI_INT,
+			sharerproc_all, theNumberOfBuildings, MPI_INT, comm_solver );
+
+
+//	printf("\nmyID = %d theNumberOfBuildingsSharer = %d\n",myID,theNumberOfBuildingsSharer);
+//
+//		fprintf(stdout, "\n  Master %d \n\n", myID);
+//		for ( i = 0 ; i < group_number ; i++){
+//			for ( j = 0; j < theNumberOfBuildings; j++) {
+//				fprintf(stdout, "%5d   ",
+//						masterproc_all[i*theNumberOfBuildings + j]);
+//			}
+//			fprintf(stdout, "\n");
+//		}
+//		fprintf(stdout, "\n\n");
+
+
+
+	/* Masters calculate the avearge dis for the buildings and then sends it back to
+	 * the sharers.
+	 */
+	/* Allocate memory for the  theMasterConstrainedSlab */
+	if (theNumberOfBuildingsMaster != 0 ) {
+
+		theMasterConstrainedSlab =
+				(master_constrained_slab_bldg_t*)malloc(sizeof(master_constrained_slab_bldg_t)*theNumberOfBuildingsMaster);
+		if ( theMasterConstrainedSlab == NULL ) {
+			solver_abort ( __FUNCTION_NAME, "NULL from malloc",
+					"Error allocating theMasterConstrainedSlab memory" );
+		}
+
+		/* Fill theConstrainedSlab struct*/
+
+		for (iBldg = 0; iBldg < theNumberOfBuildings; iBldg++) {
+
+			if( masterproc[iBldg] != 0  ) {
+
+				iMaster++;
+
+				int sharer_count = 0;
+				double x_m;
+				double y_m;
+
+				/* These are general building information */
+				theMasterConstrainedSlab[iMaster].l = (theBuilding[iBldg].height)/
+						theMinOctSizeMeters + 1;
+				nodes_x = (theBuilding[iBldg].bounds.xmax -
+						theBuilding[iBldg].bounds.xmin)/theMinOctSizeMeters + 1;
+				nodes_y = (theBuilding[iBldg].bounds.ymax -
+						theBuilding[iBldg].bounds.ymin)/theMinOctSizeMeters + 1;
+
+				theMasterConstrainedSlab[iMaster].node_x = nodes_x;
+				theMasterConstrainedSlab[iMaster].node_y = nodes_y;
+				theMasterConstrainedSlab[iMaster].n = nodes_y * nodes_x;
+				theMasterConstrainedSlab[iMaster].x_bldg_length =
+						(theBuilding[iBldg].bounds.xmax - theBuilding[iBldg].bounds.xmin);
+				theMasterConstrainedSlab[iMaster].y_bldg_length =
+						(theBuilding[iBldg].bounds.ymax - theBuilding[iBldg].bounds.ymin);
+
+				x_m = theMasterConstrainedSlab[iMaster].x_bldg_length;
+				y_m = theMasterConstrainedSlab[iMaster].y_bldg_length;
+
+				theMasterConstrainedSlab[iMaster].area = x_m*y_m;
+
+				theMasterConstrainedSlab[iMaster].Ix =  0;
+				theMasterConstrainedSlab[iMaster].Iy =  0;
+				theMasterConstrainedSlab[iMaster].Ixy = 0;
+
+
+				/* These are communication information */
+				theMasterConstrainedSlab[iMaster].which_bldg = iBldg;
+
+				for ( i = 0 ; i < group_number ; i++) {
+					if ( sharerproc_all[i*theNumberOfBuildings + iBldg] != 0 && i != myID) {
+						sharer_count++;
+					}
+				}
+
+				theMasterConstrainedSlab[iMaster].sharer_count = sharer_count;
+
+				theMasterConstrainedSlab[iMaster].owner_ids =
+						(int32_t*)malloc(sizeof(int32_t) * sharer_count);
+				if ( theMasterConstrainedSlab[iMaster].owner_ids == NULL ) {
+					solver_abort ( __FUNCTION_NAME, "NULL from malloc",
+							"Error allocating theMasterConstrainedSlab[iMaster].owner_ids memory" );
+				}
+
+				theMasterConstrainedSlab[iMaster].node_counts =
+						(int32_t*)malloc(sizeof(int32_t) * sharer_count);
+				if ( theMasterConstrainedSlab[iMaster].node_counts == NULL ) {
+					solver_abort ( __FUNCTION_NAME, "NULL from malloc",
+							"Error allocating theMasterConstrainedSlab[iMaster].node_counts memory" );
+				}
+
+
+				theMasterConstrainedSlab[iMaster].average_values =
+						(double*)malloc(sizeof(double) * 6 * theMasterConstrainedSlab[iMaster].l);
+				if ( theMasterConstrainedSlab[iMaster].average_values == NULL ) {
+					solver_abort ( __FUNCTION_NAME, "NULL from malloc",
+							"Error allocating theMasterConstrainedSlab[iMaster].average_values memory" );
+				}
+
+				int total_nodes = 0;
+				j = 0;
+				for ( i = 0 ; i < group_number ; i++) {
+					if ( sharerproc_all[i*theNumberOfBuildings + iBldg] != 0 && i != myID ) {
+
+						theMasterConstrainedSlab[iMaster].owner_ids[j] = i;
+						theMasterConstrainedSlab[iMaster].node_counts[j] =
+								sharerproc_all[i*theNumberOfBuildings + iBldg];
+						j++;
+						total_nodes += sharerproc_all[i*theNumberOfBuildings + iBldg];
+					}
+				}
+
+				//				printf(" \n myId = %d iBldg = %d sharercount = %d \n", myID, iBldg, theMasterConstrainedSlab[iMaster].sharer_count);
+				//				j=0;
+				//				for ( i = 0 ; i < group_number ; i++) {
+				//					if ( sharerproc_all[i*theNumberOfBuildings + iBldg] != 0 && i != myID ) {
+				//
+				//						printf( " \n myId = %d iBldg = %d owner_id = %d node_counts = %d \n" , myID, iBldg,
+				//								theMasterConstrainedSlab[iMaster].owner_ids[j],
+				//								theMasterConstrainedSlab[iMaster].node_counts[j]);
+				//						j++;
+				//					}
+				//				}
+
+
+				/* sanity check */
+				if ( total_nodes + masterproc[iBldg] != theMasterConstrainedSlab[iMaster].n *
+						theMasterConstrainedSlab[iMaster].l) {
+					solver_abort ( __FUNCTION_NAME, "sanity check fails",
+							"total number of nodes is not correct" );
+				}
+
+
+				/* Incoming displacements */
+				theMasterConstrainedSlab[iMaster].incoming_disp =
+						(fvector_t**)malloc(sharer_count * sizeof(fvector_t*));
+				for ( i = 0; i < sharer_count; i++) {
+					theMasterConstrainedSlab[iMaster].incoming_disp[i] =
+							(fvector_t*)malloc(theMasterConstrainedSlab[iMaster].node_counts[i] * sizeof(fvector_t));
+				}
+
+				/* Incoming displacements map*/
+				theMasterConstrainedSlab[iMaster].incoming_disp_map =
+						(intvector_t**)malloc(sharer_count * sizeof(intvector_t*));
+				for ( i = 0; i < sharer_count; i++) {
+					theMasterConstrainedSlab[iMaster].incoming_disp_map[i] =
+							(intvector_t*)malloc(theMasterConstrainedSlab[iMaster].node_counts[i] * sizeof(intvector_t));
+				}
+
+				/* information for updating the displacements */
+
+				/* Matrix L */
+				theMasterConstrainedSlab[iMaster].local_ids_by_level =
+						(lnid_t**)malloc(theMasterConstrainedSlab[iMaster].l * sizeof(lnid_t*));
+				for ( i = 0; i < theMasterConstrainedSlab[iMaster].l; i++) {
+					theMasterConstrainedSlab[iMaster].local_ids_by_level[i] =
+							(lnid_t*)malloc(theMasterConstrainedSlab[iMaster].n * sizeof(lnid_t));
+				}
+
+				/* Matrix TA */
+				theMasterConstrainedSlab[iMaster].tributary_areas =
+						(double**)malloc(theMasterConstrainedSlab[iMaster].node_x * sizeof(double*));
+				for ( i = 0; i < theMasterConstrainedSlab[iMaster].node_x; i++) {
+					theMasterConstrainedSlab[iMaster].tributary_areas[i] =
+							(double*)malloc( theMasterConstrainedSlab[iMaster].node_y * sizeof(double));
+				}
+
+				/* Matrix Dx */
+				theMasterConstrainedSlab[iMaster].distance_to_centroid_xm =
+						(double**)malloc(theMasterConstrainedSlab[iMaster].node_x * sizeof(double*));
+				for ( i = 0; i < theMasterConstrainedSlab[iMaster].node_x; i++) {
+					theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i] =
+							(double*)malloc( theMasterConstrainedSlab[iMaster].node_y * sizeof(double));
+				}
+
+				/* Matrix Dy */
+				theMasterConstrainedSlab[iMaster].distance_to_centroid_ym =
+						(double**)malloc(theMasterConstrainedSlab[iMaster].node_x * sizeof(double*));
+				for ( i = 0; i < theMasterConstrainedSlab[iMaster].node_x; i++) {
+					theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i] =
+							(double*)malloc( theMasterConstrainedSlab[iMaster].node_y * sizeof(double));
+				}
+
+
+
+				/* Find local ids of nodes at each level for each building.( level0 -> base ) - matrix L  */
+				/* l is from basement to roof. If I do not have the node set -1 in matrix L */
+				/* Also find tributary areas and Dx Dy and Ix Iy Ixy */
+
+				double bldg_center_x_m, bldg_center_y_m;
+
+				bldg_center_x_m = (theBuilding[iBldg].bounds.xmax +
+						theBuilding[iBldg].bounds.xmin)/2;
+				bldg_center_y_m = (theBuilding[iBldg].bounds.ymax +
+						theBuilding[iBldg].bounds.ymin)/2;
+
+				for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
+
+					tick_t   z_tick;
+					z_tick = (theSurfaceShift - theMinOctSizeMeters*l)/ticksize;
+
+					for ( i = 0; i <  theMasterConstrainedSlab[iMaster].node_x; i++ ) {
+						for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_y; j++) {
+
+							double   dist_x_center_m, dist_y_center_m;
+							double   x_m, y_m;
+
+							lnid_t index;
+
+							index = j+i*theMasterConstrainedSlab[iMaster].node_y;
+
+							/* coordinate of the node */
+							x_m = (theBuilding[iBldg].bounds.xmin + theMinOctSizeMeters*i);
+							y_m = (theBuilding[iBldg].bounds.ymin + theMinOctSizeMeters*j);
+
+
+							/* distance of the node to the geometric center of the building  */
+							dist_x_center_m = x_m  - bldg_center_x_m;
+							dist_y_center_m = y_m  - bldg_center_y_m;
+
+
+							/* calculate these only once since are same for each level */
+							if ( l == 0 ) {
+								/* distance to centroid -- matrix Dx*/
+								theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i][j] =
+										dist_x_center_m;
+
+								/* distance to centroid -- matrix Dy*/
+								theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i][j] =
+										dist_y_center_m;
+
+								/* Also find tributary areas. TA */
+
+								/* tributary_areas -- matrix TA*/
+								theMasterConstrainedSlab[iMaster].tributary_areas[i][j] =
+										theMinOctSizeMeters * theMinOctSizeMeters;
+
+								if ( (y_m == theBuilding[iBldg].bounds.ymin) ||
+										(y_m == theBuilding[iBldg].bounds.ymax) ||
+										(x_m == theBuilding[iBldg].bounds.xmin) ||
+										(x_m == theBuilding[iBldg].bounds.xmax) ) {
+									/* tributary_areas -- matrix TA*/
+									theMasterConstrainedSlab[iMaster].tributary_areas[i][j] =
+											theMinOctSizeMeters * theMinOctSizeMeters / 2;
+								}
+
+								if ( ((y_m == theBuilding[iBldg].bounds.ymax) && (x_m == theBuilding[iBldg].bounds.xmin) ) ||
+										((y_m == theBuilding[iBldg].bounds.ymin) && (x_m == theBuilding[iBldg].bounds.xmin) ) ||
+										((y_m == theBuilding[iBldg].bounds.ymax) && (x_m == theBuilding[iBldg].bounds.xmax) ) ||
+										((y_m == theBuilding[iBldg].bounds.ymin) && (x_m == theBuilding[iBldg].bounds.xmax) )
+								) {
+
+									/* tributary_areas -- matrix TA*/
+									theMasterConstrainedSlab[iMaster].tributary_areas[i][j] =
+											theMinOctSizeMeters * theMinOctSizeMeters / 4;
+								}
+
+								theMasterConstrainedSlab[iMaster].Ix += theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i][j] *
+										theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i][j] *
+										theMasterConstrainedSlab[iMaster].tributary_areas[i][j];
+								theMasterConstrainedSlab[iMaster].Iy += theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i][j] *
+										theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i][j] *
+										theMasterConstrainedSlab[iMaster].tributary_areas[i][j];
+								theMasterConstrainedSlab[iMaster].Ixy += theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i][j] *
+										theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i][j] *
+										theMasterConstrainedSlab[iMaster].tributary_areas[i][j];
+							}
+
+							/* -1 if I do not have the node */
+							theMasterConstrainedSlab[iMaster].local_ids_by_level[l][index] = -1;
+
+							/* Loop each node.
+							 */
+							for ( k = 0; k < myMesh->nharbored; ++k ) {
+								if( myMesh->nodeTable[k].ismine == 1 ) {
+									if ( myMesh->nodeTable[k].z == z_tick) {
+										if ( myMesh->nodeTable[k].x == x_m/ticksize) {
+											if ( myMesh->nodeTable[k].y == y_m/ticksize) {
+
+												/* Local ids -- matrix L*/
+												theMasterConstrainedSlab[iMaster].local_ids_by_level[l][index] = k;
+
+												break;
+											}
 										}
-
-										if ( ((y_tick == theBuilding[iBldg].bounds.ymax/ticksize) && (x_tick == theBuilding[iBldg].bounds.xmin/ticksize) ) ||
-												((y_tick == theBuilding[iBldg].bounds.ymin/ticksize) && (x_tick == theBuilding[iBldg].bounds.xmin/ticksize) ) ||
-												((y_tick == theBuilding[iBldg].bounds.ymax/ticksize) && (x_tick == theBuilding[iBldg].bounds.xmax/ticksize) ) ||
-												((y_tick == theBuilding[iBldg].bounds.ymin/ticksize) && (x_tick == theBuilding[iBldg].bounds.xmax/ticksize) )
-										) {
-
-											/* tributary_areas -- matrix TA*/
-											theConstrainedSlab[iBldg].tributary_areas[i][j] =
-													theMinOctSizeMeters * theMinOctSizeMeters / 4;
-										}
-
-										/* For reference nodes -- matrix R*/
-										/* For reference point 1 (E)*/
-										if ( (y_tick == theBuilding[iBldg].bounds.ymax/ticksize) &&
-												(x_tick == bldg_center_x) ) {
-											theConstrainedSlab[iBldg].local_ids_reference_nodes[l][0] = k;
-											break;
-										}
-										/* For reference point 2 (N)*/
-										if ( (x_tick == theBuilding[iBldg].bounds.xmax/ticksize) &&
-												(y_tick == bldg_center_y) ) {
-											theConstrainedSlab[iBldg].local_ids_reference_nodes[l][1] = k;
-											break;
-										}
-										/* For reference point 3 (W)*/
-										if ( (y_tick == theBuilding[iBldg].bounds.ymin/ticksize) &&
-												(x_tick == bldg_center_x) ) {
-											theConstrainedSlab[iBldg].local_ids_reference_nodes[l][2] = k;
-											break;
-										}
-										/* For reference point 4 (S)*/
-										if ( (x_tick == theBuilding[iBldg].bounds.xmin/ticksize) &&
-												(y_tick == bldg_center_y) ) {
-											theConstrainedSlab[iBldg].local_ids_reference_nodes[l][3] = k;
-											break;
-										}
-										/* For reference point 5 -- center point*/
-										if ( (x_tick == bldg_center_x) &&
-												(y_tick == bldg_center_y) ) {
-											theConstrainedSlab[iBldg].local_ids_reference_nodes[l][4] = k;
-											break;
-										}
-
-										break;
 									}
 								}
+
 							}
 						}
 					}
 				}
+
+
+				//				fprintf(stdout, "\n areas my id %d  building %d \n\n", myID, iBldg);
+				//
+				//				for ( i = 0; i <  theMasterConstrainedSlab[iMaster].node_x; i++ ) {
+				//					for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_y; j++) {
+				//
+				//						fprintf(stdout, "%7.2f     ",
+				//								theMasterConstrainedSlab[iMaster].tributary_areas[i][j]);
+				//					}
+				//					fprintf(stdout, "\n");
+				//				}
+
+
+
+				//				fprintf(stdout, "\n  local ids my id %d  building %d Ix  %f  Iy %f  Ixy  %f \n\n", myID, iBldg,
+				//						theMasterConstrainedSlab[iMaster].Ix,
+				//						theMasterConstrainedSlab[iMaster].Iy,
+				//						theMasterConstrainedSlab[iMaster].Ixy);
+				//
+				//				for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
+				//					fprintf(stdout, "\n  level %d \n\n", l);
+				//
+				//					for ( i = 0; i <  theMasterConstrainedSlab[iMaster].node_x; i++ ) {
+				//						for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_y; j++) {
+				//
+				//							fprintf(stdout, "%5d   ",
+				//									theMasterConstrainedSlab[iMaster].local_ids_by_level[l][j+i*theMasterConstrainedSlab[iMaster].node_y]);
+				//
+				//						}
+				//						fprintf(stdout, "\n");
+				//
+				//					}
+				//				}
+
+				//				fprintf(stdout, "\n Trib Area my id %d  building %d \n\n", myID, iBldg);
+				//
+				//				for ( i = 0; i <  theMasterConstrainedSlab[iMaster].node_x; i++ ) {
+				//					for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_y; j++) {
+				//
+				//						fprintf(stdout, "%7.2f     ",
+				//								theMasterConstrainedSlab[iMaster].tributary_areas[i][j]);
+				//					}
+				//					fprintf(stdout, "\n");
+				//				}
+
 			}
 		}
 	}
 
+	/* Sharers send the displacements to the master at each time step. Then
+	 * they receive the average values and update the displacements.
+	 */
+	/* Allocate memory for the  theSharerConstrainedSlab */
+	if (theNumberOfBuildingsSharer != 0 ) {
 
-	//	printf("roof pt1_x_y_z= %f %f %f pt2_x_y_z= %f %f %f pt3_x_y_z= %f %f %f  pt4_x_y_z= %f %f %f pt5_x_y_z= %f %f %f\n\n"
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][0] ].x* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][0] ].y* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][0] ].z* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][1] ].x* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][1] ].y* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][1] ].z* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][2] ].x* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][2] ].y* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][2] ].z* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][3] ].x* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][3] ].y* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][3] ].z* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][4] ].x* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][4] ].y* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[theConstrainedSlab[0].l-1][4] ].z* ticksize );
-	//
-	//	printf("base pt1_x_y_z= %f %f %f pt2_x_y_z= %f %f %f pt3_x_y_z= %f %f %f  pt4_x_y_z= %f %f %f pt5_x_y_z= %f %f %f\n\n"
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][0] ].x* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][0] ].y* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][0] ].z* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][1] ].x* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][1] ].y* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][1] ].z* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][2] ].x* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][2] ].y* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][2] ].z* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][3] ].x* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][3] ].y* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][3] ].z* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][4] ].x* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][4] ].y* ticksize
-	//			, myMesh->nodeTable[  theConstrainedSlab[0].local_ids_reference_nodes[0][4] ].z* ticksize );
+		theSharerConstrainedSlab =
+				(sharer_constrained_slab_bldg_t*)malloc(sizeof(sharer_constrained_slab_bldg_t)*theNumberOfBuildingsSharer);
+		if ( theSharerConstrainedSlab == NULL ) {
+			solver_abort ( __FUNCTION_NAME, "NULL from malloc",
+					"Error allocating theNumberOfBuildingsSharer memory" );
+		}
 
-	/* Find transformation matrix for each building. Only calculate for one
-	 * level (level = 1)(constant for each level) - matrix T  */
+		/* Fill theSharerConstrainedSlab struct*/
 
-	for ( iBldg = 0; iBldg < theNumberOfBuildings; iBldg++ ) {
+		for (iBldg = 0; iBldg < theNumberOfBuildings; iBldg++) {
 
-		int counter = 0;
-		double bldg_center_x, bldg_center_y;
+			if( sharerproc[iBldg] != 0 && masterproc[iBldg] == 0 ) {
 
-		bldg_center_x = (theBuilding[iBldg].bounds.xmax + theBuilding[iBldg].bounds.xmin)/2;
-		bldg_center_y = (theBuilding[iBldg].bounds.ymax + theBuilding[iBldg].bounds.ymin)/2;
+				iSharer++;
 
-		//printf("\n");
+				/* These are general building information */
+				theSharerConstrainedSlab[iSharer].l = (theBuilding[iBldg].height)/
+						theMinOctSizeMeters + 1;
+				nodes_x = (theBuilding[iBldg].bounds.xmax -
+						theBuilding[iBldg].bounds.xmin)/theMinOctSizeMeters + 1;
+				nodes_y = (theBuilding[iBldg].bounds.ymax -
+						theBuilding[iBldg].bounds.ymin)/theMinOctSizeMeters + 1;
 
-		for ( i = 0; i < theConstrainedSlab[iBldg].node_x; i++ ) {
-			for ( j = 0; j < theConstrainedSlab[iBldg].node_y; j++) {
-				lnid_t nindex;
-				/* distance of the node to the geometric center of the building (resistance center)  */
-				double dist_x, dist_y;
-
-				nindex = theConstrainedSlab[iBldg].local_ids_by_level[1][counter];
-				dist_x = myMesh->nodeTable[nindex].x * ticksize - bldg_center_x;
-				dist_y = myMesh->nodeTable[nindex].y * ticksize - bldg_center_y;
+				theSharerConstrainedSlab[iSharer].node_x = nodes_x;
+				theSharerConstrainedSlab[iSharer].node_y = nodes_y;
+				theSharerConstrainedSlab[iSharer].n = nodes_y * nodes_x;
 
 
-				/* distance to centroid -- matrix Dx*/
-				theConstrainedSlab[iBldg].distance_to_centroid_xm[i][j] =
-						dist_x;
+				/* These are communication information */
+				theSharerConstrainedSlab[iSharer].which_bldg = iBldg;
 
-				/* distance to centroid -- matrix Dy*/
-				theConstrainedSlab[iBldg].distance_to_centroid_ym[i][j] =
-						dist_y;
+				for ( i = 0 ; i < group_number ; i++) {
+					if ( masterproc_all[i*theNumberOfBuildings + iBldg] != 0) {
+						theSharerConstrainedSlab[iSharer].responsible_id = i;
+						break;
+					}
+				}
 
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3][0] = 1;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3][1] = 0;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3][2] = 0;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3][3] = dist_y;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3][4] = 0;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3][5] = 0;
+				theSharerConstrainedSlab[iSharer].my_nodes_count = sharerproc[iBldg];
 
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][0] = 0;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][1] = 1;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][2] = 0;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][3] = -1*dist_x;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][4] = 0;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][5] = 0;
+				/* Outgoing displacements map*/
 
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][0] = 0;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][1] = 0;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][2] = 1;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][3] = 0;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][4] = dist_y;
-				theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][5] = -1*dist_x;
+				theSharerConstrainedSlab[iSharer].outgoing_disp_map =
+						(intvector_t*)malloc(theSharerConstrainedSlab[iSharer].my_nodes_count * sizeof(intvector_t));
 
-				//printf("x = %d y = %d  disx = %f  disy = %f \n",i,j,dist_x,dist_y);
+				theSharerConstrainedSlab[iSharer].outgoing_disp =
+						(fvector_t*)malloc(theSharerConstrainedSlab[iSharer].my_nodes_count * sizeof(fvector_t));
 
-				counter++;
+
+				theSharerConstrainedSlab[iSharer].average_values =
+						(double*)malloc(sizeof(double) * 6 * theSharerConstrainedSlab[iSharer].l);
+				if ( theSharerConstrainedSlab[iSharer].average_values == NULL ) {
+					solver_abort ( __FUNCTION_NAME, "NULL from malloc",
+							"Error allocating theSharerConstrainedSlab[iSharer].average_values memory" );
+				}
+
+				/* information for updating the displacements */
+
+				/* Matrix L */
+				theSharerConstrainedSlab[iSharer].local_ids_by_level =
+						(lnid_t**)malloc(theSharerConstrainedSlab[iSharer].l * sizeof(lnid_t*));
+				for ( i = 0; i < theSharerConstrainedSlab[iSharer].l; i++) {
+					theSharerConstrainedSlab[iSharer].local_ids_by_level[i] =
+							(lnid_t*)malloc(theSharerConstrainedSlab[iSharer].n * sizeof(lnid_t));
+				}
+
+				/* Matrix Dx */
+				theSharerConstrainedSlab[iSharer].distance_to_centroid_xm =
+						(double**)malloc(theSharerConstrainedSlab[iSharer].node_x * sizeof(double*));
+				for ( i = 0; i < theSharerConstrainedSlab[iSharer].node_x; i++) {
+					theSharerConstrainedSlab[iSharer].distance_to_centroid_xm[i] =
+							(double*)malloc( theSharerConstrainedSlab[iSharer].node_y * sizeof(double));
+				}
+
+				/* Matrix Dy */
+				theSharerConstrainedSlab[iSharer].distance_to_centroid_ym =
+						(double**)malloc(theSharerConstrainedSlab[iSharer].node_x * sizeof(double*));
+				for ( i = 0; i < theSharerConstrainedSlab[iSharer].node_x; i++) {
+					theSharerConstrainedSlab[iSharer].distance_to_centroid_ym[i] =
+							(double*)malloc( theSharerConstrainedSlab[iSharer].node_y * sizeof(double));
+				}
+
+
+
+				/* Find local ids of nodes at each level for each building.( level0 -> base ) - matrix L  */
+				/* l is from basement to roof. If I do not have the node set -1 in matrix L */
+				/* Also find Dx Dy  and outgoing_disp_map*/
+				int    counter = 0;
+				double bldg_center_x_m, bldg_center_y_m;
+
+				bldg_center_x_m = (theBuilding[iBldg].bounds.xmax +
+						theBuilding[iBldg].bounds.xmin)/2;
+				bldg_center_y_m = (theBuilding[iBldg].bounds.ymax +
+						theBuilding[iBldg].bounds.ymin)/2;
+
+				for ( l = 0; l < theSharerConstrainedSlab[iSharer].l; l++) {
+
+					tick_t   z_tick;
+					z_tick = (theSurfaceShift - theMinOctSizeMeters*l)/ticksize;
+
+					for ( i = 0; i <  theSharerConstrainedSlab[iSharer].node_x; i++ ) {
+						for ( j = 0; j <  theSharerConstrainedSlab[iSharer].node_y; j++) {
+
+							double   dist_x_center_m, dist_y_center_m;
+							double   x_m, y_m;
+
+							lnid_t index;
+
+							index = j+i*theSharerConstrainedSlab[iSharer].node_y;
+
+							/* coordinate of the node */
+							x_m = (theBuilding[iBldg].bounds.xmin + theMinOctSizeMeters*i);
+							y_m = (theBuilding[iBldg].bounds.ymin + theMinOctSizeMeters*j);
+
+
+							/* distance of the node to the geometric center of the building  */
+							dist_x_center_m = x_m  - bldg_center_x_m;
+							dist_y_center_m = y_m  - bldg_center_y_m;
+
+
+							/* calculate these only once since are same for each level */
+							if ( l == 0 ) {
+								/* distance to centroid -- matrix Dx*/
+								theSharerConstrainedSlab[iSharer].distance_to_centroid_xm[i][j] =
+										dist_x_center_m;
+
+								/* distance to centroid -- matrix Dy*/
+								theSharerConstrainedSlab[iSharer].distance_to_centroid_ym[i][j] =
+										dist_y_center_m;
+
+							}
+
+							/* -1 if I do not have the node */
+							theSharerConstrainedSlab[iSharer].local_ids_by_level[l][index] = -1;
+
+							/* Loop each node.
+							 */
+							for ( k = 0; k < myMesh->nharbored; ++k ) {
+								if( myMesh->nodeTable[k].ismine == 1 ) {
+									if ( myMesh->nodeTable[k].z == z_tick) {
+										if ( myMesh->nodeTable[k].x == x_m/ticksize) {
+											if ( myMesh->nodeTable[k].y == y_m/ticksize) {
+
+												/* Local ids -- matrix L*/
+												theSharerConstrainedSlab[iSharer].local_ids_by_level[l][index] = k;
+
+												/* outgoing_disp_map*/
+
+												theSharerConstrainedSlab[iSharer].outgoing_disp_map[counter].f[0] = l;
+												theSharerConstrainedSlab[iSharer].outgoing_disp_map[counter].f[1] = i;
+												theSharerConstrainedSlab[iSharer].outgoing_disp_map[counter].f[2] = j;
+
+												counter++;
+												break;
+											}
+										}
+									}
+								}
+
+							}
+						}
+					}
+				}
+
+
+				//				fprintf(stdout, "\n Dy my id %d  building %d \n\n", myID, iBldg);
+				//
+				//				for ( i = 0; i <  theSharerConstrainedSlab[iSharer].node_x; i++ ) {
+				//					for ( j = 0; j <  theSharerConstrainedSlab[iSharer].node_y; j++) {
+				//
+				//						fprintf(stdout, "%7.2f     ",
+				//								theSharerConstrainedSlab[iSharer].distance_to_centroid_ym[i][j]);
+				//					}
+				//					fprintf(stdout, "\n");
+				//				}
+
+
+
+				//				fprintf(stdout, "\n Dy my id %d  building %d \n\n", myID, iBldg);
+				//				for ( l = 0; l < theSharerConstrainedSlab[iSharer].l; l++) {
+				//					fprintf(stdout, "\n  level %d \n\n", l);
+				//
+				//					for ( i = 0; i <  theSharerConstrainedSlab[iSharer].node_x; i++ ) {
+				//						for ( j = 0; j <  theSharerConstrainedSlab[iSharer].node_y; j++) {
+				//
+				//							fprintf(stdout, "%5d   ",
+				//									theSharerConstrainedSlab[iSharer].local_ids_by_level[l][j+i*theSharerConstrainedSlab[iSharer].node_y]);
+				//
+				//						}
+				//						fprintf(stdout, "\n");
+				//
+				//					}
+				//				}
+
+
+//				if (myID == 4) {
+//					fprintf(stdout, "\n my id %d  building %d  master %d count %d \n\n",
+//							myID, iBldg,
+//							theSharerConstrainedSlab[iSharer].responsible_id,
+//							theSharerConstrainedSlab[iSharer].my_nodes_count);
+//
+//					for ( i = 0; i <  theSharerConstrainedSlab[iSharer].my_nodes_count; i++ ) {
+//
+//						fprintf(stdout, " %d  %d  %d \n",
+//								theSharerConstrainedSlab[iSharer].outgoing_disp_map[i].f[0],
+//								theSharerConstrainedSlab[iSharer].outgoing_disp_map[i].f[1],
+//								theSharerConstrainedSlab[iSharer].outgoing_disp_map[i].f[2]);
+//					}
+//				}
+
 			}
+
 		}
 	}
 
 
-	//	int i_mat, j_mat;
-	//
-	//	fprintf(stdout, "\n Transformation Matrix T \n\n");
-	//	for ( i_mat = 0 ; i_mat < theConstrainedSlab[0].n * 3 ; i_mat++){
-	//		for ( j_mat = 0; j_mat < 6; j_mat++) {
-	//			fprintf(stdout, "%3.2f ",
-	//					theConstrainedSlab[0].transformation_matrix[i_mat][j_mat]);
-	//		}
-	//		fprintf(stdout, "\n");
-	//	}
-	//
-	//	fprintf(stdout, "\n\n");
-	//
-	//	tick_t nin;
-	//	fprintf(stdout, "\n Reference Matrix R \n\n");
-	//	for ( i_mat = 0 ; i_mat < theConstrainedSlab[0].l ; i_mat++){
-	//		for ( j_mat = 0; j_mat < 4; j_mat++) {
-	//			nin = theConstrainedSlab[0].local_ids_reference_nodes[i_mat][j_mat];
-	//			fprintf(stdout, "%3.2f-%3.2f-%3.2f  ",
-	//					myMesh->nodeTable[nin].x * ticksize,
-	//					myMesh->nodeTable[nin].y * ticksize,
-	//					myMesh->nodeTable[nin].z * ticksize);
-	//		}
-	//		fprintf(stdout, "\n");
-	//	}
-	//
-	//
-	//	fprintf(stdout, "\n Tributary Areas Matrix T \n\n");
-	//	for ( i_mat = 0 ; i_mat < theConstrainedSlab[0].node_x ; i_mat++){
-	//		for ( j_mat = 0; j_mat < theConstrainedSlab[0].node_y; j_mat++) {
-	//			fprintf(stdout, "%3.2f ",
-	//					theConstrainedSlab[0].tributary_areas[i_mat][j_mat]);
-	//		}
-	//		fprintf(stdout, "\n");
-	//	}
-	//
-	//
-	//	fprintf(stdout, "\n Distance x \n\n");
-	//	for ( i_mat = 0 ; i_mat < theConstrainedSlab[0].node_x ; i_mat++){
-	//		for ( j_mat = 0; j_mat < theConstrainedSlab[0].node_y; j_mat++) {
-	//			fprintf(stdout, "%3.2f ",
-	//					theConstrainedSlab[0].distance_to_centroid_xm[i_mat][j_mat]);
-	//		}
-	//		fprintf(stdout, "\n");
-	//	}
-	//
-	//	fprintf(stdout, "\n Distance y  \n\n");
-	//	for ( i_mat = 0 ; i_mat < theConstrainedSlab[0].node_x ; i_mat++){
-	//		for ( j_mat = 0; j_mat < theConstrainedSlab[0].node_y; j_mat++) {
-	//			fprintf(stdout, "%3.2f ",
-	//					theConstrainedSlab[0].distance_to_centroid_ym[i_mat][j_mat]);
-	//		}
-	//		fprintf(stdout, "\n");
-	//	}
-	//
-	//	fprintf(stdout, "\n\n");
+	/* communication between sharers and masters */
+	MPI_Status   status;
+	MPI_Request  isendreqs;
+	MPI_Datatype index_sharer;
+
+	MPI_Type_contiguous(3, MPI_INT, &index_sharer);
+	MPI_Type_commit(&index_sharer);
+
+
+	/* First, sharers send their information to masters */
+
+	for (iSharer = 0; iSharer < theNumberOfBuildingsSharer; iSharer++) {
+
+		MPI_Isend(theSharerConstrainedSlab[iSharer].outgoing_disp_map,
+				theSharerConstrainedSlab[iSharer].my_nodes_count,
+				index_sharer,
+				theSharerConstrainedSlab[iSharer].responsible_id,
+				theSharerConstrainedSlab[iSharer].which_bldg,
+				comm_solver, &isendreqs);
+	}
+
+
+	/* Second, masters receive the information */
+
+	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
+
+		for (i = 0; i < theMasterConstrainedSlab[iMaster].sharer_count; i++) {
+
+			MPI_Recv(theMasterConstrainedSlab[iMaster].incoming_disp_map[i],
+					theMasterConstrainedSlab[iMaster].node_counts[i],
+					index_sharer,
+					theMasterConstrainedSlab[iMaster].owner_ids[i],
+					theMasterConstrainedSlab[iMaster].which_bldg,
+					comm_solver, &status);
+		}
+	}
+
+	MPI_Barrier(comm_solver);
+
+
+//	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
+//		for (i = 0; i < theMasterConstrainedSlab[iMaster].sharer_count; i++) {
+//
+//			fprintf(stdout, "\n my id %d  building %d  sharer %d count %d \n\n",
+//					myID, theMasterConstrainedSlab[iMaster].which_bldg,
+//					theMasterConstrainedSlab[iMaster].owner_ids[i],
+//					theMasterConstrainedSlab[iMaster].node_counts[i]);
+//
+//			for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_counts[i]; j++ ) {
+//
+//				fprintf(stdout, " %d  %d  %d \n",
+//						theMasterConstrainedSlab[iMaster].incoming_disp_map[i][j].f[0],
+//						theMasterConstrainedSlab[iMaster].incoming_disp_map[i][j].f[1],
+//						theMasterConstrainedSlab[iMaster].incoming_disp_map[i][j].f[2]);
+//			}
+//		}
+//	}
+
 
 	return;
 }
@@ -2213,120 +2636,400 @@ void bldgs_load_fixedbase_disps ( mysolver_t* solver, double simDT, int step ) {
 
 /* Displacements are calculated using the T * average values(A)  */
 
-void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int step ) {
+void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int step, int32_t myID ) {
 
-	int32_t   iBldg, i, j, m, l;
-	double    average_values[6]; /*order:  x,y,z,theta_z,theta_x,theta_y*/
+	int32_t  iSharer, iMaster, i, j, l;
 
-	for ( iBldg = 0; iBldg < theNumberOfBuildings; iBldg++ ) {
-		for ( l = 0; l < theConstrainedSlab[iBldg].l; l++) {
-			int 	    counter = 0;
+	MPI_Status  status;
+	MPI_Request isendreqs;
+	MPI_Datatype dis_sharer;
+
+	MPI_Type_contiguous(3, MPI_DOUBLE, &dis_sharer);
+	MPI_Type_commit(&dis_sharer);
+
+	/* First sharers send displacements */
+
+	for (iSharer = 0; iSharer < theNumberOfBuildingsSharer; iSharer++) {
+
+		int counter = 0;
+
+		for ( l = 0; l < theSharerConstrainedSlab[iSharer].l; l++) {
+			for ( i = 0; i <  theSharerConstrainedSlab[iSharer].node_x ; i++ ) {
+				for ( j = 0; j <  theSharerConstrainedSlab[iSharer].node_y ; j++) {
+					lnid_t  nindex, index;
+					fvector_t* dis;
+
+					index = j + i*theSharerConstrainedSlab[iSharer].node_y;
+
+					nindex = theSharerConstrainedSlab[iSharer].local_ids_by_level[l][index];
+
+					if ( nindex != -1 ) {
+						dis = solver->tm2 + nindex;
+
+						theSharerConstrainedSlab[iSharer].outgoing_disp[counter] = *(dis);
+						counter++;
+					}
+				}
+			}
+		}
+
+
+		MPI_Isend(theSharerConstrainedSlab[iSharer].outgoing_disp,
+				theSharerConstrainedSlab[iSharer].my_nodes_count,
+				dis_sharer,
+				theSharerConstrainedSlab[iSharer].responsible_id,
+				theSharerConstrainedSlab[iSharer].which_bldg,
+				comm_solver, &isendreqs);
+	}
+
+	/* Second, masters receive the information */
+
+	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
+
+		for (i = 0; i < theMasterConstrainedSlab[iMaster].sharer_count; i++) {
+
+			MPI_Recv(theMasterConstrainedSlab[iMaster].incoming_disp[i],
+					theMasterConstrainedSlab[iMaster].node_counts[i],
+					dis_sharer,
+					theMasterConstrainedSlab[iMaster].owner_ids[i],
+					theMasterConstrainedSlab[iMaster].which_bldg,
+					comm_solver, &status);
+
+		}
+	}
+
+
+//	if(step == 60)
+//	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
+//		for (i = 0; i < theMasterConstrainedSlab[iMaster].sharer_count; i++) {
+//
+//			fprintf(stdout, "\n my id %d  building %d  sharer %d count %d timestep %d\n\n",
+//					myID, theMasterConstrainedSlab[iMaster].which_bldg,
+//					theMasterConstrainedSlab[iMaster].owner_ids[i],
+//					theMasterConstrainedSlab[iMaster].node_counts[i],
+//					step);
+//
+//			for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_counts[i]; j++ ) {
+//
+//				fprintf(stdout, " %8e % 8e % 8e  %f  %f \n",
+//						theMasterConstrainedSlab[iMaster].incoming_disp[i][j].f[0],
+//						theMasterConstrainedSlab[iMaster].incoming_disp[i][j].f[1],
+//						theMasterConstrainedSlab[iMaster].incoming_disp[i][j].f[2]);
+//			}
+//		}
+//	}
+
+
+	//MPI_Barrier(comm_solver);
+
+	/* Calculate average values if I am the master */
+
+	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
+
+		/* Calculate for each level */
+
+		for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
+
+			double    average_values[6];
+			/* order: x, y, z, theta_z, theta_x, theta_y */
+			int  m;
 
 			for ( m = 0; m < 6; m++) {
 				average_values[m] = 0;
 			}
 
-			/* Second approach */
-			int32_t  counter2 = 0, counter_ave = 0 ;
+			/* Moment around the centeral node */
 			double   Mwy = 0, Mwx = 0;
 			double   Muy = 0, Moy = 0;
 			double   Mvx = 0, Mox = 0;
 
 			double   Iy = 0, Ix = 0, Ixy = 0;
+			double   total_area;
 
+			Ix  = theMasterConstrainedSlab[iMaster].Ix;
+			Iy  = theMasterConstrainedSlab[iMaster].Iy;
+			Ixy = theMasterConstrainedSlab[iMaster].Ixy;
 
-			for ( i = 0; i <  theConstrainedSlab[iBldg].node_x ; i++ ) {
-				for ( j = 0; j <  theConstrainedSlab[iBldg].node_y ; j++) {
-					lnid_t  nindex;
+			total_area = theMasterConstrainedSlab[iMaster].area;
+
+			/* Contribution from my nodes  - average translations */
+			for ( i = 0; i <  theMasterConstrainedSlab[iMaster].node_x ; i++ ) {
+				for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_y ; j++) {
+					lnid_t  nindex, index;
 					fvector_t* dis;
-					double trib_area, total_area;
+					double trib_area;
 
-					nindex = theConstrainedSlab[iBldg].local_ids_by_level[l][counter_ave];
-					dis = solver->tm2 + nindex;
-					trib_area = theConstrainedSlab[iBldg].tributary_areas[i][j];
-					total_area = theConstrainedSlab[iBldg].area;
+					index = j + i*theMasterConstrainedSlab[iMaster].node_y;
+					nindex = theMasterConstrainedSlab[iMaster].local_ids_by_level[l][index];
 
-					average_values[0] += dis->f[0]* trib_area / total_area; /* average x */
-					average_values[1] += dis->f[1]* trib_area / total_area; /* average y */
-					average_values[2] += dis->f[2]* trib_area / total_area; /* average z */
-					counter_ave++;
+					/* First my nodes contribute */
+					if (nindex != -1 ) {
+						dis = solver->tm2 + nindex;
+						trib_area = theMasterConstrainedSlab[iMaster].tributary_areas[i][j];
+
+						average_values[0] += dis->f[0] * trib_area ; /* average x */
+						average_values[1] += dis->f[1] * trib_area ; /* average y */
+						average_values[2] += dis->f[2] * trib_area ; /* average z */
+					}
 				}
 			}
 
 
-			for ( i = 0; i <  theConstrainedSlab[iBldg].node_x ; i++ ) {
-				for ( j = 0; j <  theConstrainedSlab[iBldg].node_y ; j++) {
-					lnid_t  nindex;
-					fvector_t* dis;
+			/* Contribution from sharers nodes  -  average translations */
+			for ( i = 0; i < theMasterConstrainedSlab[iMaster].sharer_count; i++ ) {
+				for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_counts[i]; j++ ) {
+					fvector_t dis;
+					int l_index, i_index, j_index;
+					double trib_area;
 
-					nindex = theConstrainedSlab[iBldg].local_ids_by_level[l][counter2];
-					dis = solver->tm2 + nindex;
+					l_index = theMasterConstrainedSlab[iMaster].incoming_disp_map[i][j].f[0];
+					i_index = theMasterConstrainedSlab[iMaster].incoming_disp_map[i][j].f[1];
+					j_index = theMasterConstrainedSlab[iMaster].incoming_disp_map[i][j].f[2];
 
-					Muy += theConstrainedSlab[iBldg].distance_to_centroid_ym[i][j] *
-							theConstrainedSlab[iBldg].tributary_areas[i][j] *
-							(dis->f[0]);
-					Mvx += theConstrainedSlab[iBldg].distance_to_centroid_xm[i][j] *
-							theConstrainedSlab[iBldg].tributary_areas[i][j] *
-							(dis->f[1]);
+					if ( l_index == l ) {
+						dis = theMasterConstrainedSlab[iMaster].incoming_disp[i][j];
+						trib_area = theMasterConstrainedSlab[iMaster].tributary_areas[i_index][j_index];
 
-					Mox += theConstrainedSlab[iBldg].distance_to_centroid_xm[i][j] *
-							theConstrainedSlab[iBldg].tributary_areas[i][j] *
-							average_values[1];
-					Moy += theConstrainedSlab[iBldg].distance_to_centroid_ym[i][j] *
-							theConstrainedSlab[iBldg].tributary_areas[i][j] *
-							average_values[0];
-
-					Mwx += theConstrainedSlab[iBldg].distance_to_centroid_xm[i][j] *
-							theConstrainedSlab[iBldg].tributary_areas[i][j] *
-							(dis->f[2]);
-					Mwy += theConstrainedSlab[iBldg].distance_to_centroid_ym[i][j] *
-							theConstrainedSlab[iBldg].tributary_areas[i][j] *
-							(dis->f[2]);
-
-					Ix += theConstrainedSlab[iBldg].distance_to_centroid_ym[i][j] *
-							theConstrainedSlab[iBldg].distance_to_centroid_ym[i][j] *
-							theConstrainedSlab[iBldg].tributary_areas[i][j];
-					Iy += theConstrainedSlab[iBldg].distance_to_centroid_xm[i][j] *
-							theConstrainedSlab[iBldg].distance_to_centroid_xm[i][j] *
-							theConstrainedSlab[iBldg].tributary_areas[i][j];
-					Ixy += theConstrainedSlab[iBldg].distance_to_centroid_ym[i][j] *
-							theConstrainedSlab[iBldg].distance_to_centroid_xm[i][j] *
-							theConstrainedSlab[iBldg].tributary_areas[i][j];
-
-					counter2++;
+						average_values[0] += dis.f[0] * trib_area ; /* average x */
+						average_values[1] += dis.f[1] * trib_area ; /* average y */
+						average_values[2] += dis.f[2] * trib_area ; /* average z */
+					}
 				}
 			}
+
+			average_values[0] = average_values[0] / total_area; /* average x */
+			average_values[1] = average_values[1] / total_area; /* average y */
+			average_values[2] = average_values[2] / total_area; /* average z */
+
+			theMasterConstrainedSlab[iMaster].average_values[6*l + 0] = average_values[0];
+			theMasterConstrainedSlab[iMaster].average_values[6*l + 1] = average_values[1];
+			theMasterConstrainedSlab[iMaster].average_values[6*l + 2] = average_values[2];
+
+			/* Contribution from my nodes -  average rotations */
+			for ( i = 0; i <  theMasterConstrainedSlab[iMaster].node_x ; i++ ) {
+				for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_y ; j++) {
+					lnid_t  nindex, index;
+					fvector_t* dis;
+					double trib_area;
+
+					index = j + i*theMasterConstrainedSlab[iMaster].node_y;
+					nindex = theMasterConstrainedSlab[iMaster].local_ids_by_level[l][index];
+
+					/* First my nodes contribute */
+					if (nindex != -1 ) {
+						dis = solver->tm2 + nindex;
+						trib_area = theMasterConstrainedSlab[iMaster].tributary_areas[i][j];
+
+						Muy += theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i][j] *
+								trib_area * (dis->f[0]);
+						Mvx += theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i][j] *
+								trib_area * (dis->f[1]);
+
+
+						Mox += theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i][j] *
+								trib_area * average_values[1];
+
+						Moy += theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i][j] *
+								trib_area * average_values[0];
+
+
+						Mwx += theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i][j] *
+								trib_area * (dis->f[2]);
+
+						Mwy += theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i][j] *
+								trib_area * (dis->f[2]);
+
+					}
+				}
+			}
+
+			/* Contribution from sharers nodes  -  average rotations */
+			for ( i = 0; i < theMasterConstrainedSlab[iMaster].sharer_count; i++ ) {
+				for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_counts[i]; j++ ) {
+					fvector_t dis;
+					int l_index, i_index, j_index;
+					double trib_area;
+
+					l_index = theMasterConstrainedSlab[iMaster].incoming_disp_map[i][j].f[0];
+					i_index = theMasterConstrainedSlab[iMaster].incoming_disp_map[i][j].f[1];
+					j_index = theMasterConstrainedSlab[iMaster].incoming_disp_map[i][j].f[2];
+
+					if ( l_index == l ) {
+						dis = theMasterConstrainedSlab[iMaster].incoming_disp[i][j];
+						trib_area = theMasterConstrainedSlab[iMaster].tributary_areas[i_index][j_index];
+
+						Muy += theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i_index][j_index] *
+								trib_area * (dis.f[0]);
+						Mvx += theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i_index][j_index] *
+								trib_area * (dis.f[1]);
+
+
+						Mox += theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i_index][j_index] *
+								trib_area * theMasterConstrainedSlab[iMaster].average_values[6*l + 1];
+
+						Moy += theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i_index][j_index] *
+								trib_area * theMasterConstrainedSlab[iMaster].average_values[6*l + 0];
+
+
+						Mwx += theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i_index][j_index] *
+								trib_area * (dis.f[2]);
+
+						Mwy += theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i_index][j_index] *
+								trib_area * (dis.f[2]);
+					}
+				}
+			}
+
 
 			average_values[3] = ( (Muy) / Ix + (- Mvx) / Iy ) / 2.0;  /* average theta_z */
 			average_values[4] =  Mwy / Ix;  /* average theta_x */
 			average_values[5] = -1.0 * Mwx / Iy;  /* average theta_y */
 
-//			average_values[3] = ( (Muy - Moy) / Ix + (Mox - Mvx) / Iy ) / 2.0;  /* average theta_z */
-//			average_values[4] = (Iy*Mwy  - Ixy*Mwx)/(Ix*Iy - Ixy*Ixy);
-//			average_values[5] = (Ixy*Mwy - Ix*Mwx)/(Ix*Iy - Ixy*Ixy);
+			//average_values[3] = ( (Muy - Moy) / Ix + (Mox - Mvx) / Iy ) / 2.0;  /* average theta_z */
+			//average_values[4] = (Iy*Mwy  - Ixy*Mwx)/(Ix*Iy - Ixy*Ixy);
+			//average_values[5] = (Ixy*Mwy - Ix*Mwx)/(Ix*Iy - Ixy*Ixy);
+
+			theMasterConstrainedSlab[iMaster].average_values[6*l + 3] = average_values[3];
+			theMasterConstrainedSlab[iMaster].average_values[6*l + 4] = average_values[4];
+			theMasterConstrainedSlab[iMaster].average_values[6*l + 5] = average_values[5];
+		}
+	}
 
 
-			for ( i = 0; i <  theConstrainedSlab[iBldg].node_x ; i++ ) {
-				for ( j = 0; j <  theConstrainedSlab[iBldg].node_y ; j++) {
-					lnid_t  nindex;
-					fvector_t* dis_slab_node;
+	/* Now, masters sends the average dis to sharers */
 
-					nindex = theConstrainedSlab[iBldg].local_ids_by_level[l][counter];
-					dis_slab_node = solver->tm2 + nindex;
+	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
 
-					dis_slab_node->f[0] = average_values[0] +
-							theConstrainedSlab[iBldg].transformation_matrix[counter*3][3] * average_values[3]  ;
-					dis_slab_node->f[1] = average_values[1] +
-							theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][3] * average_values[3] ;
-					dis_slab_node->f[2] = average_values[2] +
-							theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][4] * average_values[4] +
-							theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][5] * average_values[5] ;
+		for (i = 0; i < theMasterConstrainedSlab[iMaster].sharer_count; i++) {
 
-					counter++;
+			MPI_Isend(theMasterConstrainedSlab[iMaster].average_values,
+					theMasterConstrainedSlab[iMaster].l * 6,
+					MPI_DOUBLE,
+					theMasterConstrainedSlab[iMaster].owner_ids[i],
+					theMasterConstrainedSlab[iMaster].which_bldg,
+					comm_solver, &isendreqs);
+		}
+	}
+
+
+	/* Second sharers receives the average dis */
+
+	for (iSharer = 0; iSharer < theNumberOfBuildingsSharer; iSharer++) {
+
+		MPI_Recv(theSharerConstrainedSlab[iSharer].average_values,
+				theSharerConstrainedSlab[iSharer].l * 6,
+				MPI_DOUBLE,
+				theSharerConstrainedSlab[iSharer].responsible_id,
+				theSharerConstrainedSlab[iSharer].which_bldg,
+				comm_solver, &status);
+	}
+
+
+
+	/* Masters and sharers update their displacements */
+
+	/* First masters update displacements */
+
+	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
+
+		for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
+			for ( i = 0; i <  theMasterConstrainedSlab[iMaster].node_x ; i++ ) {
+				for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_y ; j++) {
+					lnid_t  nindex, index;
+					fvector_t* dis;
+
+					index = j + i*theMasterConstrainedSlab[iMaster].node_y;
+
+					nindex = theMasterConstrainedSlab[iMaster].local_ids_by_level[l][index];
+
+					if ( nindex != -1 ) {
+						dis = solver->tm2 + nindex;
+
+						dis->f[0] = theMasterConstrainedSlab[iMaster].average_values[6*l + 0] +
+								theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i][j] *
+								theMasterConstrainedSlab[iMaster].average_values[6*l + 3];
+
+						dis->f[1] = theMasterConstrainedSlab[iMaster].average_values[6*l + 1] +
+								theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i][j] * -1 *
+								theMasterConstrainedSlab[iMaster].average_values[6*l + 3];
+
+						dis->f[2] = theMasterConstrainedSlab[iMaster].average_values[6*l + 2] +
+								theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i][j] *
+								theMasterConstrainedSlab[iMaster].average_values[6*l + 4] +
+								theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i][j] * -1 *
+								theMasterConstrainedSlab[iMaster].average_values[6*l + 5] ;
+					}
 				}
 			}
 		}
 	}
+
+
+	/* Second sharers update displacements */
+
+	for (iSharer = 0; iSharer < theNumberOfBuildingsSharer; iSharer++) {
+
+		for ( l = 0; l < theSharerConstrainedSlab[iSharer].l; l++) {
+			for ( i = 0; i <  theSharerConstrainedSlab[iSharer].node_x ; i++ ) {
+				for ( j = 0; j <  theSharerConstrainedSlab[iSharer].node_y ; j++) {
+					lnid_t  nindex, index;
+					fvector_t* dis;
+
+					index = j + i*theSharerConstrainedSlab[iSharer].node_y;
+
+					nindex = theSharerConstrainedSlab[iSharer].local_ids_by_level[l][index];
+
+					if ( nindex != -1 ) {
+						dis = solver->tm2 + nindex;
+
+						dis->f[0] = theSharerConstrainedSlab[iSharer].average_values[6*l + 0] +
+								theSharerConstrainedSlab[iSharer].distance_to_centroid_ym[i][j] *
+								theSharerConstrainedSlab[iSharer].average_values[6*l + 3];
+
+						dis->f[1] = theSharerConstrainedSlab[iSharer].average_values[6*l + 1] +
+								theSharerConstrainedSlab[iSharer].distance_to_centroid_xm[i][j] * -1 *
+								theSharerConstrainedSlab[iSharer].average_values[6*l + 3];
+
+						dis->f[2] = theSharerConstrainedSlab[iSharer].average_values[6*l + 2] +
+								theSharerConstrainedSlab[iSharer].distance_to_centroid_ym[i][j] *
+								theSharerConstrainedSlab[iSharer].average_values[6*l + 4] +
+								theSharerConstrainedSlab[iSharer].distance_to_centroid_xm[i][j] * -1 *
+								theSharerConstrainedSlab[iSharer].average_values[6*l + 5] ;
+					}
+				}
+			}
+		}
+	}
+
+
+
+	//	for ( iBldg = 0; iBldg < theNumberOfBuildings; iBldg++ ) {
+	//		for ( l = 0; l < theConstrainedSlab[iBldg].l; l++) {
+	//
+
+	//
+	//
+	//			for ( i = 0; i <  theConstrainedSlab[iBldg].node_x ; i++ ) {
+	//				for ( j = 0; j <  theConstrainedSlab[iBldg].node_y ; j++) {
+	//					lnid_t  nindex;
+	//					fvector_t* dis_slab_node;
+	//
+	//					nindex = theConstrainedSlab[iBldg].local_ids_by_level[l][counter];
+	//					dis_slab_node = solver->tm2 + nindex;
+	//
+	//					dis_slab_node->f[0] = average_values[0] +
+	//							theConstrainedSlab[iBldg].transformation_matrix[counter*3][3] * average_values[3]  ;
+	//					dis_slab_node->f[1] = average_values[1] +
+	//							theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][3] * average_values[3] ;
+	//					dis_slab_node->f[2] = average_values[2] +
+	//							theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][4] * average_values[4] +
+	//							theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][5] * average_values[5] ;
+	//
+	//					counter++;
+	//				}
+	//			}
+	//		}
+	//	}
 
 	return;
 }
