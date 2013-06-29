@@ -4376,6 +4376,7 @@ static void solver_run()
     } /* for (step = ....): all steps */
 
     solver_drm_close();
+    solver_constrained_buildings_close();
     solver_output_wavefield_close();
     solver_run_collect_timers();
 }
@@ -6260,10 +6261,14 @@ static void print_timing_stat()
 	   Timer_Value("Compute new displacement",AVERAGE),
 	   Timer_Value("Compute new displacement",MAX),
 	   Timer_Value("Compute new displacement",MIN));
+
+    if ( Timer_Exists("Update constrained dis") ) {
     printf("    Update constrained dis          : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
   	   Timer_Value("Update constrained dis",AVERAGE),
   	   Timer_Value("Update constrained dis",MAX),
   	   Timer_Value("Update constrained dis",MIN));
+    }
+
     printf("    3rd schedule send data          : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
 	   Timer_Value("3rd schedule send data (sharing)",AVERAGE),
 	   Timer_Value("3rd schedule send data (sharing)",MAX),

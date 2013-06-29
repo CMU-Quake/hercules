@@ -134,9 +134,6 @@ typedef struct master_constrained_slab_bldg {
 	intvector_t** incoming_disp_map; /* which node is sent. l,i,j index of each
 	node. size = sharer_count x node_counts  */
 
-	fvector_t**  dis_by_level;  /* matrix Dis - displacements of each point at
-	each plan-level of buildings. dim : l x (node_x x node_y) */
-
 	/* information for updating the displacements */
 
 	lnid_t**  local_ids_by_level;  /* matrix L - local ids of each point at
@@ -1034,7 +1031,7 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 						y_physical = y * ticksize;
 
 
-						/* THIS IS RHO VARIES WRT CENTER - SYMMETRIC */
+						/* RHO VARIES WRT CENTER - SYMMETRIC */
 
 						/* NOTE: Buildings should have even number of elements in  the y direction. */
 						/* non-uniform Vp and Vs distribution in y direction only. - but symmetric */
@@ -1051,50 +1048,9 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 						/* final value of rho*/
 						edata->rho = theBuilding[i].bldgprops_right.rho + increment_rho*location + increment_rho/2 ;
 
-						//						/* THIS IS VS VP VARIES WRT CENTER - SYMMETRIC */
-						//						edata->Vp = pow(pow(800,2)*300/edata->rho,0.5);
-						//						edata->Vs = pow(pow(350,2)*300/edata->rho,0.5);
-
-
-						//						/* THIS IS RHO VARIES - ASYMMETRIC */
-						//
-						//						/* non-uniform mass distribution in the y direction only (EW). */
-						//						/* number of elements along y */
-						//						n = (theBuilding[i].bounds.ymax - theBuilding[i].bounds.ymin)/theMinOctSizeMeters;
-						//						/* increment in rho*/
-						//						increment_rho = (theBuilding[i].bldgprops_right.rho - theBuilding[i].bldgprops_left.rho)/n;
-						//						/* location(wrt left building edge) starts from 0 and goes to n-1*/
-						//						location = (y_physical - theBuilding[i].bounds.ymin)/theMinOctSizeMeters;
-						//						/* final value of rho*/
-						//						edata->rho = theBuilding[i].bldgprops_left.rho + increment_rho*location + increment_rho/2 ;
-
 						/*-----------------------------------------------------*/
 
-						//						/* THIS IS VP VS VARIES WRT CENTER S.T. SUM of THE SQUARES STAYS UNCHANGED AND VARIES LINEARLY  - SYMMETRIC */
-						//
-						//						/* NOTE: Buildings should have even number of elements in  the y direction. */
-						//						/* non-uniform Vp and Vs distribution in y direction only. - but symmetric */
-						//
-						//						/* number of elements along y up to the center */
-						//						n = (theBuilding[i].bounds.ymax - theBuilding[i].bounds.ymin)/theMinOctSizeMeters/2;
-						//						/* increment in Vp and Vs*/
-						//
-						//						increment_Vp = (pow(theBuilding[i].bldgprops_left.Vp,2)
-						//								-pow(theBuilding[i].bldgprops_right.Vp,2)) / n;
-						//
-						//						increment_Vs = (pow(theBuilding[i].bldgprops_left.Vs,2)
-						//								-pow(theBuilding[i].bldgprops_right.Vs,2)) / n;
-						//
-						//						/* location(wrt center) goes from 0 to n-1*/
-						//						location = (y_physical - (theBuilding[i].bounds.ymin + theBuilding[i].bounds.ymax)/2 )/theMinOctSizeMeters;
-						//						if(location < 0) location++;
-						//						location = abs(location);
-						//						/* final value of Vp and Vs*/
-						//						edata->Vp = pow(pow(theBuilding[i].bldgprops_right.Vp, 2) + increment_Vp*location + increment_Vp/2, 0.5) ;
-						//						edata->Vs = pow(pow(theBuilding[i].bldgprops_right.Vs, 2) + increment_Vs*location + increment_Vs/2, 0.5) ;
-
-
-						/* THIS IS VP VS VARIES ASYMMETRIC */
+						/*  VP VS VARIES ASYMMETRIC */
 
 						/* NOTE: Buildings should have even number of elements in  the y direction. */
 						/* non-uniform Vp and Vs distribution in y direction only. - but symmetric */
@@ -1115,9 +1071,8 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 						edata->Vp = pow(pow(theBuilding[i].bldgprops_left.Vp, 2) + increment_Vp*location + increment_Vp/2, 0.5) ;
 						edata->Vs = pow(pow(theBuilding[i].bldgprops_left.Vs, 2) + increment_Vs*location + increment_Vs/2, 0.5) ;
 
-
-//						eccentricity += (y_physical - theBuilding[i].bounds.ymin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
-//								(pow(350,2) * 6 * 12 * 7);
+						//eccentricity += (y_physical - theBuilding[i].bounds.ymin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
+						//(pow(350,2) * 6 * 12 * 7);
 
 					}
 				}
@@ -1126,16 +1081,6 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 			}
 		}
 	}
-	/* NOTE: If you want to see the carving process, activate this */
-	/*
-    double z_m = z * ticksize;
-    if ( z_m < theSurfaceShift ) {
-        edata->Vp  = -500;
-        edata->Vs  = -200;
-        edata->rho = -1500;
-        return 1;
-    }
-	 */
 
 	return 0;
 }
@@ -1904,9 +1849,9 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 
 	sharerproc_all = (int*)malloc( sizeof(int) * theNumberOfBuildings * group_number);
 	if ( sharerproc_all == NULL ) {
-			solver_abort ( __FUNCTION_NAME, "NULL from malloc",
-					"Error allocating sharerproc_all memory" );
-		}
+		solver_abort ( __FUNCTION_NAME, "NULL from malloc",
+				"Error allocating sharerproc_all memory" );
+	}
 
 
 	/* Find out if I am a master or a sharer */
@@ -1962,21 +1907,6 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 
 	MPI_Allgather( sharerproc, theNumberOfBuildings, MPI_INT,
 			sharerproc_all, theNumberOfBuildings, MPI_INT, comm_solver );
-
-
-//	printf("\nmyID = %d theNumberOfBuildingsSharer = %d\n",myID,theNumberOfBuildingsSharer);
-//
-//		fprintf(stdout, "\n  Master %d \n\n", myID);
-//		for ( i = 0 ; i < group_number ; i++){
-//			for ( j = 0; j < theNumberOfBuildings; j++) {
-//				fprintf(stdout, "%5d   ",
-//						masterproc_all[i*theNumberOfBuildings + j]);
-//			}
-//			fprintf(stdout, "\n");
-//		}
-//		fprintf(stdout, "\n\n");
-
-
 
 	/* Masters calculate the avearge dis for the buildings and then sends it back to
 	 * the sharers.
@@ -2075,26 +2005,12 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 					}
 				}
 
-				//				printf(" \n myId = %d iBldg = %d sharercount = %d \n", myID, iBldg, theMasterConstrainedSlab[iMaster].sharer_count);
-				//				j=0;
-				//				for ( i = 0 ; i < group_number ; i++) {
-				//					if ( sharerproc_all[i*theNumberOfBuildings + iBldg] != 0 && i != myID ) {
-				//
-				//						printf( " \n myId = %d iBldg = %d owner_id = %d node_counts = %d \n" , myID, iBldg,
-				//								theMasterConstrainedSlab[iMaster].owner_ids[j],
-				//								theMasterConstrainedSlab[iMaster].node_counts[j]);
-				//						j++;
-				//					}
-				//				}
-
-
 				/* sanity check */
 				if ( total_nodes + masterproc[iBldg] != theMasterConstrainedSlab[iMaster].n *
 						theMasterConstrainedSlab[iMaster].l) {
 					solver_abort ( __FUNCTION_NAME, "sanity check fails",
 							"total number of nodes is not correct" );
 				}
-
 
 				/* Incoming displacements */
 				theMasterConstrainedSlab[iMaster].incoming_disp =
@@ -2145,7 +2061,6 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 					theMasterConstrainedSlab[iMaster].distance_to_centroid_ym[i] =
 							(double*)malloc( theMasterConstrainedSlab[iMaster].node_y * sizeof(double));
 				}
-
 
 
 				/* Find local ids of nodes at each level for each building.( level0 -> base ) - matrix L  */
@@ -2255,52 +2170,6 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 						}
 					}
 				}
-
-
-				//				fprintf(stdout, "\n areas my id %d  building %d \n\n", myID, iBldg);
-				//
-				//				for ( i = 0; i <  theMasterConstrainedSlab[iMaster].node_x; i++ ) {
-				//					for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_y; j++) {
-				//
-				//						fprintf(stdout, "%7.2f     ",
-				//								theMasterConstrainedSlab[iMaster].tributary_areas[i][j]);
-				//					}
-				//					fprintf(stdout, "\n");
-				//				}
-
-
-
-				//				fprintf(stdout, "\n  local ids my id %d  building %d Ix  %f  Iy %f  Ixy  %f \n\n", myID, iBldg,
-				//						theMasterConstrainedSlab[iMaster].Ix,
-				//						theMasterConstrainedSlab[iMaster].Iy,
-				//						theMasterConstrainedSlab[iMaster].Ixy);
-				//
-				//				for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
-				//					fprintf(stdout, "\n  level %d \n\n", l);
-				//
-				//					for ( i = 0; i <  theMasterConstrainedSlab[iMaster].node_x; i++ ) {
-				//						for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_y; j++) {
-				//
-				//							fprintf(stdout, "%5d   ",
-				//									theMasterConstrainedSlab[iMaster].local_ids_by_level[l][j+i*theMasterConstrainedSlab[iMaster].node_y]);
-				//
-				//						}
-				//						fprintf(stdout, "\n");
-				//
-				//					}
-				//				}
-
-				//				fprintf(stdout, "\n Trib Area my id %d  building %d \n\n", myID, iBldg);
-				//
-				//				for ( i = 0; i <  theMasterConstrainedSlab[iMaster].node_x; i++ ) {
-				//					for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_y; j++) {
-				//
-				//						fprintf(stdout, "%7.2f     ",
-				//								theMasterConstrainedSlab[iMaster].tributary_areas[i][j]);
-				//					}
-				//					fprintf(stdout, "\n");
-				//				}
-
 			}
 		}
 	}
@@ -2393,8 +2262,6 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 							(double*)malloc( theSharerConstrainedSlab[iSharer].node_y * sizeof(double));
 				}
 
-
-
 				/* Find local ids of nodes at each level for each building.( level0 -> base ) - matrix L  */
 				/* l is from basement to roof. If I do not have the node set -1 in matrix L */
 				/* Also find Dx Dy  and outgoing_disp_map*/
@@ -2469,63 +2336,13 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 										}
 									}
 								}
-
 							}
 						}
 					}
 				}
-
-
-				//				fprintf(stdout, "\n Dy my id %d  building %d \n\n", myID, iBldg);
-				//
-				//				for ( i = 0; i <  theSharerConstrainedSlab[iSharer].node_x; i++ ) {
-				//					for ( j = 0; j <  theSharerConstrainedSlab[iSharer].node_y; j++) {
-				//
-				//						fprintf(stdout, "%7.2f     ",
-				//								theSharerConstrainedSlab[iSharer].distance_to_centroid_ym[i][j]);
-				//					}
-				//					fprintf(stdout, "\n");
-				//				}
-
-
-
-				//				fprintf(stdout, "\n Dy my id %d  building %d \n\n", myID, iBldg);
-				//				for ( l = 0; l < theSharerConstrainedSlab[iSharer].l; l++) {
-				//					fprintf(stdout, "\n  level %d \n\n", l);
-				//
-				//					for ( i = 0; i <  theSharerConstrainedSlab[iSharer].node_x; i++ ) {
-				//						for ( j = 0; j <  theSharerConstrainedSlab[iSharer].node_y; j++) {
-				//
-				//							fprintf(stdout, "%5d   ",
-				//									theSharerConstrainedSlab[iSharer].local_ids_by_level[l][j+i*theSharerConstrainedSlab[iSharer].node_y]);
-				//
-				//						}
-				//						fprintf(stdout, "\n");
-				//
-				//					}
-				//				}
-
-
-//				if (myID == 4) {
-//					fprintf(stdout, "\n my id %d  building %d  master %d count %d \n\n",
-//							myID, iBldg,
-//							theSharerConstrainedSlab[iSharer].responsible_id,
-//							theSharerConstrainedSlab[iSharer].my_nodes_count);
-//
-//					for ( i = 0; i <  theSharerConstrainedSlab[iSharer].my_nodes_count; i++ ) {
-//
-//						fprintf(stdout, " %d  %d  %d \n",
-//								theSharerConstrainedSlab[iSharer].outgoing_disp_map[i].f[0],
-//								theSharerConstrainedSlab[iSharer].outgoing_disp_map[i].f[1],
-//								theSharerConstrainedSlab[iSharer].outgoing_disp_map[i].f[2]);
-//					}
-//				}
-
 			}
-
 		}
 	}
-
 
 	/* communication between sharers and masters */
 	MPI_Status   status;
@@ -2565,26 +2382,6 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 	}
 
 	MPI_Barrier(comm_solver);
-
-
-//	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
-//		for (i = 0; i < theMasterConstrainedSlab[iMaster].sharer_count; i++) {
-//
-//			fprintf(stdout, "\n my id %d  building %d  sharer %d count %d \n\n",
-//					myID, theMasterConstrainedSlab[iMaster].which_bldg,
-//					theMasterConstrainedSlab[iMaster].owner_ids[i],
-//					theMasterConstrainedSlab[iMaster].node_counts[i]);
-//
-//			for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_counts[i]; j++ ) {
-//
-//				fprintf(stdout, " %d  %d  %d \n",
-//						theMasterConstrainedSlab[iMaster].incoming_disp_map[i][j].f[0],
-//						theMasterConstrainedSlab[iMaster].incoming_disp_map[i][j].f[1],
-//						theMasterConstrainedSlab[iMaster].incoming_disp_map[i][j].f[2]);
-//			}
-//		}
-//	}
-
 
 	return;
 }
@@ -2698,30 +2495,6 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 		}
 	}
 
-
-//	if(step == 60)
-//	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
-//		for (i = 0; i < theMasterConstrainedSlab[iMaster].sharer_count; i++) {
-//
-//			fprintf(stdout, "\n my id %d  building %d  sharer %d count %d timestep %d\n\n",
-//					myID, theMasterConstrainedSlab[iMaster].which_bldg,
-//					theMasterConstrainedSlab[iMaster].owner_ids[i],
-//					theMasterConstrainedSlab[iMaster].node_counts[i],
-//					step);
-//
-//			for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_counts[i]; j++ ) {
-//
-//				fprintf(stdout, " %8e % 8e % 8e  %f  %f \n",
-//						theMasterConstrainedSlab[iMaster].incoming_disp[i][j].f[0],
-//						theMasterConstrainedSlab[iMaster].incoming_disp[i][j].f[1],
-//						theMasterConstrainedSlab[iMaster].incoming_disp[i][j].f[2]);
-//			}
-//		}
-//	}
-
-
-	//MPI_Barrier(comm_solver);
-
 	/* Calculate average values if I am the master */
 
 	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
@@ -2738,7 +2511,7 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 				average_values[m] = 0;
 			}
 
-			/* Moment around the centeral node */
+			/* Moment around the center node */
 			double   Mwy = 0, Mwx = 0;
 			double   Muy = 0, Moy = 0;
 			double   Mvx = 0, Mox = 0;
@@ -3001,38 +2774,68 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 		}
 	}
 
-
-
-	//	for ( iBldg = 0; iBldg < theNumberOfBuildings; iBldg++ ) {
-	//		for ( l = 0; l < theConstrainedSlab[iBldg].l; l++) {
-	//
-
-	//
-	//
-	//			for ( i = 0; i <  theConstrainedSlab[iBldg].node_x ; i++ ) {
-	//				for ( j = 0; j <  theConstrainedSlab[iBldg].node_y ; j++) {
-	//					lnid_t  nindex;
-	//					fvector_t* dis_slab_node;
-	//
-	//					nindex = theConstrainedSlab[iBldg].local_ids_by_level[l][counter];
-	//					dis_slab_node = solver->tm2 + nindex;
-	//
-	//					dis_slab_node->f[0] = average_values[0] +
-	//							theConstrainedSlab[iBldg].transformation_matrix[counter*3][3] * average_values[3]  ;
-	//					dis_slab_node->f[1] = average_values[1] +
-	//							theConstrainedSlab[iBldg].transformation_matrix[counter*3+1][3] * average_values[3] ;
-	//					dis_slab_node->f[2] = average_values[2] +
-	//							theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][4] * average_values[4] +
-	//							theConstrainedSlab[iBldg].transformation_matrix[counter*3+2][5] * average_values[5] ;
-	//
-	//					counter++;
-	//				}
-	//			}
-	//		}
-	//	}
-
 	return;
 }
+
+
+void solver_constrained_buildings_close () {
+
+	int i, j;
+
+	if ( get_constrained_slab_flag() == YES ) {
+
+		for ( i = 0; i < theNumberOfBuildingsMaster; i++ ) {
+			free(theMasterConstrainedSlab[i].owner_ids);
+			free(theMasterConstrainedSlab[i].node_counts);
+			free(theMasterConstrainedSlab[i].average_values);
+
+			for ( j = 0; j < theMasterConstrainedSlab[i].sharer_count; j++) {
+				free(theMasterConstrainedSlab[i].incoming_disp[j]);
+				free(theMasterConstrainedSlab[i].incoming_disp_map[j]);
+			}
+
+			for ( j = 0; j < theMasterConstrainedSlab[i].node_x; j++) {
+				free(theMasterConstrainedSlab[i].tributary_areas[j]);
+				free(theMasterConstrainedSlab[i].distance_to_centroid_xm[j]);
+				free(theMasterConstrainedSlab[i].distance_to_centroid_ym[j]);
+			}
+
+
+			for ( j = 0; j < theMasterConstrainedSlab[i].l; j++) {
+				free(theMasterConstrainedSlab[i].local_ids_by_level[j]);
+			}
+		}
+
+		if (theNumberOfBuildingsMaster != 0 ) {
+			free(theMasterConstrainedSlab);
+		}
+
+
+		for ( i = 0; i < theNumberOfBuildingsSharer; i++ ) {
+			free(theSharerConstrainedSlab[i].average_values);
+
+			free(theSharerConstrainedSlab[i].outgoing_disp_map);
+			free(theSharerConstrainedSlab[i].outgoing_disp);
+
+
+			for ( j = 0; j < theSharerConstrainedSlab[i].node_x; j++) {
+				free(theSharerConstrainedSlab[i].distance_to_centroid_xm[j]);
+				free(theSharerConstrainedSlab[i].distance_to_centroid_ym[j]);
+			}
+
+
+			for ( j = 0; j < theSharerConstrainedSlab[i].l; j++) {
+				free(theSharerConstrainedSlab[i].local_ids_by_level[j]);
+			}
+		}
+
+		if (theNumberOfBuildingsSharer != 0 ) {
+			free(theSharerConstrainedSlab);
+		}
+
+	}
+}
+
 
 /* -------------------------------------------------------------------------- */
 /*                             Dimensions Adjust                              */

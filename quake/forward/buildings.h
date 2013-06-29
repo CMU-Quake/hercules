@@ -72,6 +72,7 @@ void bldgs_init ( int32_t myID, const char *parametersin );
 
 void bldgs_finalize();
 
+void solver_constrained_buildings_close ();
 /* -------------------------------------------------------------------------- */
 
 #endif /* BUILDINGS_H_ */
