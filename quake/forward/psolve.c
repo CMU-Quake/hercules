@@ -2122,7 +2122,8 @@ mesh_generate()
     /* gggg */
 
     /* Buildings Carving */
-    if ( Param.includeBuildings == YES ||  Param.includeTopography == YES ) {
+//    if ( Param.includeBuildings == YES ||  Param.includeTopography == YES ) {
+    if ( Param.includeBuildings == YES ) {
     	int flag = 0;
     	Timer_Start("Carve Buildings");
     	if (Global.myID == 0) {

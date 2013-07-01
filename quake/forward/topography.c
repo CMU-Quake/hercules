@@ -2860,7 +2860,7 @@ void topo_DRM_init( mesh_t *myMesh, mysolver_t *mySolver) {
 	double theXc           = 1000;   /* domain center coordinates */
 	double theYc           = 1000;
 	double Ts              = 0.20;  /* 0.18 for the Gaussian Ridge. 0.2 for the SanSesma Ridge  */
-	double fc              = 10;  /* 10.26 for the Gaussian Ridge. 10.4 for the SanSesma Ridge  */
+	double fc              = 10;  /* 10.26 for the Gaussian Ridge. 10 for the SanSesma Ridge  */
 	int    wave_dir        = 2;    /*  0:X, 1:Y, 2:Z */
 
 	/* --------  */
