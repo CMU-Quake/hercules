@@ -4342,6 +4342,9 @@ static void solver_run()
         Timer_Start( "Compute Physics" );
         solver_nonlinear_state( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2, step );
         solver_compute_force_source( step );
+
+        solver_compute_force_pointload( Global.mySolver, step, Param.theDeltaT );
+
         solver_compute_effective_drm_force( Global.mySolver, Global.myMesh,Global.theK1, Global.theK2, step, Param.theDeltaT );
         solver_compute_force_stiffness( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2 );
         solver_compute_force_damping( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2 );
@@ -7489,6 +7492,8 @@ int main( int argc, char** argv )
     /* Generate, partition and output unstructured octree mesh */
     mesh_generate();
 
+    pointload_init( Global.myMesh, Param.theEndT-Param.theStartT );
+
     if ( Param.includeBuildings == YES ){
     	if ( get_fixedbase_flag() == YES ) {
     		bldgs_fixedbase_init( Global.myMesh, Param.theEndT-Param.theStartT );
@@ -7564,7 +7569,7 @@ int main( int argc, char** argv )
     }
 
     Timer_Start("Source Init");
-    source_init(Param.parameters_input_file);
+    //source_init(Param.parameters_input_file);
     Timer_Stop("Source Init");
     Timer_Reduce("Source Init", MAX | MIN, comm_solver);
 

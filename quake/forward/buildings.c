@@ -33,6 +33,13 @@
 
 #define  FENCELIMIT  0.9999
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+
+FILE *fp_ricker;
+
 /* -------------------------------------------------------------------------- */
 /*                                Structures                                  */
 /* -------------------------------------------------------------------------- */
@@ -218,6 +225,8 @@ static master_constrained_slab_bldg_t  *theMasterConstrainedSlab;
 static sharer_constrained_slab_bldg_t  *theSharerConstrainedSlab;
 
 /* Permanent */
+
+static int32_t  thePointLoadId;
 
 static int      theNumberOfBuildings;
 static int      theNumberOfBuildingsMaster = 0;
@@ -1821,6 +1830,40 @@ void bldgs_fixedbase_init ( mesh_t *myMesh, double simTime ) {
     return;
 }
 
+
+void pointload_init ( mesh_t *myMesh, double simTime ) {
+
+	int i;
+	double ticksize;
+
+	ticksize = myMesh->ticksize;
+
+	thePointLoadId = -1;
+
+	fp_ricker = hu_fopen( "ricker.txt", "w" );
+
+
+	for ( i = 0; i < myMesh->nharbored; ++i ) {
+		if ( myMesh->nodeTable[i].ismine == 1) {
+
+			double x_m, y_m, z_m;
+
+			x_m = (myMesh->nodeTable[i].x) * ticksize;
+			y_m = (myMesh->nodeTable[i].y) * ticksize;
+			z_m = (myMesh->nodeTable[i].z) * ticksize;
+
+			if ( ( z_m == 0) && ( x_m == 400) && ( y_m == 400) )
+			{
+				thePointLoadId = i;
+			}
+
+		}
+	}
+
+	return;
+}
+
+
 void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_number, int32_t myID ) {
 
 	int iBldg, i, j, k, l, iMaster = -1, iSharer = -1;
@@ -2452,6 +2495,29 @@ void bldgs_load_fixedbase_disps ( mysolver_t* solver, double simDT, int step ) {
 
     return;
 }
+
+
+
+void solver_compute_force_pointload ( mysolver_t* mySolver, int32_t step, double deltat ) {
+
+	double pointload, a, uo, ts, fr;
+	ts = 1;
+	fr = 2;
+	uo = pow(10,6);
+
+	if (thePointLoadId != -1 ) {
+		a = pow ( M_PI * (step * deltat - ts) * fr, 2 );
+		pointload = uo * (2 * a - 1) * exp ( -1.0 * a );
+		/* node's force vector */
+		fvector_t* nodalForce =	mySolver->force + thePointLoadId;
+
+		//fprintf( fp_ricker, "%f\n", pointload );
+
+		/* vector-scalar multiply */
+		nodalForce->f[0] = ( pointload ) * pow( deltat, 2 );
+	}
+}
+
 
 /* Displacements are calculated using the T * average values(A)  */
 

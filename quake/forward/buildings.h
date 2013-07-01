@@ -62,6 +62,8 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 );
 
 void bldgs_fixedbase_init ( mesh_t *myMesh, double simTime );
 
+void pointload_init ( mesh_t *myMesh, double simTime );
+
 void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_number, int32_t myID);
 
 void bldgs_load_fixedbase_disps ( mysolver_t* mySolver, double simDT, int step );
@@ -71,6 +73,8 @@ void bldgs_update_constrainedslabs_disps (  mysolver_t* mySolver, double simDT, 
 void bldgs_init ( int32_t myID, const char *parametersin );
 
 void bldgs_finalize();
+
+void solver_compute_force_pointload ( mysolver_t* mySolver, int32_t step, double deltat );
 
 void solver_constrained_buildings_close ();
 /* -------------------------------------------------------------------------- */
