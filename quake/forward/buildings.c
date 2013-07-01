@@ -2345,13 +2345,24 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 	}
 
 	/* communication between sharers and masters */
-	MPI_Status   status;
-	MPI_Request  isendreqs;
+	MPI_Status  **mastersendstats  = NULL;
+	MPI_Request *shaerersendreqs  = NULL;
 	MPI_Datatype index_sharer;
 
 	MPI_Type_contiguous(3, MPI_INT, &index_sharer);
 	MPI_Type_commit(&index_sharer);
 
+	if (theNumberOfBuildingsSharer > 0 ) {
+		shaerersendreqs = (MPI_Request *)malloc(theNumberOfBuildingsSharer * sizeof(MPI_Request));
+	}
+
+	if (theNumberOfBuildingsMaster > 0 ) {
+		mastersendstats = (MPI_Status  **)malloc(theNumberOfBuildingsMaster * sizeof(MPI_Status*));
+
+		for (i = 0; i < theNumberOfBuildingsMaster; i++) {
+			mastersendstats[i] = (MPI_Status  *)malloc(theMasterConstrainedSlab[i].sharer_count * sizeof(MPI_Status));
+		}
+	}
 
 	/* First, sharers send their information to masters */
 
@@ -2362,7 +2373,7 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 				index_sharer,
 				theSharerConstrainedSlab[iSharer].responsible_id,
 				theSharerConstrainedSlab[iSharer].which_bldg,
-				comm_solver, &isendreqs);
+				comm_solver,  &shaerersendreqs[iSharer]);
 	}
 
 
@@ -2377,11 +2388,22 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 					index_sharer,
 					theMasterConstrainedSlab[iMaster].owner_ids[i],
 					theMasterConstrainedSlab[iMaster].which_bldg,
-					comm_solver, &status);
+					comm_solver, &mastersendstats[iMaster][i]);
 		}
 	}
 
 	MPI_Barrier(comm_solver);
+
+	if (theNumberOfBuildingsSharer > 0 ) {
+		free(shaerersendreqs);
+	}
+
+	if (theNumberOfBuildingsMaster > 0 ) {
+		for (i = 0; i < theNumberOfBuildingsMaster; i++) {
+			free(mastersendstats[i]);
+		}
+		free(mastersendstats);
+	}
 
 	return;
 }
@@ -2437,14 +2459,57 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 
 	int32_t  iSharer, iMaster, i, j, l;
 
-	MPI_Status  status;
-	MPI_Request isendreqs;
+
+	MPI_Request **masterrecvreqs  = NULL;
+	MPI_Status  **masterrecvstats  = NULL;
+
+	MPI_Request *shaererrecvreqs  = NULL;
+	MPI_Status  *sharerrecvstats  = NULL;
+
 	MPI_Datatype dis_sharer;
 
 	MPI_Type_contiguous(3, MPI_DOUBLE, &dis_sharer);
 	MPI_Type_commit(&dis_sharer);
 
-	/* First sharers send displacements */
+
+	if (theNumberOfBuildingsSharer > 0 ) {
+		shaererrecvreqs = (MPI_Request *)malloc(theNumberOfBuildingsSharer * sizeof(MPI_Request));
+		sharerrecvstats = (MPI_Status  *)malloc(theNumberOfBuildingsSharer * sizeof(MPI_Status));
+	}
+
+	if (theNumberOfBuildingsMaster > 0 ) {
+		masterrecvreqs = (MPI_Request **)malloc(theNumberOfBuildingsMaster * sizeof(MPI_Request*));
+		masterrecvstats = (MPI_Status  **)malloc(theNumberOfBuildingsMaster * sizeof(MPI_Status*));
+
+		for (i = 0; i < theNumberOfBuildingsMaster; i++) {
+
+			masterrecvreqs[i] = (MPI_Request *)malloc(theMasterConstrainedSlab[i].sharer_count * sizeof(MPI_Request));
+			masterrecvstats[i] = (MPI_Status  *)malloc(theMasterConstrainedSlab[i].sharer_count * sizeof(MPI_Status));
+		}
+	}
+
+
+
+	/* First, masters post receives */
+
+	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
+
+		for (i = 0; i < theMasterConstrainedSlab[iMaster].sharer_count; i++) {
+
+			MPI_Irecv(theMasterConstrainedSlab[iMaster].incoming_disp[i],
+					theMasterConstrainedSlab[iMaster].node_counts[i],
+					dis_sharer,
+					theMasterConstrainedSlab[iMaster].owner_ids[i],
+					theMasterConstrainedSlab[iMaster].which_bldg,
+					comm_solver, &masterrecvreqs[iMaster][i]);
+
+		}
+	}
+
+
+    //MPI_Barrier( comm_solver );
+
+	/* Second sharers send displacements */
 
 	for (iSharer = 0; iSharer < theNumberOfBuildingsSharer; iSharer++) {
 
@@ -2471,29 +2536,23 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 		}
 
 
-		MPI_Isend(theSharerConstrainedSlab[iSharer].outgoing_disp,
+		MPI_Send(theSharerConstrainedSlab[iSharer].outgoing_disp,
 				theSharerConstrainedSlab[iSharer].my_nodes_count,
 				dis_sharer,
 				theSharerConstrainedSlab[iSharer].responsible_id,
 				theSharerConstrainedSlab[iSharer].which_bldg,
-				comm_solver, &isendreqs);
+				comm_solver);
 	}
 
-	/* Second, masters receive the information */
 
 	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
 
-		for (i = 0; i < theMasterConstrainedSlab[iMaster].sharer_count; i++) {
-
-			MPI_Recv(theMasterConstrainedSlab[iMaster].incoming_disp[i],
-					theMasterConstrainedSlab[iMaster].node_counts[i],
-					dis_sharer,
-					theMasterConstrainedSlab[iMaster].owner_ids[i],
-					theMasterConstrainedSlab[iMaster].which_bldg,
-					comm_solver, &status);
-
+		if ( theMasterConstrainedSlab[iMaster].sharer_count > 0 ) {
+			MPI_Waitall(theMasterConstrainedSlab[iMaster].sharer_count,
+					masterrecvreqs[iMaster], masterrecvstats[iMaster]);
 		}
 	}
+
 
 	/* Calculate average values if I am the master */
 
@@ -2669,35 +2728,40 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 	}
 
 
+
+	/* Now sharers post receives */
+
+	for (iSharer = 0; iSharer < theNumberOfBuildingsSharer; iSharer++) {
+
+		MPI_Irecv(theSharerConstrainedSlab[iSharer].average_values,
+				theSharerConstrainedSlab[iSharer].l * 6,
+				MPI_DOUBLE,
+				theSharerConstrainedSlab[iSharer].responsible_id,
+				theSharerConstrainedSlab[iSharer].which_bldg,
+				comm_solver, &shaererrecvreqs[iSharer]);
+	}
+
+	//MPI_Barrier( comm_solver );
+
 	/* Now, masters sends the average dis to sharers */
 
 	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
 
 		for (i = 0; i < theMasterConstrainedSlab[iMaster].sharer_count; i++) {
 
-			MPI_Isend(theMasterConstrainedSlab[iMaster].average_values,
+			MPI_Send(theMasterConstrainedSlab[iMaster].average_values,
 					theMasterConstrainedSlab[iMaster].l * 6,
 					MPI_DOUBLE,
 					theMasterConstrainedSlab[iMaster].owner_ids[i],
 					theMasterConstrainedSlab[iMaster].which_bldg,
-					comm_solver, &isendreqs);
+					comm_solver);
 		}
 	}
 
 
-	/* Second sharers receives the average dis */
-
-	for (iSharer = 0; iSharer < theNumberOfBuildingsSharer; iSharer++) {
-
-		MPI_Recv(theSharerConstrainedSlab[iSharer].average_values,
-				theSharerConstrainedSlab[iSharer].l * 6,
-				MPI_DOUBLE,
-				theSharerConstrainedSlab[iSharer].responsible_id,
-				theSharerConstrainedSlab[iSharer].which_bldg,
-				comm_solver, &status);
+	if (theNumberOfBuildingsSharer > 0 ) {
+		MPI_Waitall(theNumberOfBuildingsSharer, shaererrecvreqs, sharerrecvstats);
 	}
-
-
 
 	/* Masters and sharers update their displacements */
 
@@ -2773,6 +2837,22 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 			}
 		}
 	}
+
+
+	if (theNumberOfBuildingsSharer > 0 ) {
+		free(shaererrecvreqs);
+		free(sharerrecvstats);
+	}
+
+	if (theNumberOfBuildingsMaster > 0 ) {
+		for (i = 0; i < theNumberOfBuildingsMaster; i++) {
+			free(masterrecvreqs[i]);
+			free(masterrecvstats[i]);
+		}
+		free(masterrecvreqs);
+		free(masterrecvstats);
+	}
+
 
 	return;
 }
