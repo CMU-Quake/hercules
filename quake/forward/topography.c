@@ -1893,7 +1893,7 @@ void topography_elements_count(int32_t myID, mesh_t *myMesh ) {
 		Vol   = esize * esize *esize;
 
 		if ( ( Vp != -1 ) ) {
-			if ( ( check_crossings ( xo, yo, zo, esize, So ) == 1 ) ) {
+			if ( ( check_crossingsII ( xo, yo, zo, esize ) == 1 ) ) {
 				count++;
 			}
 		}
@@ -1946,7 +1946,7 @@ void topography_elements_mapping(int32_t myID, mesh_t *myMesh) {
 
 		if ( ( Vp != -1 ) ) {
 
-			if  ( check_crossings ( xo, yo, zo, esize, So ) == 1 ) {
+			if  ( check_crossingsII ( xo, yo, zo, esize ) == 1 ) {
 				myTopoElementsMapping[count] = eindex;
 				count++;
 			}
