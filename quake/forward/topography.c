@@ -373,48 +373,47 @@ double point_PlaneDist ( double xp, double yp, double zp ) {
 
 }
 
-void get_airprops_topo( octant_t *leaf, double ticksize,
-                   edata_t *edata, etree_t *cvm )
+void get_airprops_topo( edata_t *edata )
 {
-    int    res;
-    double x, y, z;
-    double edgesize;
-    double halfedge;
+//    int    res;
+//    double x, y, z;
+//    double edgesize;
+//    double halfedge;
+//
+//    cvmpayload_t props;
+//
+//    edgesize = edata->edgesize;
+//    halfedge = edgesize * 0.5;
+//
+//    x = ( leaf->lx * ticksize ) + halfedge;
+//    y = ( leaf->ly * ticksize ) + halfedge;
+//    z = ( leaf->lz * ticksize ) + halfedge;
+//
+//    if ( ( leaf->lz * ticksize + edgesize ) == thebase_zcoord ) {
+//
+//        /* Get the Vs at that location on the surface */
+//        /* Ensures same size in elements at the flat interface medium-air */
+//        if ( theEtreeType == FULL )
+//    		res = cvm_query( cvm, y, x, thebase_zcoord, &props );
+//        else
+//        	res = cvm_query( cvm, y, x, 0, &props );
+//
+//        if ( res != 0 ) {
+//            return;
+//            solver_abort ( __FUNCTION_NAME, "Error from cvm_query: ",
+//                           "No properties at east = %f, north = %f", y, x);
+//        }
+//    	edata->Vs  = props.Vs;
+//    } else
+//    	edata->Vs  = 1e10;
 
-    cvmpayload_t props;
-
-    edgesize = edata->edgesize;
-    halfedge = edgesize * 0.5;
-
-    x = ( leaf->lx * ticksize ) + halfedge;
-    y = ( leaf->ly * ticksize ) + halfedge;
-    z = ( leaf->lz * ticksize ) + halfedge;
-
-    if ( ( leaf->lz * ticksize + edgesize ) == thebase_zcoord ) {
-
-        /* Get the Vs at that location on the surface */
-        /* Ensures same size in elements at the flat interface medium-air */
-        if ( theEtreeType == FULL )
-    		res = cvm_query( cvm, y, x, thebase_zcoord, &props );
-        else
-        	res = cvm_query( cvm, y, x, 0, &props );
-
-        if ( res != 0 ) {
-            return;
-            solver_abort ( __FUNCTION_NAME, "Error from cvm_query: ",
-                           "No properties at east = %f, north = %f", y, x);
-        }
-    	edata->Vs  = props.Vs;
-    } else
-    	edata->Vs  = 1e10;
-
-//    edata->Vs  = 1e10;
+    edata->Vs  = 1.0e10;
 
     /* Assign negative Vp to identify air octants */
-    edata->Vp  = -1;
+    edata->Vp  = -1.0;
 
     /* Assign zero density */
-    edata->rho = 0;
+    edata->rho = 0.0;
 
     return;
 }
@@ -628,7 +627,7 @@ int topo_search ( octant_t *leaf, double ticksize, edata_t *edata ) {
  * Note:  X and Y topofile follows the conventional coordinate system this is X=EW, Y=NS     */
 void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_topoExpand, int *to_topoSetrec ) {
 
-	double   xo, yo, zo, xp, yp, zp, esize, emin, dist, fact=2.0;
+	double   xo, yo, zo, xp, yp, zp, esize, emin, dist, fact=1.0;
 	int      far_air_flag=0, near_air_flag=0, near_mat_flag=0, far_mat_flag=0;
 	int      i, j, k, np=5;
 
@@ -848,11 +847,14 @@ int check_crossingsII ( double xo, double yo, double zo, double esize ) {
 int topo_setrec ( octant_t *leaf, double ticksize,
                    edata_t *edata, etree_t *cvm )
 {
-    int          res;
 
-    res = topo_search( leaf, ticksize, edata );
-    if ( ( res == 0 ) || ( res == -1 ) ) {
-        get_airprops_topo( leaf, ticksize, edata, cvm);
+    int       res_exp, res_setr;
+
+//    res = topo_search( leaf, ticksize, edata );
+    topo_searchII( leaf, ticksize, edata, &res_exp,  &res_setr );
+//    res = topo_search( leaf, ticksize, edata );
+    if (  res_setr == -1  ) {
+        get_airprops_topo( edata );
         return 1;
     }
 
