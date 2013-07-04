@@ -58,12 +58,6 @@ typedef struct topostation_t {
 } topostation_t;
 
 
-
-int internal_nodes            ( double xo, double yo, double zo, double So, double esize );
-int crossings_faces_12        ( double xp, double yp, double zp, double So, double esize, double zini, double zfin);
-int crossings_faces_34        ( double xp, double yp, double zp, double So, double esize, double zini, double zfin);
-int check_crossings           ( double xo, double yo, double zo, double esize, double So ) ;
-
 int    octant_topolocotaion   (mesh_t *myMesh, int32_t eindex);
 double get_thebase_topo();
 int    BelongstoTopography    (mesh_t *myMesh, int32_t eindex);

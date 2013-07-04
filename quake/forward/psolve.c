@@ -4440,7 +4440,7 @@ static void solver_run()
 
         /* ------------------ */
         /* TODO: erase this later*/
-        compute_addforce_topoDRM ( Global.myMesh,Global.mySolver, Param.theDeltaT, step, Global.theK1, Global.theK2);
+        //compute_addforce_topoDRM ( Global.myMesh,Global.mySolver, Param.theDeltaT, step, Global.theK1, Global.theK2);
         /*----------*/
 
         Timer_Stop( "Compute Physics" );
@@ -7306,7 +7306,7 @@ mesh_correct_properties( etree_t* cvm )
     edata_t* edata;
     int32_t  eindex;
     double   east_m, north_m, depth_m, VpVsRatio, RhoVpRatio;
-    int	     res, iNorth, iEast, iDepth, numPoints = 3;
+    int	     res, iNorth, iEast, iDepth, numPoints = 3, cnt=0;
     double   vs, vp, rho;
     double   points[3];
     int32_t  lnid0;
@@ -7349,6 +7349,7 @@ mesh_correct_properties( etree_t* cvm )
         vp  = 0;
         vs  = 0;
         rho = 0;
+        cnt = 0;
 
         for (iNorth = 0; iNorth < numPoints; iNorth++) {
 
@@ -7393,25 +7394,49 @@ mesh_correct_properties( etree_t* cvm )
                     res = cvm_query( Global.theCVMEp, east_m, north_m,
                                      depth_m, &g_props );
 
+//                    if (res != 0) {
+//                        fprintf(stderr, "Cannot find the query point: east = %lf, north = %lf, depth = %lf \n",
+//                        		east_m, north_m, depth_m);
+//                        exit(1);
+//                    }
+                    // Dorian: I had to do this because of anomalies found in the AburraValley_Etree.
+                    // Remove this line and uncomment the previous statement to return to the original version
                     if (res != 0) {
-                        fprintf(stderr, "Cannot find the query point\n");
-                        exit(1);
+                    	continue;
                     }
 
         			vp  += g_props.Vp;
         			vs  += g_props.Vs;
         			rho += g_props.rho;
+        			++cnt;
                 }
             }
         }
 
-        edata->Vp  =  vp / 27;
-        edata->Vs  =  vs / 27;
-        edata->rho = rho / 27;
+        edata->Vp  =  vp;
+        edata->Vs  =  vs;
+        edata->rho = rho;
+
+//        fprintf(stderr, "Queried  points: %ld \n",cnt);
+//        fprintf(stdout, "Element: %d, out of: %d, Processor: %d \n",eindex, Global.myMesh->lenum, Global.myID );
+        if (cnt != 0 ) {
+        	edata->Vp  =  vp / cnt;
+        	edata->Vs  =  vs / cnt;
+        	edata->rho = rho / cnt;
+        }
 
         /* Auxiliary ratios for adjustments */
-        VpVsRatio  = edata->Vp  / edata->Vs;
-        RhoVpRatio = edata->rho / edata->Vp;
+        // Dorian: Needed to handle possible air elements inside topography.
+        // This situation could emerge by different readings of the topography surface
+        // between Hercules and the algorithm used for creating the Etree.
+        if ( (edata->Vp==0)||(edata->Vs==0)||(edata->rho==0) ) {
+        	VpVsRatio  = 2.0;  /* values artificially imposed by me */
+        	edata->rho = 2000;
+        } else {
+            VpVsRatio  = edata->Vp  / edata->Vs;
+            RhoVpRatio = edata->rho / edata->Vp;
+        }
+
 
         /* Adjust material properties according to the element size and
          * softening factor.
@@ -7724,7 +7749,7 @@ int main( int argc, char** argv )
 
     if ( Param.includeTopography == YES ) {
     	/*TODO: this is a checking. erase later. Dorian */
-    	topo_DRM_init( Global.myMesh, Global.mySolver);
+    	//topo_DRM_init( Global.myMesh, Global.mySolver);
     }
 
     

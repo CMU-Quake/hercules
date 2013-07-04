@@ -51,38 +51,6 @@ static topometh_t         theTopoMethod;
 static topostation_t      *myTopoStations;
 
 
-/*  Stiffness Matrices of Tetrahedral Elements */
-static fmatrix_t  mytheK1_Tet1[4][4];
-static fmatrix_t  mytheK2_Tet1[4][4];
-
-static fmatrix_t  mytheK1_Tet2[4][4];
-static fmatrix_t  mytheK2_Tet2[4][4];
-
-static fmatrix_t  mytheK1_Tet3[4][4];
-static fmatrix_t  mytheK2_Tet3[4][4];
-
-static fmatrix_t  mytheK1_Tet4[4][4];
-static fmatrix_t  mytheK2_Tet4[4][4];
-
-static fmatrix_t  mytheK1_Tet5[4][4];
-static fmatrix_t  mytheK2_Tet5[4][4];
-
-static fmatrix_t  mytheK1_SymmTet1[4][4];
-static fmatrix_t  mytheK2_SymmTet1[4][4];
-
-static fmatrix_t  mytheK1_SymmTet2[4][4];
-static fmatrix_t  mytheK2_SymmTet2[4][4];
-
-static fmatrix_t  mytheK1_SymmTet3[4][4];
-static fmatrix_t  mytheK2_SymmTet3[4][4];
-
-static fmatrix_t  mytheK1_SymmTet4[4][4];
-static fmatrix_t  mytheK2_SymmTet4[4][4];
-
-static fmatrix_t  mytheK1_SymmTet5[4][4];
-static fmatrix_t  mytheK2_SymmTet5[4][4];
-
-
 /*  ============================================  */
 /* TODO: Only for the TopoDRM. Erase later Dorian */
 static int32_t            *myDRMFace1ElementsMapping;
@@ -252,441 +220,6 @@ int topo_correctproperties ( edata_t *edata )
 /* -------------------------------------------------------------------------- */
 /*                         Private Method Prototypes                          */
 /* -------------------------------------------------------------------------- */
-
-/* Computes the diagonal terms of the Bi(3x3) matrix for a tetrahedral element.
-   counter i runs form 0 to 3 (4 nodes tetrahedral) */
-
-void get_AiBiCi ( double x1, double y1, double z1,
-				  double x2, double y2, double z2,
-				  double x3, double y3, double z3,
-				  double x4, double y4, double z4,
-                  int i,
-				  double *Ai, double *Bi, double *Ci )
-{
-
-	double x31 = x3 - x1;
-	double y31 = y3 - y1;
-	double z31 = z3 - z1;
-
-	double x21 = x2 - x1;
-	double y21 = y2 - y1;
-	double z21 = z2 - z1;
-
-	double x41 = x4 - x1;
-	double y41 = y4 - y1;
-	double z41 = z4 - z1;
-
-	double Vo =   x31 * y21 * z41 + x41 * y31 * z21 + z31 * x21 * y41
-			  - ( x31 * y41 * z21 + y31 * x21 * z41 + z31 * x41 * y21 );
-
-	double deta_dx  = ( y21 * z41 - z21 * y41 ) / Vo;
-	double dpsi_dx  = ( z31 * y41 - y31 * z41 ) / Vo;
-	double dgamm_dx = ( y31 * z21 - z31 * y21 ) / Vo;
-
-	double deta_dy  = ( z21 * x41 - x21 * z41 ) / Vo;
-	double dpsi_dy  = ( x31 * z41 - x41 * z31 ) / Vo;
-	double dgamm_dy = ( z31 * x21 - x31 * z21 ) / Vo;
-
-	double deta_dz  = ( x21 * y41 - y21 * x41 ) / Vo;
-	double dpsi_dz  = ( x41 * y31 - x31 * y41 ) / Vo;
-	double dgamm_dz = ( x31 * y21 - x21 * y31 ) / Vo;
-
-
-    switch ( i ) {
-
-        case (0):
-
-            *Ai = - ( deta_dx + dpsi_dx + dgamm_dx );
-        	*Bi = - ( deta_dy + dpsi_dy + dgamm_dy );
-        	*Ci = - ( deta_dz + dpsi_dz + dgamm_dz );
-            break;
-
-        case (1):
-			*Ai =   ( dpsi_dx );
-			*Bi =   ( dpsi_dy );
-			*Ci =   ( dpsi_dz );
-            break;
-
-        case (2):
-			*Ai =   ( deta_dx );
-			*Bi =   ( deta_dy );
-			*Ci =   ( deta_dz );
-            break;
-
-        case (3):
-			*Ai =   ( dgamm_dx );
-			*Bi =   ( dgamm_dy );
-			*Ci =   ( dgamm_dz );
-            break;
-
-    }
-
-
-}
-
-
-void kTetr( double x1, double y1, double z1,
-		    double x2, double y2, double z2,
-		    double x3, double y3, double z3,
-		    double x4, double y4, double z4,
-		    fmatrix_t k_lambda[4][4], fmatrix_t k_mu[4][4]  )
-{
-
-    int i, j; /* indices of the block matrices, i for rows, j for columns */
-    int k, l; /* indices of 3 x 3 matrices, k for rows, l for columns     */
-
-    double     Ai, Bi, Ci, Aj, Bj, Cj;
-    double     Diag;
-	vector3D_t Vi, Vj;
-
-    fmatrix_t *matPtr;
-    fmatrix_t *matPtr2;
-
-    for (i = 0 ;  i < 4; i++) {
-
-    	get_AiBiCi ( x1, y1, z1,
-    			     x2, y2, z2,
-    			     x3, y3, z3,
-    				 x4, y4, z4,
-    	             i,
-    				 &Ai, &Bi, &Ci );
-    	Vi.x[0] = Ai;
-    	Vi.x[1] = Bi;
-    	Vi.x[2] = Ci;
-
-    	for (j = 0 ; j < 4; j++){
-
-        	get_AiBiCi ( x1, y1, z1,
-        			     x2, y2, z2,
-        				 x3, y3, z3,
-        				 x4, y4, z4,
-        	             j,
-        				 &Aj, &Bj, &Cj );
-        	Vj.x[0] = Aj;
-        	Vj.x[1] = Bj;
-        	Vj.x[2] = Cj;
-
-    		matPtr   = &k_lambda[i][j];
-    		matPtr2  = &k_mu[i][j];
-
-    		for (k = 0; k < 3; k++) {
-
-    			for (l = 0; l < 3; l++) {
-
-    				matPtr->f[k][l]  = Vi.x[k] * Vj.x[l];
-    				matPtr2->f[l][k] = matPtr->f[k][l];
-
-    			} /* for all l */
-    		} /* for all k */
-
-    		Diag = ( Vi.x[0] * Vj.x[0] + Vi.x[1] * Vj.x[1] + Vi.x[2] * Vj.x[2] );
-    		matPtr2->f[0][0] +=  Diag;
-    		matPtr2->f[1][1] +=  Diag;
-    		matPtr2->f[2][2] +=  Diag;
-
-    	} /* for all j */
-    } /* for all i */
-
-}
-
-
-
-
-void compute_KTetrah()
-{
-
-	double TETRACOOR, TETRACOORSYMM;
-    double x1, y1, z1,
-    	   x2, y2, z2,
-    	   x3, y3, z3,
-    	   x4, y4, z4;
-
-    memset(mytheK1_Tet1, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK2_Tet1, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK1_Tet2, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK2_Tet2, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK1_Tet3, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK2_Tet3, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK1_Tet4, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK2_Tet4, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK1_Tet5, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK2_Tet5, 0, 4 * 4 * sizeof(fmatrix_t));
-
-    memset(mytheK1_SymmTet1, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK2_SymmTet1, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK1_SymmTet2, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK2_SymmTet2, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK1_SymmTet3, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK2_SymmTet3, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK1_SymmTet4, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK2_SymmTet4, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK1_SymmTet5, 0, 4 * 4 * sizeof(fmatrix_t));
-    memset(mytheK2_SymmTet5, 0, 4 * 4 * sizeof(fmatrix_t));
-
-
-    /* compute: h^2 / ( lambda*Vol ) * K1 for first Tetrahedra ( Lambda dependent matrix)
-     *          h^2 / ( mu*Vol     ) * K2 for first Tetrahedra ( Mu dependent matrix) */
-
-
-    x1 = tetraCoor[0][0];
-    y1 = tetraCoor[1][0];
-    z1 = tetraCoor[2][0];
-
-    x2 = tetraCoor[0][1];
-    y2 = tetraCoor[1][1];
-    z2 = tetraCoor[2][1];
-
-    x3 = tetraCoor[0][2];
-    y3 = tetraCoor[1][2];
-    z3 = tetraCoor[2][2];
-
-    x4 = tetraCoor[0][3];
-    y4 = tetraCoor[1][3];
-    z4 = tetraCoor[2][3];
-
-    kTetr( x1, y1, z1,
-    	   x2, y2, z2,
-    	   x3, y3, z3,
-    	   x4, y4, z4,
-    	   mytheK1_Tet1, mytheK2_Tet1 );
-
-    /* computes: h^2 / ( lambda*Vol ) * K1 for SECOND Tetrahedra ( Lambda dependent matrix)
-     *           h^2 / ( mu*Vol     ) * K2 for SECOND Tetrahedra ( Mu dependent matrix) */
-
-
-    x1 = tetraCoor[3][0];
-    y1 = tetraCoor[4][0];
-    z1 = tetraCoor[5][0];
-
-    x2 = tetraCoor[3][1];
-    y2 = tetraCoor[4][1];
-    z2 = tetraCoor[5][1];
-
-    x3 = tetraCoor[3][2];
-    y3 = tetraCoor[4][2];
-    z3 = tetraCoor[5][2];
-
-    x4 = tetraCoor[3][3];
-    y4 = tetraCoor[4][3];
-    z4 = tetraCoor[5][3];
-
-    kTetr( x1, y1, z1,
-    	   x2, y2, z2,
-    	   x3, y3, z3,
-    	   x4, y4, z4,
-    	   mytheK1_Tet2, mytheK2_Tet2 );
-
-    /* computes: h^2 / ( lambda*Vol ) * K1 for THIRD Tetrahedra ( Lambda dependent matrix)
-     *           h^2 / ( mu*Vol     ) * K2 for THIRD Tetrahedra ( Mu dependent matrix) */
-
-    x1 = tetraCoor[6][0];
-    y1 = tetraCoor[7][0];
-    z1 = tetraCoor[8][0];
-
-    x2 = tetraCoor[6][1];
-    y2 = tetraCoor[7][1];
-    z2 = tetraCoor[8][1];
-
-    x3 = tetraCoor[6][2];
-    y3 = tetraCoor[7][2];
-    z3 = tetraCoor[8][2];
-
-    x4 = tetraCoor[6][3];
-    y4 = tetraCoor[7][3];
-    z4 = tetraCoor[8][3];
-
-    kTetr( x1, y1, z1,
-    	   x2, y2, z2,
-    	   x3, y3, z3,
-    	   x4, y4, z4,
-    	   mytheK1_Tet3, mytheK2_Tet3 );
-
-    /* computes: h^2 / ( lambda*Vol ) * K1 for FOURTH Tetrahedra ( Lambda dependent matrix)
-     *           h^2 / ( mu*Vol     ) * K2 for FOURTH Tetrahedra ( Mu dependent matrix) */
-
-    x1 = tetraCoor[9][0];
-    y1 = tetraCoor[10][0];
-    z1 = tetraCoor[11][0];
-
-    x2 = tetraCoor[9][1];
-    y2 = tetraCoor[10][1];
-    z2 = tetraCoor[11][1];
-
-    x3 = tetraCoor[9][2];
-    y3 = tetraCoor[10][2];
-    z3 = tetraCoor[11][2];
-
-    x4 = tetraCoor[9][3];
-    y4 = tetraCoor[10][3];
-    z4 = tetraCoor[11][3];
-
-    kTetr( x1, y1, z1,
-    	   x2, y2, z2,
-    	   x3, y3, z3,
-    	   x4, y4, z4,
-    	   mytheK1_Tet4, mytheK2_Tet4 );
-
-    /* computes: h^2 / ( lambda*Vol ) * K1 for FIFTH Tetrahedra ( Lambda dependent matrix)
-     *           h^2 / ( mu*Vol     ) * K2 for FIFTH Tetrahedra ( Mu dependent matrix) */
-
-
-    x1 = tetraCoor[12][0];
-    y1 = tetraCoor[13][0];
-    z1 = tetraCoor[14][0];
-
-    x2 = tetraCoor[12][1];
-    y2 = tetraCoor[13][1];
-    z2 = tetraCoor[14][1];
-
-    x3 = tetraCoor[12][2];
-    y3 = tetraCoor[13][2];
-    z3 = tetraCoor[14][2];
-
-    x4 = tetraCoor[12][3];
-    y4 = tetraCoor[13][3];
-    z4 = tetraCoor[14][3];
-
-    kTetr( x1, y1, z1,
-    	   x2, y2, z2,
-    	   x3, y3, z3,
-    	   x4, y4, z4,
-    	   mytheK1_Tet5, mytheK2_Tet5 );
-
-    /* =================================== */
-    /*  Symmetric tetrahedra distribution  */
-    /* =================================== */
-
-    /* computes: h^2 / ( lambda*Vol ) * K1 for the FIRST Symmetric Tetrahedra ( Lambda dependent matrix)
-     *           h^2 / ( mu*Vol     ) * K2 for the FIRST Symmetric Tetrahedra ( Mu dependent matrix) */
-
-    x1 = tetraCoorSymm[0][0];
-    y1 = tetraCoorSymm[1][0];
-    z1 = tetraCoorSymm[2][0];
-
-    x2 = tetraCoorSymm[0][1];
-    y2 = tetraCoorSymm[1][1];
-    z2 = tetraCoorSymm[2][1];
-
-    x3 = tetraCoorSymm[0][2];
-    y3 = tetraCoorSymm[1][2];
-    z3 = tetraCoorSymm[2][2];
-
-    x4 = tetraCoorSymm[0][3];
-    y4 = tetraCoorSymm[1][3];
-    z4 = tetraCoorSymm[2][3];
-
-    kTetr( x1, y1, z1,
-    	   x2, y2, z2,
-    	   x3, y3, z3,
-    	   x4, y4, z4,
-    	   mytheK1_SymmTet1, mytheK2_SymmTet1 );
-
-
-    /* computes: h^2 / ( lambda*Vol ) * K1 for the SECOND Symmetric Tetrahedra ( Lambda dependent matrix)
-     *           h^2 / ( mu*Vol     ) * K2 for the SECOND Symmetric Tetrahedra ( Mu dependent matrix) */
-
-    x1 = tetraCoorSymm[3][0];
-    y1 = tetraCoorSymm[4][0];
-    z1 = tetraCoorSymm[5][0];
-
-    x2 = tetraCoorSymm[3][1];
-    y2 = tetraCoorSymm[4][1];
-    z2 = tetraCoorSymm[5][1];
-
-    x3 = tetraCoorSymm[3][2];
-    y3 = tetraCoorSymm[4][2];
-    z3 = tetraCoorSymm[5][2];
-
-    x4 = tetraCoorSymm[3][3];
-    y4 = tetraCoorSymm[4][3];
-    z4 = tetraCoorSymm[5][3];
-
-
-    kTetr( x1, y1, z1,
-    	   x2, y2, z2,
-    	   x3, y3, z3,
-    	   x4, y4, z4,
-    	   mytheK1_SymmTet2, mytheK2_SymmTet2 );
-
-    /* computes: h^2 / ( lambda*Vol ) * K1 for the THIRD Symmetric Tetrahedra ( Lambda dependent matrix)
-     *           h^2 / ( mu*Vol     ) * K2 for the THIRD Symmetric Tetrahedra ( Mu dependent matrix) */
-
-    x1 = tetraCoorSymm[6][0];
-    y1 = tetraCoorSymm[7][0];
-    z1 = tetraCoorSymm[8][0];
-
-    x2 = tetraCoorSymm[6][1];
-    y2 = tetraCoorSymm[7][1];
-    z2 = tetraCoorSymm[8][1];
-
-    x3 = tetraCoorSymm[6][2];
-    y3 = tetraCoorSymm[7][2];
-    z3 = tetraCoorSymm[8][2];
-
-    x4 = tetraCoorSymm[6][3];
-    y4 = tetraCoorSymm[7][3];
-    z4 = tetraCoorSymm[8][3];
-
-    kTetr( x1, y1, z1,
-    	   x2, y2, z2,
-    	   x3, y3, z3,
-    	   x4, y4, z4,
-    	   mytheK1_SymmTet3, mytheK2_SymmTet3 );
-
-    /* computes: h^2 / ( lambda*Vol ) * K1 for the FOURTH Symmetric Tetrahedra ( Lambda dependent matrix)
-     *           h^2 / ( mu*Vol     ) * K2 for the FOURTH Symmetric Tetrahedra ( Mu dependent matrix) */
-
-    x1 = tetraCoorSymm[9][0];
-    y1 = tetraCoorSymm[10][0];
-    z1 = tetraCoorSymm[11][0];
-
-    x2 = tetraCoorSymm[9][1];
-    y2 = tetraCoorSymm[10][1];
-    z2 = tetraCoorSymm[11][1];
-
-    x3 = tetraCoorSymm[9][2];
-    y3 = tetraCoorSymm[10][2];
-    z3 = tetraCoorSymm[11][2];
-
-    x4 = tetraCoorSymm[9][3];
-    y4 = tetraCoorSymm[10][3];
-    z4 = tetraCoorSymm[11][3];
-
-    kTetr( x1, y1, z1,
-    	   x2, y2, z2,
-    	   x3, y3, z3,
-    	   x4, y4, z4,
-    	   mytheK1_SymmTet4, mytheK2_SymmTet4 );
-
-    /* computes: h^2 / ( lambda*Vol ) * K1 for the FIFTH Symmetric Tetrahedra ( Lambda dependent matrix)
-     *           h^2 / ( mu*Vol     ) * K2 for the FIFTH Symmetric Tetrahedra ( Mu dependent matrix) */
-
-    x1 = tetraCoorSymm[12][0];
-    y1 = tetraCoorSymm[13][0];
-    z1 = tetraCoorSymm[14][0];
-
-    x2 = tetraCoorSymm[12][1];
-    y2 = tetraCoorSymm[13][1];
-    z2 = tetraCoorSymm[14][1];
-
-    x3 = tetraCoorSymm[12][2];
-    y3 = tetraCoorSymm[13][2];
-    z3 = tetraCoorSymm[14][2];
-
-    x4 = tetraCoorSymm[12][3];
-    y4 = tetraCoorSymm[13][3];
-    z4 = tetraCoorSymm[14][3];
-
-    kTetr( x1, y1, z1,
-    	   x2, y2, z2,
-    	   x3, y3, z3,
-    	   x4, y4, z4,
-    	   mytheK1_SymmTet5, mytheK2_SymmTet5 );
-
-}
-
-
-
 double magnitude ( vector3D_t v1 )
 {
 	return sqrt ( v1.x[0] * v1.x[0] + v1.x[1] * v1.x[1] + v1.x[2] * v1.x[2] );
@@ -700,6 +233,48 @@ void cross_product (vector3D_t v1, vector3D_t v2, vector3D_t *v3)
 
 }
 
+
+/* distance from a point to a plane   */
+/* Note: zp and zo are measured with respect to the local z axis of the topography. i.e: m.a.s.l values  */
+double point_to_plane( double xp, double yp, double zp, double xo, double yo, double h, double zcoords[4] )
+{
+	double x1, y1, z1, mag;
+	vector3D_t V1, V2, V3, V4, N;
+
+	V1.x[0] = h;
+	V1.x[1] = 0;
+	V1.x[2] = zcoords[3] - zcoords[0];
+
+	V2.x[0] = 0;
+	V2.x[1] = h;
+	V2.x[2] = zcoords[1] - zcoords[0];
+
+	V3.x[0] = h;
+	V3.x[1] = h;
+	V3.x[2] = zcoords[2] - zcoords[0];
+
+	x1 = xp - xo;  /* relative distances with respect to the plane origin */
+	y1 = yp - yo;
+	z1 = zp - zcoords[0];
+
+	if ( x1 / y1 > 1) {
+		cross_product ( V3, V1,  &V4);
+	}
+	else
+	{
+		cross_product ( V2, V3,  &V4);
+	}
+
+	mag     = magnitude(V4);
+	N.x[0]  = V4.x[0] / mag;
+	N.x[1]  = V4.x[1] / mag;
+	N.x[2]  = V4.x[2] / mag;
+
+	return ( N.x[0] * x1 + N.x[1] * y1 + N.x[2] * z1 ); /* positive: outside surface;
+	                                                       zero    : on surface
+	                                                       negative: within surface */
+
+}
 
 /* returns the zp coordinate of a point inside a plane using linear interp   */
 double interp_z( double xp, double yp, double xo, double yo, double h, double zcoords[4] )
@@ -739,7 +314,8 @@ double interp_z( double xp, double yp, double xo, double yo, double h, double zc
 
 }
 
-/* gives the z value of a topography point respect to the base surface (Z global)*/
+/* returns the elevation value of a point with plane coordinates (xo,yo).
+ * Elevation is measured with respect to Hercules' Z global axis  */
 double point_elevation ( double xo, double yo ) {
 
 	int i, j;
@@ -770,6 +346,33 @@ double point_elevation ( double xo, double yo ) {
 }
 
 
+/* returns the distance of a point to the surface topography */
+/* cases: positive distance = point outside topography.
+ *        zero distance     = point on topography.
+ *        negative distance = point within topography */
+
+double point_PlaneDist ( double xp, double yp, double zp ) {
+
+	int i, j;
+	double x_o, y_o, remi, remj, mesh_cz[4];
+
+	zp = thebase_zcoord - zp; /* sea level elevation  */
+
+	remi = modf (xp  / So, &x_o );
+	remj = modf (yp  / So, &y_o );
+
+	i = x_o;
+	j = y_o;
+
+	mesh_cz[0] =  theTopoInfo [ np_ew * i + j ];
+	mesh_cz[1] =  theTopoInfo [ np_ew * i + j + 1 ];
+	mesh_cz[2] =  theTopoInfo [ np_ew * ( i + 1 ) + j + 1 ];
+	mesh_cz[3] =  theTopoInfo [ np_ew * ( i + 1 ) + j ];
+
+	return	point_to_plane( xp, yp, zp, x_o*So, y_o*So, So, mesh_cz );
+
+}
+
 void get_airprops_topo( octant_t *leaf, double ticksize,
                    edata_t *edata, etree_t *cvm )
 {
@@ -787,23 +390,25 @@ void get_airprops_topo( octant_t *leaf, double ticksize,
     y = ( leaf->ly * ticksize ) + halfedge;
     z = ( leaf->lz * ticksize ) + halfedge;
 
-    /* Get the Vs at that location on the surface */
-    if ( theEtreeType == FULL )
-		res = cvm_query( cvm, y, x, thebase_zcoord, &props );
-    else
-    	res = cvm_query( cvm, y, x, 0, &props );
+    if ( ( leaf->lz * ticksize + edgesize ) == thebase_zcoord ) {
 
-    if ( res != 0 ) {
-        return;
-        solver_abort ( __FUNCTION_NAME, "Error from cvm_query: ",
-                       "No properties at east = %f, north = %f", y, x);
-    }
+        /* Get the Vs at that location on the surface */
+        /* Ensures same size in elements at the flat interface medium-air */
+        if ( theEtreeType == FULL )
+    		res = cvm_query( cvm, y, x, thebase_zcoord, &props );
+        else
+        	res = cvm_query( cvm, y, x, 0, &props );
 
-    if ( ( leaf->lz * ticksize + edgesize ) == thebase_zcoord )
+        if ( res != 0 ) {
+            return;
+            solver_abort ( __FUNCTION_NAME, "Error from cvm_query: ",
+                           "No properties at east = %f, north = %f", y, x);
+        }
     	edata->Vs  = props.Vs;
-    else
+    } else
     	edata->Vs  = 1e10;
 
+//    edata->Vs  = 1e10;
 
     /* Assign negative Vp to identify air octants */
     edata->Vp  = -1;
@@ -1014,6 +619,86 @@ int topo_search ( octant_t *leaf, double ticksize, edata_t *edata ) {
 
 }
 
+
+/**
+ * Return  1 if the element crosses the surface of the topography.
+ * Return  0 if the element is a near topography air element.
+ * Return -1 if the element is outside the 2nd topography surface
+ * Return  2 if the element is completely inside the topography
+ * Note:  X and Y topofile follows the conventional coordinate system this is X=EW, Y=NS     */
+void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_topoExpand, int *to_topoSetrec ) {
+
+	double   xo, yo, zo, xp, yp, zp, esize, emin, dist, fact=2.0;
+	int      far_air_flag=0, near_air_flag=0, near_mat_flag=0, far_mat_flag=0;
+	int      i, j, k, np=5;
+
+	xo = leaf->lx * ticksize;
+	yo = leaf->ly * ticksize;
+	zo = leaf->lz * ticksize;
+	esize  = (double)edata->edgesize;
+
+	emin = ( (tick_t)1 << (PIXELLEVEL - theMaxoctlevel) ) * ticksize;
+	double Del = esize / (np - 1);
+
+	for ( i = 0; i < np; ++i ) {
+		xp = xo + Del * i;
+
+		for ( j = 0; j < np; ++j ) {
+			yp = yo + Del * j;
+
+			for ( k = 0; k < np; ++k ) {
+				zp = zo + Del * k;
+
+				dist = point_PlaneDist( xp, yp, zp );
+
+				if ( ( dist > 0 ) && ( dist > fact * emin ) && far_air_flag == 0 ) {
+					far_air_flag = 1;
+				} else if ( ( dist > 0 ) && ( dist <= fact * emin ) && near_air_flag == 0 ) {
+					near_air_flag = 1;
+				} else if ( ( dist <= 0 ) && ( abs(dist) <= fact * emin ) && near_mat_flag == 0 ) {
+					near_mat_flag = 1;
+				} else if ( ( dist < 0 ) && ( abs(dist) > fact * emin ) && far_mat_flag == 0 ) {
+					far_mat_flag = 1;
+				}
+			} /* for every k */
+		} /* for every j */
+	} /* for every i */
+
+	/* check 16 combinations */
+	if ( ( far_air_flag == 1 ) ) {
+		if ( ( near_air_flag == 0 ) && ( near_mat_flag == 0 ) && ( far_mat_flag == 0 ) ) {
+			*to_topoSetrec = -1;
+			*to_topoExpand = -1;
+		} else {
+			*to_topoSetrec = -1;
+			*to_topoExpand =  1;
+		}
+		return;
+	} else if ( ( ( far_air_flag == 0 ) && ( near_air_flag == 0 ) && ( near_mat_flag == 1 ) ) ||
+			    ( ( far_air_flag == 0 ) && ( near_air_flag == 1 ) && ( near_mat_flag == 1 ) ) ||
+			    ( ( far_air_flag == 0 ) && ( near_air_flag == 1 ) && ( near_mat_flag == 0 ) && ( far_mat_flag == 1 ) )   ) {
+		*to_topoSetrec = 1;
+		*to_topoExpand = 1;
+		return;
+	} else if ( ( far_air_flag == 0 ) && ( near_air_flag == 1 ) && ( near_mat_flag == 0 ) && ( far_mat_flag == 0 ) ) {
+		*to_topoSetrec = -1;
+		*to_topoExpand =  1;
+		return;
+	} else 	if ( ( far_air_flag == 0 ) && ( near_air_flag == 0 ) && ( near_mat_flag == 0 ) && ( far_mat_flag == 1 ) ) {
+		*to_topoSetrec =  1;
+		*to_topoExpand = -1;
+		return;
+	} else { /* no combination found: This should not happen */
+
+        fprintf(stderr,"Thread 1: topo_search: "
+                "Could not find a matching case for octant\n");
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+	}
+
+}
+
+
 /* Returns the real volume held by the Tetrahedral elements */
 void TetraHVol ( double xo, double yo, double zo, double esize, double So,
 		         double VolTetr[5]) {
@@ -1133,319 +818,8 @@ double interp_lin ( double xi, double yi, double xf, double yf, double xo  ){
 }
 
 
-/*  Checks the internal topography nodes in a horizontal plane. */
-/*  Returns +1 if a node is above the plane, 0 otherwise */
-int internal_nodes ( double xo, double yo, double zo, double So, double esize ) {
-
-	double x1, y1, remi, remj, npd, remnp;
-	int    i_o, j_o, npx, npy;
-	int    m, n, i, j;
-
-	remi   = modf ( xo / So, &x1 );
-	remj   = modf ( yo / So, &y1 );
-	i_o  = x1 + 1;
-	j_o  = y1 + 1;
-
-	remnp = modf ( ( xo + esize ) / So, &npd );
-	if ( remnp == 0 )
-		npx = npd - i_o;
-	else
-		npx = npd - i_o + 1;
-
-	remnp = modf ( ( yo + esize ) / So, &npd );
-	if ( remnp == 0 )
-		npy = npd - j_o;
-	else
-		npy = npd - j_o + 1;
-
-	for ( m = 0; m < npx; ++m ) {
-		i = i_o + m;
-
-		for ( n = 0; n < npy; ++n ) {
-			j = j_o + n;
-
-			if ( ( thebase_zcoord - theTopoInfo [ np_ew * i + j ] > zo ) )
-				return 0;
-
-//			if ( ( thebase_zcoord - theTopoInfo [ np_ew * i + j ] > zo ) )
-//				return -1;
-		}
-	}
-	return 1;
-}
-
-/* returns 1 if a crossing exits, 0 otherwise. Face1 has a normal vector towards -X, Face2 towards +X   */
-int crossings_faces_12 ( double xp, double yp, double zp, double So, double esize, double zini, double zfin) {
-
-	double x1, y1, y2, remi, remj, remj_f, xo, yo, dx, dy_i, dy_f;
-	int    i_o, j_o, j_f, n, j, cnt=0, cnt2=0;
-	double zint_1, zint_d, yi, yf;
-	int    n_vertcuts, ndiag;
-
-	remi   = modf ( xp / So, &x1 );
-	remj   = modf ( yp / So, &y1 );
-	i_o    = x1;  /* X origin  */
-	j_o    = y1;  /* Y origin */
-	xo     = i_o * So;
-	yo     = j_o * So;
-
-	if ( remj != 0)
-		j_o = j_o + 1;  /* shifts Y origin to the right if rem exists */
-
-	remj_f = modf ( ( yp + esize ) / So, &y2 );
-	j_f    = y2; /* Y end */
-
-	n_vertcuts   = j_f - j_o + 1;
-	ndiag        = n_vertcuts - 1;
-	dx           = xp - xo;
-	dy_i         = yp - j_o * So;
-	dy_f         = yp + esize - j_f * So;
-    cnt2         = n_vertcuts + ndiag + 2;
-
-    if ( ( dx / dy_i >= 1.0 ) && ( remj != 0 ) && ( dx != 0 ) )
-    	++cnt2;
-
-    if ( ( dx / dy_f <= 1.0 ) && ( remj_f != 0 ) && ( dx != 0 ) )
-    	++cnt2;
-
-	/* checking for element inside topo grid, i.e. Small element */
-	if ( ( n_vertcuts == 0 ) || ( ( n_vertcuts == 1 ) && ( ( remj == 0 ) || (remj_f == 0) ) ) ) {
-		if  ( ( ( dx / dy_i < 1 ) && ( dx / dy_f < 1 ) )  ||
-				( ( dx / dy_i > 1 ) && ( dx / dy_f > 1 ) ) ) {
-			return 0; /* element inside topo grid without crossing its diagonal  */
-		} else {
-			j = y1;
-
-			yi = theTopoInfo [ np_ew * i_o + j ];
-			yf = theTopoInfo [ np_ew * ( i_o + 1 ) + j + 1 ];
-			zint_d = interp_lin ( 0., yi, So * sqrt (2.0), yf, dx * sqrt (2.0) );
-
-			if ( ( ( thebase_zcoord - zint_d > zp ) && ( thebase_zcoord - zint_d < zp + esize ) ) )
-				return 1;
-		}
-	}
-
-	double crossings[cnt2];
-
-	for ( n = 0; n < n_vertcuts; ++n ) {
-		j = j_o + n;
-
-		yi = theTopoInfo [ np_ew * i_o + j ];
-		yf = theTopoInfo [ np_ew * ( i_o + 1 ) + j ];
-        zint_1 = interp_lin ( 0., yi, So, yf, dx );
-
-        crossings[cnt] =  thebase_zcoord - zint_1;
-        ++cnt;
-	}
-
-	for ( n = 0; n < ndiag; ++n ) {
-		j = j_o + n;
-
-		yi = theTopoInfo [ np_ew * i_o + j ];
-		yf = theTopoInfo [ np_ew * ( i_o + 1 ) + j + 1 ];
-		zint_d = interp_lin ( 0., yi, So * sqrt (2.0), yf, dx * sqrt (2.0) );
-
-        crossings[cnt] =  thebase_zcoord - zint_d;
-        ++cnt;
-	}
-
-	j_o    = y1;  /* recover the original Y origin position */
-
-	/* checking  crossing through last diagonal */
-	if ( ( dx / dy_f <= 1.0 ) && ( remj_f != 0 ) && ( dx != 0 ) ) {
-		j = j_o + n_vertcuts; /* from the last loop */
-		if ( remj == 0 )
-			--j;
-
-		yi = theTopoInfo [ np_ew * i_o + j ];
-		yf = theTopoInfo [ np_ew * ( i_o + 1 ) + j + 1 ];
-		zint_d = interp_lin ( 0, yi, So * sqrt (2.0), yf, dx * sqrt (2.0) );
-
-        crossings[cnt] =  thebase_zcoord - zint_d;
-        ++cnt;
-	}
-
-	/* checking  crossing through first diagonal */
-	if ( ( dx / dy_i >= 1.0 ) && ( remj != 0) && ( dx != 0 )  ) {
-		j  = j_o;
-		yi = theTopoInfo [ np_ew * i_o + j ];
-		yf = theTopoInfo [ np_ew * ( i_o + 1 ) + j + 1 ];
-		zint_d = interp_lin ( 0, yi, So * sqrt (2.0), yf, dx * sqrt (2.0) );
-
-        crossings[cnt] =  thebase_zcoord - zint_d;
-        ++cnt;
-	}
-
-	crossings[cnt]     = zini;
-	++cnt;
-	crossings[cnt]     = zfin;
-	++cnt;
-
-	// check for internal crossings
-	for ( n = 0; n < cnt; ++n ) {
-		if  ( ( crossings[n] > zp ) && ( crossings[n] < zp + esize ) )
-			return 1;
-	}
-
-	int sup_nodes = 0, inf_nodes = 0;
-
-	for ( n = 0; n < cnt; ++n ) {
-		if  ( ( crossings[n] <= zp ) )
-			++sup_nodes;
-	}
-
-	for ( n = 0; n < cnt; ++n ) {
-		if  ( ( crossings[n] >= zp + esize ) )
-			++inf_nodes;
-	}
-
-	if ( ( sup_nodes == cnt ) || ( inf_nodes == cnt ) )
-		return 0;
-
-	return 1;
-
-}
-
-
-/* returns 1 if a crossing exits, 0 otherwise. Face3 has a normal vector towards -Y, Face4 towards +Y   */
-int crossings_faces_34 ( double xp, double yp, double zp, double So, double esize, double zini, double zfin) {
-
-	double x1, y1, x2, remi, remj, remi_f, xo, yo, dy, dx_i, dx_f;
-	int    i_o, j_o, i_f, n, i, j, cnt=0, cnt2=0;
-	double zint_1, zint_d, yi, yf;
-	int    n_vertcuts, ndiag;
-
-	remi   = modf ( xp / So, &x1 );
-	remj   = modf ( yp / So, &y1 );
-	i_o    = x1;  /* X origin  */
-	j_o    = y1;  /* Y origin */
-	xo     = i_o * So;
-	yo     = j_o * So;
-
-	if ( remi != 0)
-		i_o = i_o + 1;  /* shifts X origin to the right if rem exists */
-
-	remi_f = modf ( ( xp + esize ) / So, &x2 );
-	i_f    = x2; /* X end */
-
-	n_vertcuts   = i_f - i_o + 1;
-	ndiag        = n_vertcuts - 1;
-	dy           = yp - yo;
-	dx_i         = xp - i_o * So;
-	dx_f         = xp + esize - i_f * So;
-	cnt2         = n_vertcuts + ndiag + 2;
-
-	if ( ( dx_f / dy >= 1.0 ) && ( remi_f != 0 ) && ( dy != 0 ) )
-		++cnt2;
-
-	if ( ( dx_i / dy <= 1.0 ) && ( remi != 0) && ( dy != 0 ) )
-		++cnt2;
-
-	/* checking for element inside topo grid */
-	if ( ( n_vertcuts == 0 ) || ( ( n_vertcuts == 1 ) && ( ( remi == 0 ) || (remi_f == 0) ) ) ) {
-		if  ( ( ( dx_f / dy < 1 ) && ( dx_i / dy < 1 ) )  ||
-			  ( ( dx_f / dy > 1 ) && ( dx_i / dy > 1 ) ) ) {
-			return 0; /* element inside topo grid without crossing its diagonal  */
-		} else {
-			j   = j_o;
-			i_o = x1;
-
-			yi = theTopoInfo [ np_ew * i_o + j ];
-			yf = theTopoInfo [ np_ew * ( i_o + 1 ) + j + 1 ];
-			zint_d = interp_lin ( 0., yi, So * sqrt (2.0), yf, dy * sqrt (2.0) );
-
-			if ( ( ( thebase_zcoord - zint_d > zp ) && ( thebase_zcoord - zint_d < zp + esize ) ) )
-				return 1;
-
-		}
-	}
-
-	double crossings[cnt2];
-
-	for ( n = 0; n < n_vertcuts; ++n ) {
-		i = i_o + n;
-
-		yi = theTopoInfo [ np_ew * i + j_o ];
-		yf = theTopoInfo [ np_ew * i + j_o + 1 ];
-        zint_1 = interp_lin ( 0., yi, So, yf, dy );
-
-        crossings[cnt] =  thebase_zcoord - zint_1;
-        ++cnt;
-
-	}
-
-	for ( n = 0; n < ndiag; ++n ) {
-		i = i_o + n;
-
-		yi = theTopoInfo [ np_ew * i + j_o ];
-		yf = theTopoInfo [ np_ew * ( i + 1 ) + j_o + 1 ];
-		zint_d = interp_lin ( 0., yi, So * sqrt (2.0), yf, dy * sqrt (2.0) );
-
-        crossings[cnt] =  thebase_zcoord - zint_d;
-        ++cnt;
-
-	}
-
-	i_o    = x1;  /* recover the original X origin position */
-
-
-	/* checking  crossing through last diagonal */
-	if ( ( dx_f / dy >= 1.0 ) && ( remi_f != 0 ) && ( dy != 0 ) ) {
-		i = i_o + n_vertcuts;
-		if ( remi == 0 )
-			--i;
-
-		yi = theTopoInfo [ np_ew * i + j_o ];
-		yf = theTopoInfo [ np_ew * ( i + 1 ) + j_o + 1 ];
-		zint_d = interp_lin ( 0, yi, So * sqrt (2.0), yf, dy * sqrt (2.0) );
-
-		crossings[cnt] =  thebase_zcoord - zint_d;
-        ++cnt;
-
-	}
-
-	/* checking  crossing through first diagonal */
-	if ( ( dx_i / dy <= 1.0 ) && ( remi != 0) && ( dy != 0 ) ) {
-
-		yi = theTopoInfo [ np_ew * i_o + j_o ];
-		yf = theTopoInfo [ np_ew * ( i_o + 1 ) + j_o + 1 ];
-		zint_d = interp_lin ( 0, yi, So * sqrt (2.0), yf, dy * sqrt (2.0) );
-
-        crossings[cnt] =  thebase_zcoord - zint_d;
-        ++cnt;
-	}
-
-	crossings[cnt]     = zini;
-	++cnt;
-	crossings[cnt]     = zfin;
-	++cnt;
-
-	for ( n = 0; n < cnt; ++n ) {
-		if  ( ( crossings[n] > zp ) && ( crossings[n] < zp + esize ) )
-			return 1;
-	}
-
-	int sup_nodes = 0, inf_nodes = 0;
-
-	for ( n = 0; n < cnt; ++n ) {
-		if  ( ( crossings[n] <= zp ) )
-			++sup_nodes;
-	}
-
-	for ( n = 0; n < cnt; ++n ) {
-		if  ( ( crossings[n] >= zp + esize ) )
-			++inf_nodes;
-	}
-
-	if ( ( sup_nodes == cnt ) || ( inf_nodes == cnt ) )
-		return 0;
-
-	return 1;
-
-}
-
 /* 5x5 point checking.
-Returns 1 if cube has topography within, zero (0) if it does not  */
+Returns 1 if a cube has topography within, zero (0) if it does not  */
 int check_crossingsII ( double xo, double yo, double zo, double esize ) {
 
 	int i,j;
@@ -1471,86 +845,6 @@ int check_crossingsII ( double xo, double yo, double zo, double esize ) {
 
 }
 
-int check_crossings ( double xo, double yo, double zo, double esize, double So ) {
-
-	double elem_corners[4];
-	int sup_nodes = 0, inf_nodes = 0, n;
-	elem_corners_elev ( xo, yo, esize, So, elem_corners );
-
-	for ( n = 0; n < 4; ++n ) {
-		if  ( ( elem_corners[n] <= zo ) )
-			++sup_nodes;
-	}
-
-	for ( n = 0; n < 4; ++n ) {
-		if  ( ( elem_corners[n] >= zo + esize ) )
-			++inf_nodes;
-	}
-
-/* 0) checking for mixed elevations in element */
-	if ( ( sup_nodes < 4 ) && ( inf_nodes < 4 ) )
-		return 1;
-
-/* 1) checking elevation of corners  */
-	    if ( ( ( elem_corners[0] > zo ) && ( elem_corners[0] < ( zo + esize ) ) ) ||
-	    	 ( ( elem_corners[1] > zo ) && ( elem_corners[1] < ( zo + esize ) ) ) ||
-	    	 ( ( elem_corners[2] > zo ) && ( elem_corners[2] < ( zo + esize ) ) ) ||
-	    	 ( ( elem_corners[3] > zo ) && ( elem_corners[3] < ( zo + esize ) ) ) )   {
-	    	return 1;
-	    }
-
-// 2) checking for air elements with topo nodes inside.
-	    if (    ( elem_corners[0] > zo + esize ) &&
-	    		( elem_corners[1] > zo + esize ) &&
-	    		( elem_corners[2] > zo + esize ) &&
-	    		( elem_corners[3] > zo + esize ) )   {
-
-	    	if ( internal_nodes ( xo, yo, zo + esize, So, esize ) == 1 )
-	    		return 1;
-
-	    	/* 2.1) checking for crossings at the lateral faces:*/
-	    	/*face 1, normal vector -X*/
-	    	/*face 2, normal vector +X*/
-	    	/*face 3, normal vector -Y*/
-	    	/*face 4, normal vector +Y*/
-	    	if (    crossings_faces_12 ( xo, yo, zo, So, esize, elem_corners[0], elem_corners[1])         ||
-	    			crossings_faces_12 ( xo + esize, yo, zo, So, esize, elem_corners[3], elem_corners[2]) ||
-	    			crossings_faces_34 ( xo, yo, zo, So, esize, elem_corners[0], elem_corners[3])         ||
-	    			crossings_faces_34 ( xo, yo + esize, zo, So, esize, elem_corners[1], elem_corners[2])  )
-	    		return 1;
-
-	    	return 0;
-	    }
-
-// 3) checking for internal elements with topo nodes inside.
-	    if (    ( elem_corners[0] <= zo ) &&
-	    		( elem_corners[1] <= zo ) &&
-	    		( elem_corners[2] <= zo ) &&
-	    		( elem_corners[3] <= zo ) )   {
-
-	    	if ( internal_nodes ( xo, yo, zo, So, esize ) == 0 )
-	    		return 1;
-
-
-	    	/* 3.1) checking for crossings at the lateral faces:*/
-	    	/*face 1, normal vector -X*/
-	    	/*face 2, normal vector +X*/
-	    	/*face 3, normal vector -Y*/
-	    	/*face 4, normal vector +Y*/
-	    	if (    crossings_faces_12 ( xo, yo, zo, So, esize, elem_corners[0], elem_corners[1])         ||
-	    			crossings_faces_12 ( xo + esize, yo, zo, So, esize, elem_corners[3], elem_corners[2]) ||
-	    			crossings_faces_34 ( xo, yo, zo, So, esize, elem_corners[0], elem_corners[3])         ||
-	    			crossings_faces_34 ( xo, yo + esize, zo, So, esize, elem_corners[1], elem_corners[2])  )
-	    		return 1;
-
-	    	return 0;
-
-	    }
-
-/* 4) none of the above, non a superficial element  */
-	return 0;
-}
-
 int topo_setrec ( octant_t *leaf, double ticksize,
                    edata_t *edata, etree_t *cvm )
 {
@@ -1574,12 +868,16 @@ int topo_toexpand (  octant_t *leaf,
                      double    ticksize,
                      edata_t  *edata )
 {
-    int          res;
+    int          res, res_exp, res_setr;
 
-    res = topo_search( leaf, ticksize, edata );
-	if ( ( ( res == 1) || ( res == 0 ) ) && ( leaf->level < theMaxoctlevel ) )
+//    res = topo_search( leaf, ticksize, edata );
+    topo_searchII( leaf, ticksize, edata, &res_exp,  &res_setr );
+
+
+//	if ( ( ( res == 1) || ( res == 0 ) ) && ( leaf->level < theMaxoctlevel ) )
+//	return 1;
+	if ( ( res_exp == 1 )  && ( leaf->level < theMaxoctlevel ) )
 	return 1;
-
 
     return -1;
 
