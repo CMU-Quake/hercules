@@ -1852,7 +1852,7 @@ void pointload_init ( mesh_t *myMesh, double simTime ) {
 			y_m = (myMesh->nodeTable[i].y) * ticksize;
 			z_m = (myMesh->nodeTable[i].z) * ticksize;
 
-			if ( ( z_m == 0) && ( x_m == 400) && ( y_m == 400) )
+			if ( ( z_m == 0) && ( x_m == 3200) && ( y_m == 3200) )
 			{
 				thePointLoadId = i;
 			}
@@ -2502,8 +2502,8 @@ void solver_compute_force_pointload ( mysolver_t* mySolver, int32_t step, double
 
 	double pointload, a, uo, ts, fr;
 	ts = 1;
-	fr = 2;
-	uo = pow(10,6);
+	fr = 2.5;
+	uo = pow(10,9);
 
 	if (thePointLoadId != -1 ) {
 		a = pow ( M_PI * (step * deltat - ts) * fr, 2 );
