@@ -87,17 +87,17 @@ typedef struct basenode_t {
 
 
 /* If I am responsible for calculating the average values */
-/* rows have information for each node at a given level in a building.
+/* rows have information for each node at a given level in a building + foundation.
  * columns have the same type of nodal information for different levels.
- * l = # of plan-levels in each building
+ * l = # of plan-levels in each building + foundation
  * n = # of nodes in each level
- * matrix L, T are constant for each time step.
+ * matrix L, Dx and Dy are constant for each time step.
  */
 typedef struct master_constrained_slab_bldg {
 
 	/* general building information */
 
-	int l; /* # of plan-levels in each building */
+	int l; /* # of plan-levels in each building + foundation */
 	int n; /* # of nodes in each level node_x*node_y */
 	int node_x; /* # of nodes in x direction for each building */
 	int node_y; /* # of nodes in y direction for each building */
@@ -149,18 +149,19 @@ typedef struct master_constrained_slab_bldg {
 } master_constrained_slab_bldg_t;
 
 
-/* If I own nodes in a building. I need to send info to buildings master proc.*/
+/* If I own nodes in a building + foundation. I need to send dis info to
+ * buildings master proc.*/
 
-/* rows have information for each node at a given level in a building.
+/* rows have information for each node at a given level in a building+foundation.
  * columns have the same type of nodal information for different levels.
  * l = # of plan-levels in each building
  * n = # of nodes in each level
- * matrix L, T and R are constant for each time step.
+ * matrix L and Dx Dy are constant for each time step.
  */
 typedef struct sharer_constrained_slab_bldg {
 	/* general building information */
 
-	int l; /* # of plan-levels in each building */
+	int l; /* # of plan-levels in each building + foundation */
 	int n; /* # of nodes in each level node_x*node_y */
 	int node_x; /* # of nodes in x direction for each building */
 	int node_y; /* # of nodes in y direction for each building */
@@ -1469,7 +1470,6 @@ buildings_initparameters ( const char *parametersin )
 			theBuildingsYMax   = (double*)malloc( sizeof(double) * numBldgs );
 			theBuildingsZMin   = (double*)malloc( sizeof(double) * numBldgs );
 			theBuildingsZMax   = (double*)malloc( sizeof(double) * numBldgs );
-			theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
 			theBuildingsHeight = (double*)malloc( sizeof(double) * numBldgs );
 			theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
 			theBuildingsVp     = (double*)malloc( sizeof(double) * numBldgs );
@@ -1538,7 +1538,6 @@ buildings_initparameters ( const char *parametersin )
 			theBuildingsZMax   = (double*)malloc( sizeof(double) * numBldgs );
 			theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
 			theBuildingsHeight = (double*)malloc( sizeof(double) * numBldgs );
-			theBuildingsDepth  = (double*)malloc( sizeof(double) * numBldgs );
 
 			theBuildingsVp_left     = (double*)malloc( sizeof(double) * numBldgs );
 			theBuildingsVp_right     = (double*)malloc( sizeof(double) * numBldgs );
@@ -1826,16 +1825,15 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 	int iBldg, i, j, k, l, iMaster = -1, iSharer = -1;
 	int nodes_x, nodes_y;
 	double ticksize;
-	int* masterproc; /* how many nodes do I have in each building only if I am master. 0 otherwise*/
-	int* sharerproc; /* how many nodes do I have in each building if I am the sharer*/
+	int* masterproc; /* how many nodes do I have in each building + foundation only if I am master. 0 otherwise*/
+	int* sharerproc; /* how many nodes do I have in each building + foundation if I am the sharer*/
 
-	int* masterproc_all; /* how many nodes does the master proc have in each building. 0 if I am the sharer of the building.
+	int* masterproc_all; /* how many nodes does the master proc have in each building + foundation. 0 if I am the sharer of the building.
 	First the information of Proc0 for each building, then Proc1 for each building and goes on like this... */
-	int* sharerproc_all; /* how many nodes does the procs( only sharers)  have in each building. 0 if I am the master.
+	int* sharerproc_all; /* how many nodes does the procs( only sharers)  have in each building + foundation. 0 if I am the master.
 	First the information of Proc0 for each building, then Proc1 for each building and goes on like this... */
 
 	ticksize = myMesh->ticksize;
-
 
 	masterproc = calloc(theNumberOfBuildings,sizeof(int));
 	sharerproc = calloc(theNumberOfBuildings,sizeof(int));
@@ -1877,8 +1875,7 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 				}
 
 				/* If I am a sharer */
-				if (( z_m <= theSurfaceShift) &&
-						inclusivesearch( x_m, y_m, z_m, theBuilding[iBldg].bounds) == 1 )
+				if ( inclusivesearch( x_m, y_m, z_m, theBuilding[iBldg].bounds) == 1 )
 				{
 					sharer++;
 				}
@@ -1933,8 +1930,8 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 				double x_m;
 				double y_m;
 
-				/* These are general building information */
-				theMasterConstrainedSlab[iMaster].l = (theBuilding[iBldg].height)/
+				/* These are general building + foundation information */
+				theMasterConstrainedSlab[iMaster].l = ( theBuilding[iBldg].height + theBuilding[iBldg].depth) /
 						theMinOctSizeMeters + 1;
 				nodes_x = (theBuilding[iBldg].bounds.xmax -
 						theBuilding[iBldg].bounds.xmin)/theMinOctSizeMeters + 1;
@@ -2063,7 +2060,7 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 				}
 
 
-				/* Find local ids of nodes at each level for each building.( level0 -> base ) - matrix L  */
+				/* Find local ids of nodes at each level for each building + foundation.( level0 -> base of foundation ) - matrix L  */
 				/* l is from basement to roof. If I do not have the node set -1 in matrix L */
 				/* Also find tributary areas and Dx Dy and Ix Iy Ixy */
 
@@ -2077,7 +2074,8 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 				for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
 
 					tick_t   z_tick;
-					z_tick = (theSurfaceShift - theMinOctSizeMeters*l)/ticksize;
+					/* start from the base of the foundation and end with the roof level */
+					z_tick = (theSurfaceShift + theBuilding[iBldg].depth - theMinOctSizeMeters*l)/ticksize;
 
 					for ( i = 0; i <  theMasterConstrainedSlab[iMaster].node_x; i++ ) {
 						for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_y; j++) {
@@ -2196,7 +2194,7 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 				iSharer++;
 
 				/* These are general building information */
-				theSharerConstrainedSlab[iSharer].l = (theBuilding[iBldg].height)/
+				theSharerConstrainedSlab[iSharer].l = (theBuilding[iBldg].height + theBuilding[iBldg].depth)/
 						theMinOctSizeMeters + 1;
 				nodes_x = (theBuilding[iBldg].bounds.xmax -
 						theBuilding[iBldg].bounds.xmin)/theMinOctSizeMeters + 1;
@@ -2262,7 +2260,7 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 							(double*)malloc( theSharerConstrainedSlab[iSharer].node_y * sizeof(double));
 				}
 
-				/* Find local ids of nodes at each level for each building.( level0 -> base ) - matrix L  */
+				/* Find local ids of nodes at each level for each building + foundation.( level0 -> base of foundation ) - matrix L  */
 				/* l is from basement to roof. If I do not have the node set -1 in matrix L */
 				/* Also find Dx Dy  and outgoing_disp_map*/
 				int    counter = 0;
@@ -2276,7 +2274,9 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 				for ( l = 0; l < theSharerConstrainedSlab[iSharer].l; l++) {
 
 					tick_t   z_tick;
-					z_tick = (theSurfaceShift - theMinOctSizeMeters*l)/ticksize;
+
+					/* start from the base of the foundation and end with the roof level */
+					z_tick = (theSurfaceShift + theBuilding[iBldg].depth - theMinOctSizeMeters*l)/ticksize;
 
 					for ( i = 0; i <  theSharerConstrainedSlab[iSharer].node_x; i++ ) {
 						for ( j = 0; j <  theSharerConstrainedSlab[iSharer].node_y; j++) {
@@ -2461,7 +2461,7 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 
 
 	MPI_Request **masterrecvreqs  = NULL;
-	MPI_Status  **masterrecvstats  = NULL;
+	MPI_Status  **masterrecvstats = NULL;
 
 	MPI_Request *shaererrecvreqs  = NULL;
 	MPI_Status  *sharerrecvstats  = NULL;
