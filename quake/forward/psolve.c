@@ -2122,8 +2122,8 @@ mesh_generate()
     /* gggg */
 
     /* Buildings Carving */
-//    if ( Param.includeBuildings == YES ||  Param.includeTopography == YES ) {
-    if ( Param.includeBuildings == YES ) {
+    if ( Param.includeBuildings == YES ||  Param.includeTopography == YES ) {
+//    if ( Param.includeBuildings == YES ) {
     	int flag = 0;
     	Timer_Start("Carve Buildings");
     	if (Global.myID == 0) {
@@ -2132,6 +2132,7 @@ mesh_generate()
     	}
 
     	if(Param.includeBuildings == YES) flag = 1;
+
 
     	/* NOTE: If you want to see the carving process, comment next line */
 
@@ -2174,7 +2175,7 @@ mesh_generate()
         fprintf(stdout, "Extracting the mesh %30s","");
         fflush(stdout);
     }
-    Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch,pushdowns_nodesearch,bldgs_nodesearch_com);
+    Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch,pushdowns_nodesearch,bldgs_nodesearch_com, topo_nodesearch );
     if (Global.myMesh == NULL) {
         fprintf(stderr, "Thread %d: mesh_generate: fail to extract mesh\n",
                 Global.myID);
@@ -2243,7 +2244,7 @@ toexpand(octant_t *leaf, double ticksize, const void *data) {
 	}
 
 	if ( Param.includeTopography == YES ) {
-		res = topo_toexpand( leaf, ticksize, edata );
+		res = topo_toexpand( leaf, ticksize, edata, Param.theFactor );
 		if ( res != -1 ) {
 			return res;
 		}
@@ -4440,7 +4441,7 @@ static void solver_run()
 
         /* ------------------ */
         /* TODO: erase this later*/
-        //compute_addforce_topoDRM ( Global.myMesh,Global.mySolver, Param.theDeltaT, step, Global.theK1, Global.theK2);
+        compute_addforce_topoDRM ( Global.myMesh,Global.mySolver, Param.theDeltaT, step, Global.theK1, Global.theK2);
         /*----------*/
 
         Timer_Stop( "Compute Physics" );
@@ -7748,8 +7749,8 @@ int main( int argc, char** argv )
     }
 
     if ( Param.includeTopography == YES ) {
-    	/*TODO: this is a checking. erase later. Dorian */
-    	//topo_DRM_init( Global.myMesh, Global.mySolver);
+    	/*TODO: this is a test. Erase later. Dorian */
+    	topo_DRM_init( Global.myMesh, Global.mySolver);
     }
 
     

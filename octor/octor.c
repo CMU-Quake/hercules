@@ -3319,7 +3319,8 @@ static int32_t
 node_setproperty ( tree_t             *tree,
                    vertex_t           *vertex,
                    unsigned char      *pproperty,
-                   bldgs_nodesearch_t  bldgs_nodesearch )
+                   bldgs_nodesearch_t  bldgs_nodesearch,
+                   topo_nodesearch_t   topo_nodesearch )
 {
     tick_t   nx, ny, nz;
     int32_t  where, onX = 0, onY = 0, onZ = 0, wrtSurface = -2;
@@ -3449,6 +3450,12 @@ node_setproperty ( tree_t             *tree,
 
 //        *pproperty = 0X80;
 //        return 0;
+
+	if ( topo_nodesearch( nx, ny, nz, tree->ticksize ) != 0 ) {
+
+		*pproperty = 0X80;
+		return 0;
+	}
 
 
 
@@ -5225,7 +5232,8 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_com_t *bldgs_nodesearch_c
 extern mesh_t *
 octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
 		pushdowns_nodesearch_t *pushdowns_nodesearch,
-		bldgs_nodesearch_com_t *bldgs_nodesearch_com)
+		bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+		topo_nodesearch_t      *topo_nodesearch)
 {
     tree_t *tree = (tree_t *)octree;
     int64_t *octCountTable;
@@ -5877,7 +5885,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
             vertex = (vertex_t *)link->record;
 
             int32_t rp = node_setproperty(tree, vertex, &vertex->property,
-                    bldgs_nodesearch);
+                    bldgs_nodesearch, topo_nodesearch);
 
             if ( rp != 0) {
                 double x = vertex->x * tree->ticksize;

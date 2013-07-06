@@ -1035,7 +1035,7 @@ int main(int argc, char **argv)
     if (myID == 0) {
 	fprintf(stdout, "octor_extractmesh ... ");
     }
-    mesh = octor_extractmesh(myOctree, NULL,NULL,NULL);
+    mesh = octor_extractmesh(myOctree, NULL,NULL,NULL,NULL);
     if (mesh == NULL) {
 	fprintf(stderr, "Thread %d: fail to extract mesh\n", myID);
 	MPI_Abort(MPI_COMM_WORLD, ERROR);

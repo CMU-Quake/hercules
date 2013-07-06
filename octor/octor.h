@@ -201,6 +201,9 @@ typedef int pushdowns_nodesearch_t ( tick_t x, tick_t y, tick_t z,
 typedef int pushdowns_search_t ( tick_t x, tick_t y, tick_t z,
                                  double ticksize );
 
+typedef int topo_nodesearch_t ( tick_t x, tick_t y, tick_t z,
+                                    double ticksize );
+
 /***************************/
 /* Octant-level operations */
 /***************************/
@@ -336,7 +339,8 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_com_t *bldgs_nodesearch_c
 extern mesh_t *
 octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
 		pushdowns_nodesearch_t *pushdowns_nodesearch,
-		bldgs_nodesearch_com_t *bldgs_nodesearch_com);
+		bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+		topo_nodesearch_t      *topo_nodesearch);
 
 extern void
 octor_deletemesh(mesh_t *mesh);

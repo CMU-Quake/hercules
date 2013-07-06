@@ -452,182 +452,16 @@ void elem_corners_elev ( double xo, double yo, double esize, double So, double c
 	}
 }
 
-/**
- * Return  1 if the element crosses the surface of the topography.
- * Return  0 if the element is a near topography air element.
- * Return -1 if the element is outside the 2nd topography surface
- * Return  2 if the element is completely inside the topography
- * Note:  X and Y topofile follows the conventional coordinate system this is X=EW, Y=NS     */
-int topo_search ( octant_t *leaf, double ticksize, edata_t *edata ) {
-
-	int      m=0, n=0, i=0, j=0, io=0, jo=0, np=0, npx=0, npy=0;
-    double   x_m, y_m, z_m, xo, yo, remi, remj, npd, remnp;
-    double   esize, oct_topoz[4], sec_surfact;
-
-    sec_surfact = 1.0;           /* Defines the distance from the real surface to the secondary surface  */
-    x_m = leaf->lx * ticksize;
-    y_m = leaf->ly * ticksize;
-    z_m = leaf->lz * ticksize;
-
-    esize  = (double)edata->edgesize;
-    double emin  =  50;       /* emin defines the 2nd surface topography used to identify near air elements   */
-    double romin =  50;       /* maximum radius for checking the neighborhood of a node   */
-
-
-//   get topography values at the corners of the element
-	elem_corners_elev ( x_m, y_m, esize, So, oct_topoz );
-
-/* Checking for air elements */
-    if ( ( oct_topoz[0] >= ( z_m + esize ) ) &&
-    	 ( oct_topoz[1] >= ( z_m + esize ) ) &&
-    	 ( oct_topoz[2] >= ( z_m + esize ) ) &&
-    	 ( oct_topoz[3] >= ( z_m + esize ) ) )   {
-
-		/* Check for surface nodes inside the octant. If so, return 1 if z node < z_m     */
-		remi  = modf ( x_m / So, &xo );
-		remj  = modf ( y_m / So, &yo );
-    	io  = xo;
-    	jo  = yo;
-		if ( remi != 0 )
-			io = io + 1;
-		if ( remj != 0 )
-			jo = jo + 1;
-
-		remnp = modf ( ( x_m + esize ) / So, &npd );
-		npx = npd + 1;
-		if ( remi == 0 )
-			npx = npx - xo;
-		else
-			npx = npx - xo - 1;
-
-		remnp = modf ( ( y_m + esize ) / So, &npd );
-		npy = npd + 1;
-		if ( remj == 0)
-			npy = npy - yo;
-		else
-			npy = npy - yo - 1;
-
-		for ( m = 0; m < npx; ++m ) {
-			i = io + m;
-
-			for ( n = 0; n < npy; ++n ) {
-				j = jo + n;
-
-				if ( ( thebase_zcoord - theTopoInfo [ np_ew * i + j ] > z_m ) && ( thebase_zcoord - theTopoInfo [ np_ew * i + j ] < z_m + esize ) )
-					return 1;  /* Octant with internal topography nodes */
-			}
-		}
-
-
-    //Checking for octants inside the imaginary topographic strip
-		if ( ( oct_topoz[0] -  emin >= ( z_m + esize ) )   &&
-			 ( oct_topoz[1] -  emin >= ( z_m + esize ) )   &&
-			 ( oct_topoz[2] -  emin >= ( z_m + esize ) )   &&
-			 ( oct_topoz[3] -  emin >= ( z_m + esize ) ) )
-			return -1;       /* Element outside topography -- far away topography air element */
-		else {
-
-	//		Checking for flat surface. If all the nodes in the neighboring area of the octant have
-	//		the same z value then the octant will be considered as part of a flat surface
-			remi  = modf ( ( x_m + esize / 2 ) / So, &xo );
-			remj  = modf ( ( y_m + esize / 2 ) / So, &yo );
-	    	io  = xo;
-	    	jo  = yo;
-			if ( remi != 0 )
-				io = io + 1;
-			if ( remj != 0 )
-				jo = jo + 1;
-
-			np = romin / So;
-			io = io - np;
-			jo = jo - np;
-			if ( io < 0 )
-			io = 0;
-			if ( jo < 0 )
-			jo = 0;
-
-
-			if (  ( oct_topoz[0]   == oct_topoz[1] )  &&
-				  ( oct_topoz[1]   == oct_topoz[2] )  &&
-				  ( oct_topoz[2]   == oct_topoz[3] )  ) {
-
-				for ( m = 0; m < 2 * np; ++m ) {
-					i = io + m;
-
-					for ( n = 0; n < 2 * np; ++n ) {
-						j = jo + n;
-
-						if ( ( thebase_zcoord - theTopoInfo [ np_ew * i + j ] != oct_topoz[0] ) )
-							return 0;  /* Element outside topography -- near topography air element */
-					}
-				}
-				return -1;           /* Air element in flat surface*/
-			}
-		}
-
-		return 0;            /* Element outside topography -- near topography air element */
-    }
-
-
-    /* Checking for internal octants, i.e. Elements inside the mountain */
-    if ( ( oct_topoz[0] <= z_m ) &&
-    	 ( oct_topoz[1] <= z_m ) &&
-    	 ( oct_topoz[2] <= z_m ) &&
-    	 ( oct_topoz[3] <= z_m ) ) {
-
-		/* Check for surface nodes inside the octant. If so, return 1 if z node < z_m     */
-		remi  = modf ( x_m / So, &xo );
-		remj  = modf ( y_m / So, &yo );
-    	io  = xo;
-    	jo  = yo;
-		if ( remi != 0 )
-			io = io + 1;
-		if ( remj != 0 )
-			jo = jo + 1;
-
-		remnp = modf ( ( x_m + esize ) / So, &npd );
-		npx = npd + 1;
-		if ( remi == 0)
-			npx = npx - xo;
-		else
-			npx = npx - xo - 1;
-
-		remnp = modf ( ( y_m + esize ) / So, &npd );
-		npy = npd + 1;
-		if ( remj == 0)
-			npy = npy - yo;
-		else
-			npy = npy - yo - 1;
-
-
-		for ( m = 0; m < npx; ++m ) {
-			i = io + m;
-
-			for ( n = 0; n < npy; ++n ) {
-				j = jo + n;
-
-				if ( ( thebase_zcoord - theTopoInfo [ np_ew * i + j ] > z_m ) && ( thebase_zcoord - theTopoInfo [ np_ew * i + j ] < z_m + esize ) )
-					return 1;
-			}
-		}
-    		return 2; /* Element inside topography -- normal element */
-
-    }
-
-    return 1;
-
-}
-
 
 /**
- * Return  1 if the element crosses the surface of the topography.
- * Return  0 if the element is a near topography air element.
- * Return -1 if the element is outside the 2nd topography surface
- * Return  2 if the element is completely inside the topography
- * Note:  X and Y topofile follows the conventional coordinate system this is X=EW, Y=NS     */
+ * Returns to_topoexpand, and to_toposetrec variables
+ *  to_topoexpand: 1(yes), -1(no).
+ *  to_toposetrec: 1 (material properties from cvm), -1 air properties.
+ * */
+
 void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_topoExpand, int *to_topoSetrec ) {
 
-	double   xo, yo, zo, xp, yp, zp, esize, emin, dist, fact=1.0;
+	double   xo, yo, zo, xp, yp, zp, esize, emin, dist, fact_air=2.0, fact_mat=1.0;
 	int      far_air_flag=0, near_air_flag=0, near_mat_flag=0, far_mat_flag=0;
 	int      i, j, k, np=5;
 
@@ -638,6 +472,30 @@ void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_to
 
 	emin = ( (tick_t)1 << (PIXELLEVEL - theMaxoctlevel) ) * ticksize;
 	double Del = esize / (np - 1);
+
+//	double po=90;
+//
+//	if ( (xo ==1125)&&(yo==1000)&&(zo==93.75) )
+//		po=56;
+
+	/* check for air element with bottom face on flat topo surface */
+	double cnt = 0;
+	for ( i = 0; i < np; ++i ) {
+		xp = xo + Del * i;
+		for ( j = 0; j < np; ++j ) {
+			yp = yo + Del * j;
+			dist = point_PlaneDist( xp, yp, zo + esize );
+			if (dist == 0)
+				++cnt;
+		}
+	}
+
+	if (cnt == np * np) { /*elemet's bottom side on flat surface */
+		*to_topoSetrec = -1;
+		*to_topoExpand =  1;
+		return;
+	}
+
 
 	for ( i = 0; i < np; ++i ) {
 		xp = xo + Del * i;
@@ -650,13 +508,13 @@ void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_to
 
 				dist = point_PlaneDist( xp, yp, zp );
 
-				if ( ( dist > 0 ) && ( dist > fact * emin ) && far_air_flag == 0 ) {
+				if ( ( dist > 0 ) && ( dist > fact_air * emin ) && far_air_flag == 0 ) {
 					far_air_flag = 1;
-				} else if ( ( dist > 0 ) && ( dist <= fact * emin ) && near_air_flag == 0 ) {
+				} else if ( ( dist > 0 ) && ( dist <= fact_air * emin ) && near_air_flag == 0 ) {
 					near_air_flag = 1;
-				} else if ( ( dist <= 0 ) && ( abs(dist) <= fact * emin ) && near_mat_flag == 0 ) {
+				} else if ( ( dist <= 0 ) && ( abs(dist) <= fact_mat * emin ) && near_mat_flag == 0 ) {
 					near_mat_flag = 1;
-				} else if ( ( dist < 0 ) && ( abs(dist) > fact * emin ) && far_mat_flag == 0 ) {
+				} else if ( ( dist < 0 ) && ( abs(dist) > fact_mat * emin ) && far_mat_flag == 0 ) {
 					far_mat_flag = 1;
 				}
 			} /* for every k */
@@ -665,25 +523,42 @@ void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_to
 
 	/* check 16 combinations */
 	if ( ( far_air_flag == 1 ) ) {
-		if ( ( near_air_flag == 0 ) && ( near_mat_flag == 0 ) && ( far_mat_flag == 0 ) ) {
-			*to_topoSetrec = -1;
-			*to_topoExpand = -1;
-		} else {
+		if ( ( near_air_flag == 1 ) &&
+			 ( near_mat_flag == 0 ) &&
+			 ( far_mat_flag == 0 ) ) {
 			*to_topoSetrec = -1;
 			*to_topoExpand =  1;
+			return;
+		} else if ( ( near_air_flag == 0 ) &&
+				    ( near_mat_flag == 0 ) &&
+				    ( far_mat_flag == 0 ) ) {
+			*to_topoSetrec = -1;
+			*to_topoExpand = -1;
+			return;
+		} else {
+			*to_topoSetrec =  1;
+			*to_topoExpand =  1;
+			return;
 		}
-		return;
-	} else if ( ( ( far_air_flag == 0 ) && ( near_air_flag == 0 ) && ( near_mat_flag == 1 ) ) ||
-			    ( ( far_air_flag == 0 ) && ( near_air_flag == 1 ) && ( near_mat_flag == 1 ) ) ||
-			    ( ( far_air_flag == 0 ) && ( near_air_flag == 1 ) && ( near_mat_flag == 0 ) && ( far_mat_flag == 1 ) )   ) {
+	}
+
+	 if ( ( ( far_air_flag == 0 ) && ( near_air_flag == 0 ) && ( near_mat_flag == 1 ) ) ||
+		  ( ( far_air_flag == 0 ) && ( near_air_flag == 1 ) && ( near_mat_flag == 1 ) ) ||
+	      ( ( far_air_flag == 0 ) && ( near_air_flag == 1 ) && ( near_mat_flag == 0 ) && ( far_mat_flag == 1 ) ) ) {
 		*to_topoSetrec = 1;
 		*to_topoExpand = 1;
 		return;
-	} else if ( ( far_air_flag == 0 ) && ( near_air_flag == 1 ) && ( near_mat_flag == 0 ) && ( far_mat_flag == 0 ) ) {
+	} else if ( ( far_air_flag  == 0 ) &&
+			    ( near_air_flag == 1 ) &&
+			    ( near_mat_flag == 0 ) &&
+			    ( far_mat_flag  == 0 ) ) {
 		*to_topoSetrec = -1;
 		*to_topoExpand =  1;
 		return;
-	} else 	if ( ( far_air_flag == 0 ) && ( near_air_flag == 0 ) && ( near_mat_flag == 0 ) && ( far_mat_flag == 1 ) ) {
+	} else 	if ( ( far_air_flag  == 0 ) &&
+			     ( near_air_flag == 0 ) &&
+			     ( near_mat_flag == 0 ) &&
+			     ( far_mat_flag  == 1 ) ) { /* buried element */
 		*to_topoSetrec =  1;
 		*to_topoExpand = -1;
 		return;
@@ -817,18 +692,86 @@ double interp_lin ( double xi, double yi, double xf, double yf, double xo  ){
 }
 
 
-/* 5x5 point checking.
-Returns 1 if a cube has topography within, zero (0) if it does not  */
-int check_crossingsII ( double xo, double yo, double zo, double esize ) {
+/* Crossing check from volume. Checks the distance of npxnpxnp points to the targeted surface.
+ 1 if mixed distances are found (surface crossing), 0 if it is not. */
+int topoXing_II ( double xo, double yo, double zo, double esize ) {
 
-	int i,j;
-	double xp, yp, zp,  Del = esize / 4.0;
+	double   xp, yp, zp, dist;
+	int      air_flag=0, mat_flag=0;
+	int      i, j, k, np=5;
 
-	/* 1) 25 point check */
-	for ( i = 0; i < 5; ++i ) {
+	double Del = esize / (np - 1);
+
+
+	for ( i = 0; i < np; ++i ) {
 		xp = xo + Del * i;
 
-		for ( j = 0; j < 5; ++j ) {
+		for ( j = 0; j < np; ++j ) {
+			yp = yo + Del * j;
+
+			for ( k = 0; k < np; ++k ) {
+				zp = zo + Del * k;
+
+				dist = point_PlaneDist( xp, yp, zp );
+
+				if ( ( dist > 0 ) && air_flag == 0 ) {
+					air_flag = 1;
+				} else if ( ( dist <= 0 ) && mat_flag == 0 ) {
+					mat_flag = 1;
+				}
+
+				if ( (air_flag == 1) && (mat_flag==1) ) /* Found crossing  */
+					return 1;
+
+			} /* for every k */
+		} /* for every j */
+	} /* for every i */
+
+	return 0;
+}
+
+
+/**
+  * Depending on the position of a node wrt to the surface it returns:
+  *  1: node on, or outside topography,
+  *  0: node inside topography,
+  */
+ int topo_nodesearch ( tick_t x, tick_t y, tick_t z, double ticksize ) {
+
+	 double xo, yo, zo;
+
+	 xo = x * ticksize;
+	 yo = y * ticksize;
+	 zo = z * ticksize;
+
+	 double dist = point_PlaneDist( xo, yo, zo );
+
+	 if ( ( dist >= 0 ) && ( thebase_zcoord > 0 ) )
+		 return 1;
+
+	 return 0;
+
+ }
+
+
+/* Checks if element crosses the external surface*/
+int topo_crossing ( double xo, double yo, double zo, double esize ) {
+
+	int i,j,k, np=5, air_flag=0, mat_flag=0;
+	double xp, yp, zp, dist;
+
+	double Del = esize / (np-1);
+
+//	double po=90;
+//
+//	if ( (xo ==1375)&&(yo==1000)&&(zo==125) )
+//		po=56;
+
+	/* 1) Elevation check. np^2 points check */
+	for ( i = 0; i < np; ++i ) {
+		xp = xo + Del * i;
+
+		for ( j = 0; j < np; ++j ) {
 			yp = yo + Del * j;
 			zp = point_elevation ( xp, yp );
 
@@ -838,8 +781,34 @@ int check_crossingsII ( double xo, double yo, double zo, double esize ) {
 		}
 	}
 
+	/* 2) Distance check. Checks the perpendicular distance of np^3 points inside
+	 * the element to the external surface */
+	for ( i = 0; i < np; ++i ) {
+		xp = xo + Del * i;
 
-	/* 2) conventional element */
+		for ( j = 0; j < np; ++j ) {
+			yp = yo + Del * j;
+
+			for ( k = 0; k < np; ++k ) {
+				zp = zo + Del * k;
+
+				dist = point_PlaneDist( xp, yp, zp );
+
+				if ( ( dist > 0 ) && air_flag == 0 ) {
+					air_flag = 1;
+				} else if ( ( dist <= 0 ) && mat_flag == 0 ) {
+					mat_flag = 1;
+				}
+
+				if ( (air_flag == 1) && (mat_flag==1) ) /* Found crossing  */
+					return 1;
+
+			} /* for every k */
+		} /* for every j */
+	} /* for every i */
+
+
+	/* 3) conventional element */
 	return 0;
 
 }
@@ -868,16 +837,26 @@ int topo_setrec ( octant_t *leaf, double ticksize,
  */
 int topo_toexpand (  octant_t *leaf,
                      double    ticksize,
-                     edata_t  *edata )
+                     edata_t  *edata, double theFactor )
 {
-    int          res, res_exp, res_setr;
+    int          res_exp, res_setr;
 
-//    res = topo_search( leaf, ticksize, edata );
+    double emin = ( (tick_t)1 << (PIXELLEVEL - theMaxoctlevel) ) * ticksize;
+
+    /* check minimum size provided against Vs rule  */
+    if ( ( res_exp != -1 ) && ( res_setr != 1 ) ) { /* If not buried element  */
+    	if (edata->Vs / theFactor < emin  ) {
+
+            fprintf(stderr,"Thread 2: topo_toexpand: "
+                    "Cannot ensure elements of equal size in topography mesh."
+                    " Increase the minimum octant level value\n");
+            MPI_Abort(MPI_COMM_WORLD, ERROR);
+            exit(1);
+    	}
+    }
+
     topo_searchII( leaf, ticksize, edata, &res_exp,  &res_setr );
 
-
-//	if ( ( ( res == 1) || ( res == 0 ) ) && ( leaf->level < theMaxoctlevel ) )
-//	return 1;
 	if ( ( res_exp == 1 )  && ( leaf->level < theMaxoctlevel ) )
 	return 1;
 
@@ -1193,7 +1172,7 @@ void topography_elements_count(int32_t myID, mesh_t *myMesh ) {
 		Vol   = esize * esize *esize;
 
 		if ( ( Vp != -1 ) ) {
-			if ( ( check_crossingsII ( xo, yo, zo, esize ) == 1 ) ) {
+			if ( topo_crossing ( xo, yo, zo, esize ) == 1 ) {
 				count++;
 			}
 		}
@@ -1246,7 +1225,7 @@ void topography_elements_mapping(int32_t myID, mesh_t *myMesh) {
 
 		if ( ( Vp != -1 ) ) {
 
-			if  ( check_crossingsII ( xo, yo, zo, esize ) == 1 ) {
+			if ( topo_crossing ( xo, yo, zo, esize ) == 1 ) {
 				myTopoElementsMapping[count] = eindex;
 				count++;
 			}
