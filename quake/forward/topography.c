@@ -738,13 +738,16 @@ int topoXing_II ( double xo, double yo, double zo, double esize ) {
   */
  int topo_nodesearch ( tick_t x, tick_t y, tick_t z, double ticksize ) {
 
-	 double xo, yo, zo;
+	 double xo, yo, zo, dist;
+
+	 if ( thebase_zcoord == 0 )
+		 return 0;
 
 	 xo = x * ticksize;
 	 yo = y * ticksize;
 	 zo = z * ticksize;
 
-	 double dist = point_PlaneDist( xo, yo, zo );
+	 dist = point_PlaneDist( xo, yo, zo );
 
 	 if ( ( dist >= 0 ) && ( thebase_zcoord > 0 ) )
 		 return 1;

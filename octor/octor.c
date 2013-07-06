@@ -585,7 +585,8 @@ static void    tree_setdistribution(tree_t *tree, int64_t **pCountTable,
 
 static int32_t tree_setcom(tree_t *tree, int32_t msgsize,
                            bldgs_nodesearch_com_t *bldgs_nodesearch_com,
-                           pushdowns_nodesearch_t *pushdowns_nodesearch);
+                           pushdowns_nodesearch_t *pushdowns_nodesearch,
+                           topo_nodesearch_t   *topo_nodesearch);
 
 static void    tree_deletecom(tree_t *tree);
 
@@ -845,7 +846,8 @@ static int32_t   com_allocpctl(com_t *com, int32_t msgsize, oct_t *first,
                                tick_t nearendp[3], tick_t farendp[3],
                                tick_t surfacep, double ticksize,
                                bldgs_nodesearch_com_t *bldgs_nodesearch_com,
-                               pushdowns_nodesearch_t *pushdowns_nodesearch);
+                               pushdowns_nodesearch_t *pushdowns_nodesearch,
+                               topo_nodesearch_t   *topo_nodesearch);
 
 static int32_t   com_resetpctl(com_t *com, int32_t msgsize);
 
@@ -2232,7 +2234,7 @@ tree_showstat(tree_t *tree, int32_t mode, const char *comment)
  */
 static int32_t
 tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_com_t *bldgs_nodesearch_com,
-		pushdowns_nodesearch_t *pushdowns_nodesearch)
+		pushdowns_nodesearch_t *pushdowns_nodesearch, topo_nodesearch_t   *topo_nodesearch)
 {
     /* Allocate a communication manager */
     tree->com = com_new(tree->procid, tree->groupsize);
@@ -2252,7 +2254,8 @@ tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_com_t *bldgs_nodesea
     if (com_allocpctl(tree->com, msgsize, tree->firstleaf,
                        tree->nearendp, tree->farendp, tree->surfacep,
                        tree->ticksize, bldgs_nodesearch_com,
-                       pushdowns_nodesearch) != 0)
+                       pushdowns_nodesearch,
+                       topo_nodesearch) != 0)
         return -1;
 
     return 0;
@@ -2648,7 +2651,8 @@ static int32_t
 com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
               tick_t nearendp[3], tick_t farendp[3], tick_t surfacep,
               double ticksize, bldgs_nodesearch_com_t *bldgs_nodesearch_com,
-              pushdowns_nodesearch_t *pushdowns_nodesearch)
+              pushdowns_nodesearch_t *pushdowns_nodesearch,
+              topo_nodesearch_t   *topo_nodesearch )
 {
     oct_t *oct;
     tick_t ox, oy, oz, increment;
@@ -2724,6 +2728,16 @@ com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
                     			continue;
                     		}
 
+                    	}
+                    }
+
+                    /* if topography is considered ... */
+                    if (topo_nodesearch != NULL) {
+                    	int rest = topo_nodesearch( pt.x, pt.y, pt.z, ticksize);
+
+                    	if ( rest == 1 ) {
+                    		/* ...then, discard 'air' nodes! */
+                    		continue;
                     	}
                     }
 
@@ -3021,6 +3035,7 @@ com_OrchestrateExchange(com_t *com, int32_t msgtag, MPI_Comm comm_for_this_tree)
 
     /* Block till all the non-blocking sends return. Application buffers
        can be safely released or reused */
+
     MPI_Waitall(isendcount, isendreqs, isendstats);
     free(isendreqs);
     free(isendstats);
@@ -4213,9 +4228,10 @@ octor_newtree(double x, double y, double z, int32_t recsize,
          * Also notice at this point we have not pushed the surface and
          * pass NULL for the buildings plug-in.
          */
+
         if (com_allocpctl(tree->com, 0, tree->firstleaf,
         		tree->nearendp, tree->farendp, 0,
-        		tree->ticksize, NULL, NULL) != 0)
+        		tree->ticksize, NULL, NULL, NULL) != 0)
         	return NULL;
 
     } else {
@@ -5278,12 +5294,11 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
      */
 
     /* The neighboring relationship should be updated */
-
     if (tree->groupsize > 1) {
 
     	tree_deletecom(tree);
 
-    	if (tree_setcom(tree, 0, bldgs_nodesearch_com,pushdowns_nodesearch) != 0) {
+    	if (tree_setcom(tree, 0, bldgs_nodesearch_com,pushdowns_nodesearch, topo_nodesearch) != 0) {
     		fprintf(stderr,
     				"Thread %d: %s %d: fail to create new communication manager\n",
     				tree->procid, __FILE__, __LINE__);
@@ -5640,6 +5655,16 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                 					}
                 				}
                 			}
+
+                            /* if topography is considered ... */
+                            if (topo_nodesearch != NULL) {
+                            	int rest = topo_nodesearch( pt.x, pt.y, pt.z, tree->ticksize);
+
+                            	if ( rest == 1 ) {
+                            		/* ...then, discard 'air' nodes! */
+                            		continue;
+                            	}
+                            }
 
                 			/* Find who possess the pixel */
                 			procid = math_zsearch(tree->com->interval,

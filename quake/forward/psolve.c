@@ -5185,6 +5185,8 @@ schedule_senddata(schedule_t *sched, void *valuetable, int32_t itemsperentry,
 	MPI_Waitall(irecvcount, irecvreqs, irecvstats);
     }
 
+    fprintf(stdout,"Doriam Restrepo");
+
     while (recv_messenger != NULL) {
 	int32_t lnid, idx, entry;
 	solver_float *dvalue;
