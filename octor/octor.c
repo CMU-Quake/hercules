@@ -583,10 +583,11 @@ static void    tree_setdistribution(tree_t *tree, int64_t **pCountTable,
 
 // static void  tree_showstat(tree_t *tree, int32_t mode, const char *comment);
 
-static int32_t tree_setcom(tree_t *tree, int32_t msgsize,
+static int32_t tree_setcom(octree_t *octree, tree_t *tree, int32_t msgsize,
                            bldgs_nodesearch_com_t *bldgs_nodesearch_com,
                            pushdowns_nodesearch_t *pushdowns_nodesearch,
-                           topo_nodesearch_t   *topo_nodesearch);
+                           topo_crossings_t       *topo_crossings,
+                           topo_nodesearch_t  *topo_nodesearch);
 
 static void    tree_deletecom(tree_t *tree);
 
@@ -842,12 +843,13 @@ static pctl_t *  pctl_reset(pctl_t *pctl, int32_t msgsize);
 static com_t *   com_new(int32_t procid, int32_t groupsize);
 static void      com_delete(com_t *com);
 
-static int32_t   com_allocpctl(com_t *com, int32_t msgsize, oct_t *first,
+static int32_t   com_allocpctl(octree_t *octree, com_t *com, int32_t msgsize, oct_t *first,
                                tick_t nearendp[3], tick_t farendp[3],
                                tick_t surfacep, double ticksize,
                                bldgs_nodesearch_com_t *bldgs_nodesearch_com,
                                pushdowns_nodesearch_t *pushdowns_nodesearch,
-                               topo_nodesearch_t   *topo_nodesearch);
+                               topo_crossings_t       *topo_crossings,
+                               topo_nodesearch_t      *topo_nodesearch);
 
 static int32_t   com_resetpctl(com_t *com, int32_t msgsize);
 
@@ -2233,8 +2235,8 @@ tree_showstat(tree_t *tree, int32_t mode, const char *comment)
  *
  */
 static int32_t
-tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_com_t *bldgs_nodesearch_com,
-		pushdowns_nodesearch_t *pushdowns_nodesearch, topo_nodesearch_t   *topo_nodesearch)
+tree_setcom(octree_t *octree, tree_t *tree, int32_t msgsize, bldgs_nodesearch_com_t *bldgs_nodesearch_com,
+		pushdowns_nodesearch_t *pushdowns_nodesearch, topo_crossings_t  *topo_crossings, topo_nodesearch_t  *topo_nodesearch)
 {
     /* Allocate a communication manager */
     tree->com = com_new(tree->procid, tree->groupsize);
@@ -2251,10 +2253,11 @@ tree_setcom(tree_t *tree, int32_t msgsize, bldgs_nodesearch_com_t *bldgs_nodesea
        assume that the distributed octree conforms to the 2-to-1
        constraint (balanced in mesh generation term).
     */
-    if (com_allocpctl(tree->com, msgsize, tree->firstleaf,
+    if (com_allocpctl(octree, tree->com, msgsize, tree->firstleaf,
                        tree->nearendp, tree->farendp, tree->surfacep,
                        tree->ticksize, bldgs_nodesearch_com,
                        pushdowns_nodesearch,
+                       topo_crossings,
                        topo_nodesearch) != 0)
         return -1;
 
@@ -2648,16 +2651,18 @@ com_delete(com_t *com)
  *  - Return 0 if OK , -1 on error.
  */
 static int32_t
-com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
+com_allocpctl(octree_t *octree, com_t *com, int32_t msgsize, oct_t *firstleaf,
               tick_t nearendp[3], tick_t farendp[3], tick_t surfacep,
               double ticksize, bldgs_nodesearch_com_t *bldgs_nodesearch_com,
               pushdowns_nodesearch_t *pushdowns_nodesearch,
-              topo_nodesearch_t   *topo_nodesearch )
+              topo_crossings_t       *topo_crossings,
+              topo_nodesearch_t      *topo_nodesearch )
 {
     oct_t *oct;
     tick_t ox, oy, oz, increment;
     point_t pt;
     int32_t procid;
+    int topo_Oct;
 
     /* Search neighbor for each LOCAL leaf oct */
 
@@ -2674,6 +2679,11 @@ com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
         ox = oct->lx - increment + 1 ;
         oy = oct->ly - increment + 1 ;
         oz = oct->lz - increment + 1 ;
+
+        /* added for topographic elements */
+        if ( topo_crossings != NULL)
+        	topo_Oct = topo_crossings( ticksize * oct->lx, ticksize * oct->ly, ticksize * oct->lz,
+        			                   ticksize * ( (tick_t)1 << (PIXELLEVEL - oct->level) ) );
 
         for (k = 0; k < 4; k++) {
 
@@ -2731,26 +2741,17 @@ com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
                     	}
                     }
 
+                    /* Dorian says. This checks if pt is truly in the air when considering topography */
+                    if ( ( octree != NULL ) && ( topo_crossings != NULL) && ( ( topo_Oct == 1 ) || ( topo_Oct == 2 ) ) ) {
+                        octant_t *topo_oct;
+                    	topo_oct = octor_searchoctant( octree, pt.x, pt.y, pt.z, PIXELLEVEL, EXACT_SEARCH );
+                    	if ( topo_oct == NULL ) {  /* I know for sure that pt is in the air */
+                    		continue;
+                    	}
+                    }
+
                     /* Search the interval table */
                     procid = math_zsearch(com->interval, com->groupsize, &pt);
-
-
-//                    if ( ( oct->lx*ticksize == 812.5 ) && (oct->ly*ticksize == 1000) && (oct->lz*ticksize == 109.375 ) ) {
-//                        fprintf(stdout,
-//                                "Procid %d: "
-//                                "in vertex with coords "
-//                                "x,y,z = %f %f %f\n",
-//                                procid,
-//                                pt.x*ticksize,
-//                                pt.y*ticksize,
-//                                pt.z*ticksize);
-//                    }
-
-                    /* if procid is not found and pixel is in the air, then .... continue  */
-                    if ( ( ( procid < 0 ) || ( procid > com->groupsize ) ) &&
-                    		topo_nodesearch( pt.x, pt.y, pt.z, ticksize) == 1 ) {
-                    	continue;
-                    }
 
                     /* Sanity check introduced after the buildings
                      * options were incorporated. Should never occur */
@@ -3320,7 +3321,9 @@ math_hashuint32(const void *start, int32_t length)
 
         /* c is reserved for the length */
     case 2 : b+=k[1];
+    		break;
     case 1 : a+=k[0];
+    		break;
         /* case 0: nothing left to add */
     }
 
@@ -4241,9 +4244,9 @@ octor_newtree(double x, double y, double z, int32_t recsize,
          * pass NULL for the buildings plug-in.
          */
 
-        if (com_allocpctl(tree->com, 0, tree->firstleaf,
+        if (com_allocpctl(NULL,tree->com, 0, tree->firstleaf,
         		tree->nearendp, tree->farendp, 0,
-        		tree->ticksize, NULL, NULL, NULL) != 0)
+        		tree->ticksize, NULL, NULL, NULL, NULL) != 0)
         	return NULL;
 
     } else {
@@ -5307,12 +5310,11 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
      */
 
     /* The neighboring relationship should be updated */
-
     if (tree->groupsize > 1) {
 
     	tree_deletecom(tree);
 
-    	if (tree_setcom(tree, 0, bldgs_nodesearch_com,pushdowns_nodesearch, topo_nodesearch) != 0) {
+    	if (tree_setcom(octree, tree, 0, bldgs_nodesearch_com,pushdowns_nodesearch, topo_crossings, topo_nodesearch ) != 0) {
     		fprintf(stderr,
     				"Thread %d: %s %d: fail to create new communication manager\n",
     				tree->procid, __FILE__, __LINE__);
@@ -5534,7 +5536,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         if ( ( topo_Oct == 1 ) ) {
 
                         	octant_t *oct;
-                        	oct = octor_searchoctant( octree, pt.x + 1, pt.y + 1, pt.z + 1, PIXELLEVEL, AGGREGATE_SEARCH );
+                        	oct = octor_searchoctant( octree, pt.x + 1, pt.y + 1, pt.z + 1, PIXELLEVEL, EXACT_SEARCH );
                         	int topo_flag = 0;
 
                         	if (oct == NULL) {
@@ -5567,14 +5569,14 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         				tree->com->groupsize, &adjustedpt);
 
 
-                        if ( ( pt.x*tree->ticksize == 812.5 ) && (pt.y*tree->ticksize == 1000) && (pt.z*tree->ticksize == 109.375 ) ) {
-                        //if ( ( pt.x*tree->ticksize == 156.25 ) && (pt.y*tree->ticksize == 1000) && (pt.z*tree->ticksize == 78.125 ) ) {
-                        	fprintf(stdout,
-                        			"Procc %d is the vertex owner. Ad_x=%f, Ad_y=%f, Ad_z=%f \n\n",vertex->owner,
-                                    adjustedpt.x*tree->ticksize,
-                                    adjustedpt.y*tree->ticksize,
-                                    adjustedpt.z*tree->ticksize);
-                        }
+//                        if ( ( pt.x*tree->ticksize == 812.5 ) && (pt.y*tree->ticksize == 1000) && (pt.z*tree->ticksize == 109.375 ) ) {
+//                        //if ( ( pt.x*tree->ticksize == 156.25 ) && (pt.y*tree->ticksize == 1000) && (pt.z*tree->ticksize == 78.125 ) ) {
+//                        	fprintf(stdout,
+//                        			"Procc %d is the vertex owner. Ad_x=%f, Ad_y=%f, Ad_z=%f \n\n",vertex->owner,
+//                                    adjustedpt.x*tree->ticksize,
+//                                    adjustedpt.y*tree->ticksize,
+//                                    adjustedpt.z*tree->ticksize);
+//                        }
 
                         vertex->lnid = -1; /* undefined */
                         vertex->touches = 1;

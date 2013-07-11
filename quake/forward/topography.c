@@ -757,16 +757,21 @@ int topoXing_II ( double xo, double yo, double zo, double esize ) {
  }
 
 
-/* Checks if an element crosses the external surface: 1 - 0*/
+/* Checks if an element crosses the external surface:
+ * -1: if no topography is considered.
+ *  0: if buried.
+ *  1: if crosses the surface.
+ *  2: if buried with top face on flat topography
+ * */
 int topo_crossings ( double xo, double yo, double zo, double esize ) {
 
-	int i,j,k, np=5, air_flag=0, mat_flag=0;
+	int i,j,k, np=5, air_flag=0, mat_flag=0, cnt=0;
 	double xp, yp, zp, dist;
 
 	double Del = esize / (np-1);
 
    if ( thebase_zcoord == 0 ) /* If no topography   */
-		   return 0;
+		   return -1;
 
 	/* 1) Elevation check. np^2 points check */
 	for ( i = 0; i < np; ++i ) {
@@ -777,10 +782,16 @@ int topo_crossings ( double xo, double yo, double zo, double esize ) {
 			zp = point_elevation ( xp, yp );
 
 			if ( ( zp > zo ) && ( zp < (zo + esize) ) ) {
-				return 1;
+				return 1; /* found it */
+			} else if ( zp == zo ) {
+				++cnt;
 			}
 		}
 	}
+
+	/* buried element with top face on flat topography   */
+	if ( cnt == np * np )
+		return 2;
 
 	/* 2) Distance check. Checks the perpendicular distance of np^3 points inside
 	 * the element to the external surface */
