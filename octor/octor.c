@@ -2731,22 +2731,30 @@ com_allocpctl(com_t *com, int32_t msgsize, oct_t *firstleaf,
                     	}
                     }
 
-                    /* if topography is considered ... */
-                    if (topo_nodesearch != NULL) {
-                    	int rest = topo_nodesearch( pt.x, pt.y, pt.z, ticksize);
-
-                    	if ( rest == 1 ) {
-                    		/* ...then, discard 'air' nodes! */
-                    		continue;
-                    	}
-                    }
-
                     /* Search the interval table */
                     procid = math_zsearch(com->interval, com->groupsize, &pt);
 
+
+//                    if ( ( oct->lx*ticksize == 812.5 ) && (oct->ly*ticksize == 1000) && (oct->lz*ticksize == 109.375 ) ) {
+//                        fprintf(stdout,
+//                                "Procid %d: "
+//                                "in vertex with coords "
+//                                "x,y,z = %f %f %f\n",
+//                                procid,
+//                                pt.x*ticksize,
+//                                pt.y*ticksize,
+//                                pt.z*ticksize);
+//                    }
+
+                    /* if procid is not found and pixel is in the air, then .... continue  */
+                    if ( ( ( procid < 0 ) || ( procid > com->groupsize ) ) &&
+                    		topo_nodesearch( pt.x, pt.y, pt.z, ticksize) == 1 ) {
+                    	continue;
+                    }
+
                     /* Sanity check introduced after the buildings
                      * options were incorporated. Should never occur */
-                    if ( ( procid < 0 ) || ( procid > com->groupsize ) ) {
+                    if ( ( ( procid < 0 ) || ( procid > com->groupsize ) )  ) {
                         fprintf(stderr,
                                 "Thread %d: wrong procid from math search at "
                                 "com_allocpctl in vertex with coords "
@@ -3842,10 +3850,14 @@ node_harboranchored(tree_t *tree, link_t **vertexHashTable,
         }
     }
 
+//    fprintf(stdout,"I am inside node_harboranchored\n");
+
     if (link == NULL) {
         point_t adjustedpt;
         point_t *anchored;
         pctl_t *topctl;
+
+//        fprintf(stdout,"I am inside the loop. Doriam Rpo");
 
         /* Harbor this derived anchored vertex. */
 
@@ -5249,7 +5261,8 @@ extern mesh_t *
 octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
 		pushdowns_nodesearch_t *pushdowns_nodesearch,
 		bldgs_nodesearch_com_t *bldgs_nodesearch_com,
-		topo_nodesearch_t      *topo_nodesearch)
+		topo_nodesearch_t      *topo_nodesearch,
+		topo_crossings_t       *topo_crossings)
 {
     tree_t *tree = (tree_t *)octree;
     int64_t *octCountTable;
@@ -5294,6 +5307,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
      */
 
     /* The neighboring relationship should be updated */
+
     if (tree->groupsize > 1) {
 
     	tree_deletecom(tree);
@@ -5380,6 +5394,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
         tick_t edgesize;
         point_t pt;
         int32_t i, j, k;
+        tick_t  xadjust, yadjust, incrementx, incrementy;
 
         if (oct == NULL) {
             fprintf(stderr,
@@ -5400,6 +5415,8 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
            produced already. */
 
         edgesize = (tick_t)1 << (PIXELLEVEL - oct->level);
+        /* check if element crosses the surface topography */
+        int topo_Oct = topo_crossings( tree->ticksize * oct->lx, tree->ticksize * oct->ly, tree->ticksize * oct->lz, tree->ticksize * edgesize );
 
         for (k = 0; k < 2; k++) {
             pt.z = oct->lz + k * edgesize;
@@ -5459,6 +5476,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
 						   above the surface.  */
 
                         /* If we have pushed the surface down for buildings... */
+
                         if ( tree->surfacep > 0 ) {
 
                         	/* ...and the point is above the surface... */
@@ -5476,7 +5494,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         			/* ...then, adjust! */
 
                         			int    flag = 0;
-                        			tick_t xadjust, yadjust, incrementx, incrementy;
+//                        			tick_t xadjust, yadjust, incrementx, incrementy;
 
                         			/* search for a neighbor point that is inside of a bldg */
                         			for ( xadjust = 0; xadjust < 2; xadjust++ ) {
@@ -5512,10 +5530,51 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         }
                         /* End of block. See comments above. */
 
+                        /* if I have a topographic octant */
+                        if ( ( topo_Oct == 1 ) ) {
+
+                        	octant_t *oct;
+                        	oct = octor_searchoctant( octree, pt.x + 1, pt.y + 1, pt.z + 1, PIXELLEVEL, AGGREGATE_SEARCH );
+                        	int topo_flag = 0;
+
+                        	if (oct == NULL) {
+
+                        		for ( xadjust = 0; xadjust < 2; xadjust++ ) {
+                        			for ( yadjust = 0; yadjust < 2; yadjust++ ) {
+
+                        				incrementx = - 1 + 2*xadjust;
+                        				incrementy = - 1 + 2*yadjust;
+                        				oct = octor_searchoctant( octree, pt.x + incrementx, pt.y + incrementy, pt.z + 1, PIXELLEVEL, AGGREGATE_SEARCH );
+
+                        				if ( oct != NULL ) {
+                        					topo_flag = 1;
+                        					adjustedpt.x += incrementx;
+                        					adjustedpt.y += incrementy;
+                        					adjustedpt.z += 1;
+                        					break;
+                        				}
+
+                        				if ( topo_flag == 1 )
+                        					break;
+                        			}
+                        		}
+
+                        	}
+                        }
 
                         vertex->owner = (tree->groupsize == 1) ? 0 :
                         		math_zsearch(tree->com->interval,
                         				tree->com->groupsize, &adjustedpt);
+
+
+                        if ( ( pt.x*tree->ticksize == 812.5 ) && (pt.y*tree->ticksize == 1000) && (pt.z*tree->ticksize == 109.375 ) ) {
+                        //if ( ( pt.x*tree->ticksize == 156.25 ) && (pt.y*tree->ticksize == 1000) && (pt.z*tree->ticksize == 78.125 ) ) {
+                        	fprintf(stdout,
+                        			"Procc %d is the vertex owner. Ad_x=%f, Ad_y=%f, Ad_z=%f \n\n",vertex->owner,
+                                    adjustedpt.x*tree->ticksize,
+                                    adjustedpt.y*tree->ticksize,
+                                    adjustedpt.z*tree->ticksize);
+                        }
 
                         vertex->lnid = -1; /* undefined */
                         vertex->touches = 1;
@@ -5559,6 +5618,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
     }
 
     /*---Direct sharing: update the touches of vertices if necessary--------*/
+
     if (tree->groupsize > 1) {
         pctl_t *frompctl, *topctl;
 
@@ -5656,19 +5716,25 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                 				}
                 			}
 
-                            /* if topography is considered ... */
-                            if (topo_nodesearch != NULL) {
-                            	int rest = topo_nodesearch( pt.x, pt.y, pt.z, tree->ticksize);
-
-                            	if ( rest == 1 ) {
-                            		/* ...then, discard 'air' nodes! */
-                            		continue;
-                            	}
-                            }
+//                            /* if topography is considered ... */
+//                            if (topo_nodesearch != NULL) {
+//                            	int rest = topo_nodesearch( pt.x, pt.y, pt.z, tree->ticksize);
+//
+//                            	if ( rest == 1 ) {
+//                            		/* ...then, discard 'air' nodes! */
+//                            		continue;
+//                            	}
+//                            }
 
                 			/* Find who possess the pixel */
                 			procid = math_zsearch(tree->com->interval,
                 					tree->groupsize, &pt);
+
+                            /* continue if procid is not found and air point exists  */
+                            if ( ( ( procid < 0 ) || ( procid > tree->groupsize ) ) &&
+                            		topo_nodesearch( pt.x, pt.y, pt.z, tree->ticksize) == 1 ) {
+                            	continue;
+                            }
 
                 			/* Sanity check introduced after the buildings
                 			 * options were incorporated. Should never occur */
@@ -6479,6 +6545,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     fprintf(stderr, "Thread %d: %s %d: ",
                             tree->procid, __FILE__, __LINE__);
                     fprintf(stderr,"receive gnid that I already have.\n");
+                    fprintf(stderr,"lnid=%d, with vertices x=%f, y=%f, z=%f.\n\n", lnid,
+                    		vertex->x*tree->ticksize,
+                    		vertex->y*tree->ticksize,
+                    		vertex->z*tree->ticksize);
                     MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
                     exit(1);
                 }

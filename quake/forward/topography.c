@@ -42,7 +42,7 @@
 /* Permanent */
 static toposolver_t       *myTopoSolver;
 static int                theMaxoctlevel, ntp, np_ew, np_ns;
-static double             thebase_zcoord = 0, So, theDomainLong_ew, theDomainLong_ns;
+static double             thebase_zcoord = 0.0, So, theDomainLong_ew, theDomainLong_ns;
 static double             *theTopoInfo;
 static etreetype_t        theEtreeType;
 static int32_t            myTopoElementsCount = 0;
@@ -490,7 +490,7 @@ void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_to
 		}
 	}
 
-	if (cnt == np * np) { /*elemet's bottom side on flat surface */
+	if (cnt == np * np) { /*air element with bottom side on flat surface */
 		*to_topoSetrec = -1;
 		*to_topoExpand =  1;
 		return;
@@ -757,18 +757,16 @@ int topoXing_II ( double xo, double yo, double zo, double esize ) {
  }
 
 
-/* Checks if element crosses the external surface*/
-int topo_crossing ( double xo, double yo, double zo, double esize ) {
+/* Checks if an element crosses the external surface: 1 - 0*/
+int topo_crossings ( double xo, double yo, double zo, double esize ) {
 
 	int i,j,k, np=5, air_flag=0, mat_flag=0;
 	double xp, yp, zp, dist;
 
 	double Del = esize / (np-1);
 
-//	double po=90;
-//
-//	if ( (xo ==1375)&&(yo==1000)&&(zo==125) )
-//		po=56;
+   if ( thebase_zcoord == 0 ) /* If no topography   */
+		   return 0;
 
 	/* 1) Elevation check. np^2 points check */
 	for ( i = 0; i < np; ++i ) {
@@ -846,6 +844,8 @@ int topo_toexpand (  octant_t *leaf,
 
     double emin = ( (tick_t)1 << (PIXELLEVEL - theMaxoctlevel) ) * ticksize;
 
+    topo_searchII( leaf, ticksize, edata, &res_exp,  &res_setr );
+
     /* check minimum size provided against Vs rule  */
     if ( ( res_exp != -1 ) && ( res_setr != 1 ) ) { /* If not buried element  */
     	if (edata->Vs / theFactor < emin  ) {
@@ -857,8 +857,6 @@ int topo_toexpand (  octant_t *leaf,
             exit(1);
     	}
     }
-
-    topo_searchII( leaf, ticksize, edata, &res_exp,  &res_setr );
 
 	if ( ( res_exp == 1 )  && ( leaf->level < theMaxoctlevel ) )
 	return 1;
@@ -1175,7 +1173,7 @@ void topography_elements_count(int32_t myID, mesh_t *myMesh ) {
 		Vol   = esize * esize *esize;
 
 		if ( ( Vp != -1 ) ) {
-			if ( topo_crossing ( xo, yo, zo, esize ) == 1 ) {
+			if ( topo_crossings ( xo, yo, zo, esize ) == 1 ) {
 				count++;
 			}
 		}
@@ -1228,7 +1226,7 @@ void topography_elements_mapping(int32_t myID, mesh_t *myMesh) {
 
 		if ( ( Vp != -1 ) ) {
 
-			if ( topo_crossing ( xo, yo, zo, esize ) == 1 ) {
+			if ( topo_crossings ( xo, yo, zo, esize ) == 1 ) {
 				myTopoElementsMapping[count] = eindex;
 				count++;
 			}

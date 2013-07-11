@@ -82,7 +82,7 @@ int    compute_tetra_displ      (double *dis_x, double *dis_y, double *dis_z,
 int    topo_setrec              ( octant_t *leaf, double    ticksize, edata_t  *edata, etree_t  *cvm );
 double point_elevation          ( double xo, double yo );
 int    topo_nodesearch          ( tick_t x, tick_t y, tick_t z, double ticksize );
-
+int    topo_crossings           ( double xo, double yo, double zo, double esize );
 
 /* ERASE LATER THESE FUNCTIONS, ARE JUST FOR A QUICK CHECKING*/
 void topo_DRM_init ( mesh_t *myMesh, mysolver_t *mySolver);

@@ -2175,7 +2175,8 @@ mesh_generate()
         fprintf(stdout, "Extracting the mesh %30s","");
         fflush(stdout);
     }
-    Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch,pushdowns_nodesearch,bldgs_nodesearch_com, topo_nodesearch );
+    Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch,pushdowns_nodesearch,bldgs_nodesearch_com,
+    		                          topo_nodesearch, topo_crossings );
     if (Global.myMesh == NULL) {
         fprintf(stderr, "Thread %d: mesh_generate: fail to extract mesh\n",
                 Global.myID);
@@ -5184,8 +5185,6 @@ schedule_senddata(schedule_t *sched, void *valuetable, int32_t itemsperentry,
     if (irecvcount != 0) {
 	MPI_Waitall(irecvcount, irecvreqs, irecvstats);
     }
-
-    fprintf(stdout,"Doriam Restrepo");
 
     while (recv_messenger != NULL) {
 	int32_t lnid, idx, entry;
