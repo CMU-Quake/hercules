@@ -2176,7 +2176,7 @@ mesh_generate()
         fflush(stdout);
     }
     Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch,pushdowns_nodesearch,bldgs_nodesearch_com,
-    		                          topo_nodesearch, topo_crossings );
+    		                          topo_nodesearch, topo_crossings, topo_maxLevel );
     if (Global.myMesh == NULL) {
         fprintf(stderr, "Thread %d: mesh_generate: fail to extract mesh\n",
                 Global.myID);

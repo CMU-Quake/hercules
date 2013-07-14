@@ -170,6 +170,10 @@ double get_thebase_topo() {
     return thebase_zcoord;
 }
 
+int topo_maxLevel() {
+    return theMaxoctlevel;
+}
+
 //returns YES if the element is air element ( Vp = -1 ), or if it composes the topography surface.
 int BelongstoTopography (mesh_t *myMesh, int32_t eindex) {
 
@@ -473,11 +477,6 @@ void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_to
 	emin = ( (tick_t)1 << (PIXELLEVEL - theMaxoctlevel) ) * ticksize;
 	double Del = esize / (np - 1);
 
-//	double po=90;
-//
-//	if ( (xo ==1125)&&(yo==1000)&&(zo==93.75) )
-//		po=56;
-
 	/* check for air element with bottom face on flat topo surface */
 	double cnt = 0;
 	for ( i = 0; i < np; ++i ) {
@@ -735,13 +734,14 @@ int topoXing_II ( double xo, double yo, double zo, double esize ) {
   * Depending on the position of a node wrt to the surface it returns:
   *  1: node on, or outside topography,
   *  0: node inside topography,
+  * -1: topography not considered
   */
  int topo_nodesearch ( tick_t x, tick_t y, tick_t z, double ticksize ) {
 
 	 double xo, yo, zo, dist;
 
 	 if ( thebase_zcoord == 0 )
-		 return 0;
+		 return -1;
 
 	 xo = x * ticksize;
 	 yo = y * ticksize;
@@ -757,16 +757,25 @@ int topoXing_II ( double xo, double yo, double zo, double esize ) {
  }
 
 
-/* Checks if an element crosses the external surface:
- * -1: if no topography is considered.
- *  0: if buried.
- *  1: if crosses the surface.
- *  2: if buried with top face on flat topography
+/* Checks the type of element wrt the topography surface:
+ * -1: if topography is NOT considered.
+ *  0: if fully air element.
+ *  1: if it crosses the topographic surface.
+ *  2: if it's buried with top face on flat topography
+ *  3: if it's a fully buried element
  * */
 int topo_crossings ( double xo, double yo, double zo, double esize ) {
 
 	int i,j,k, np=5, air_flag=0, mat_flag=0, cnt=0;
 	double xp, yp, zp, dist;
+
+
+	if ( esize == 0 ) {
+        fprintf(stderr, "Error computing topography crossings, esize must be greater that zero: %f\n"
+                ,esize );
+		MPI_Abort(MPI_COMM_WORLD, ERROR);
+		exit(1);
+	}
 
 	double Del = esize / (np-1);
 
@@ -782,7 +791,7 @@ int topo_crossings ( double xo, double yo, double zo, double esize ) {
 			zp = point_elevation ( xp, yp );
 
 			if ( ( zp > zo ) && ( zp < (zo + esize) ) ) {
-				return 1; /* found it */
+				return 1; /* crossing found it */
 			} else if ( zp == zo ) {
 				++cnt;
 			}
@@ -820,7 +829,11 @@ int topo_crossings ( double xo, double yo, double zo, double esize ) {
 	} /* for every i */
 
 
-	/* 3) conventional element */
+	if ( (air_flag == 0) && (mat_flag==1) ) /* Fully buried element  */
+		return 3;
+
+
+	/* Has to be an air element */
 	return 0;
 
 }
