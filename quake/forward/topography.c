@@ -41,7 +41,8 @@
 
 /* Permanent */
 static toposolver_t       *myTopoSolver;
-static int                theMaxoctlevel, ntp, np_ew, np_ns;
+static int                ntp, np_ew, np_ns;
+static int8_t             theMaxoctlevel;
 static double             thebase_zcoord = 0.0, So, theDomainLong_ew, theDomainLong_ns;
 static double             *theTopoInfo;
 static etreetype_t        theEtreeType;
@@ -170,7 +171,7 @@ double get_thebase_topo() {
     return thebase_zcoord;
 }
 
-int topo_maxLevel() {
+int8_t topo_maxLevel() {
     return theMaxoctlevel;
 }
 
@@ -894,7 +895,8 @@ topography_initparameters ( const char *parametersin )
 {
     FILE                *fp;
     FILE                *fp_topo;
-    int                 iTopo, Maxoctlevel;
+    int                 iTopo;
+    int8_t              Maxoctlevel;
     char                topo_dir[256];
     char                topo_file[256];
     double              L_ew, L_ns, int_np_ew, int_np_ns, fract_np_ew, fract_np_ns;
