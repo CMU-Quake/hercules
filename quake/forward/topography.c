@@ -767,7 +767,7 @@ int topoXing_II ( double xo, double yo, double zo, double esize ) {
  * */
 int topo_crossings ( double xo, double yo, double zo, double esize ) {
 
-	int i,j,k, np=5, air_flag=0, mat_flag=0, cnt=0;
+	int i,j,k, np=5, air_flag=0, mat_flag=0, cnt_top=0, cnt_bott=0;
 	double xp, yp, zp, dist;
 
 
@@ -794,31 +794,37 @@ int topo_crossings ( double xo, double yo, double zo, double esize ) {
 			if ( ( zp > zo ) && ( zp < (zo + esize) ) ) {
 				return 1; /* crossing found it */
 			} else if ( zp == zo ) {
-				++cnt;
+				++cnt_top;
+			} else if ( zp == zo ) {
+				++cnt_bott;
 			}
 		}
 	}
 
 	/* buried element with top face on flat topography   */
-	if ( cnt == np * np )
+	if ( cnt_top == np * np )
 		return 2;
+
+	/* air element with bottom face on flat topography   */
+	if ( cnt_bott == np * np )
+		return 0;
 
 	/* 2) Distance check. Checks the perpendicular distance of np^3 points inside
 	 * the element to the external surface */
 	for ( i = 0; i < np; ++i ) {
-		xp = xo + Del * i;
+		zp = zo + Del * i;
 
 		for ( j = 0; j < np; ++j ) {
-			yp = yo + Del * j;
+			xp = xo + Del * j;
 
 			for ( k = 0; k < np; ++k ) {
-				zp = zo + Del * k;
+				yp = yo + Del * k;
 
 				dist = point_PlaneDist( xp, yp, zp );
 
 				if ( ( dist > 0 ) && air_flag == 0 ) {
 					air_flag = 1;
-				} else if ( ( dist <= 0 ) && mat_flag == 0 ) {
+				} else if ( ( dist < 0 ) && mat_flag == 0 ) {
 					mat_flag = 1;
 				}
 

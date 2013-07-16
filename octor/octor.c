@@ -5417,6 +5417,14 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
         int32_t i, j, k;
         tick_t  xadjust, yadjust, incrementx, incrementy;
 
+
+		int yuu;
+
+		if ( eindex == 47200 ) {
+
+			yuu=56;
+		}
+
         if (oct == NULL) {
             fprintf(stderr,
                     "\n\nThread %d: %s %d: internal error (too few octs)"
@@ -5439,6 +5447,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
         /* check if element crosses the surface topography */
         int topo_type = topo_crossings( tree->ticksize * oct->lx, tree->ticksize * oct->ly, tree->ticksize * oct->lz, topo_size );
 
+        edgesize = (tick_t)1 << (PIXELLEVEL - oct->level);
         for (k = 0; k < 2; k++) {
             pt.z = oct->lz + k * edgesize;
 
@@ -5551,8 +5560,17 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         }
                         /* End of block. See comments above. */
 
+//                		int yuu;
+
+//                		if ( (  oct->lx == 570425344) && (  oct->ly  == 444596224 ) && (  oct->lz == 58720256 ) ) {
+//
+//                			yuu=56;
+//                		}
+
                         /* if I have a topographic octant or one with its top face on a flat surface */
                         if ( ( topo_type == 1 ) || ( topo_type == 2 ) ) {
+
+
 
                         	octant_t *oct_tofind;
                         	oct_tofind = octor_searchoctant( octree, pt.x + 1, pt.y + 1, pt.z + 1, PIXELLEVEL, AGGREGATE_SEARCH );
@@ -5562,13 +5580,18 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
 
                         	/* check if I have a topographic octant */
                         	if (oct_tofind != NULL) {
+
                         		has_topo   = topo_crossings( tree->ticksize * oct_tofind->lx, tree->ticksize * oct_tofind->ly, tree->ticksize * oct_tofind->lz,
                         				                     tree->ticksize * ( (tick_t)1 << (PIXELLEVEL - oct_tofind->level) ) );
 
                         		/*sanity check:  */
                         		if ( ( has_topo == 1 ) && ( oct_tofind->level != maxtopoLev ) ) {
 
-                        			fprintf(stdout," pt with x,y,z: %f,%f,%f\n", pt.x * tree->ticksize, pt.y * tree->ticksize, pt.z * tree->ticksize);
+                          			fprintf(stdout," Found octant x,y,z: %f,%f,%f\n", tree->ticksize * oct_tofind->lx,
+                          					                                          tree->ticksize * oct_tofind->ly,
+                          					                                          tree->ticksize * oct_tofind->lz);
+
+                        			fprintf(stdout," pt with x,y,z: %f,%f,%f. eindex=%d\n", pt.x * tree->ticksize, pt.y * tree->ticksize, pt.z * tree->ticksize, eindex);
 
                         			fprintf(stderr, "%s %d: internal error.\n"
                         					"Different level size of topographic octant: %d "
@@ -5580,7 +5603,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         		}
                         	}
 
-                        	if ( (oct_tofind == NULL) ) { /* pixel is truly in the air  */
+                        	if ( (oct_tofind == NULL) || ( has_topo == 0 ) ) { /* pixel is truly in the air  */
 
                         		for ( xadjust = 0; xadjust < 2; xadjust++ ) {
                         			for ( yadjust = 0; yadjust < 2; yadjust++ ) {
@@ -5593,7 +5616,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         					has_topo   = topo_crossings( tree->ticksize * oct_tofind->lx, tree->ticksize * oct_tofind->ly, tree->ticksize * oct_tofind->lz,
                         							tree->ticksize * ( (tick_t)1 << (PIXELLEVEL - oct_tofind->level) ) );
 
-                        					if ( ( oct_tofind != NULL ) && (has_topo != 0) ) {
+                        					if ( (has_topo != 0) ) {
                         						topo_flag = 1;
                         						adjustedpt.x += incrementx;
                         						adjustedpt.y += incrementy;
