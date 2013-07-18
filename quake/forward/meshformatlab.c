@@ -52,7 +52,7 @@ theMatlabZMax,   theMatlabZMin;
 void saveMeshCoordinatesForMatlab( mesh_t      *myMesh,       int32_t myID,
 		const char  *parametersin, double  ticksize,
 		damping_type_t theTypeOfDamping, double xoriginm, double yoriginm,
-		double zoriginm, noyesflag_t includeBuildings)
+		double zoriginm, noyesflag_t includeBuildings, double threshold_damping )
 {
 
 	int      i, j, k, counter = 0;
@@ -204,16 +204,12 @@ void saveMeshCoordinatesForMatlab( mesh_t      *myMesh,       int32_t myID,
 						int32_t   n_0;
 						double    x_m,y_m,z_m;
 						float     zeta =-1;
+						double    damping_ratio;
 
 						n_0 = myMesh->elemTable[i].lnid[0];
-						z_m = zoriginm + (ticksize)*myMesh->nodeTable[n_0].z;
-						x_m = xoriginm + (ticksize)*myMesh->nodeTable[n_0].x;
-						y_m = yoriginm + (ticksize)*myMesh->nodeTable[n_0].y;
-
-						/* Shift the domain if buildings are considered */
-						if ( includeBuildings == YES ) {
-							z_m -= get_surface_shift();
-						}
+						z_m = (ticksize)*myMesh->nodeTable[n_0].z;
+						x_m = (ticksize)*myMesh->nodeTable[n_0].x;
+						y_m = (ticksize)*myMesh->nodeTable[n_0].y;
 
 						//if ( softerSoil == YES ) {
 						/* Get it from the damping vs strain curves */
@@ -229,11 +225,17 @@ void saveMeshCoordinatesForMatlab( mesh_t      *myMesh,       int32_t myID,
 							zeta = 10 / edata_temp->Vs;
 						}
 
-						//If element is in the building, use 5% damping.
-						if (z_m < 0) {
-							zeta = 0.05;
-						}
+				    	/*If element is in the building+fdn, use the damping in the parameters file.*/
+				    	if ( includeBuildings == YES ) {
+				    		damping_ratio = get_damping_ratio_bldgs( x_m, y_m, z_m );
+				    		if (damping_ratio != -1.0 ) {
+				    			zeta = damping_ratio ;
+				    		}
+				    	}
 
+				        if ( zeta > threshold_damping ) {
+				        	zeta = threshold_damping;
+				        }
 						fwrite( &(zeta), sizeof(zeta), 1, meshdata );
 
 					}

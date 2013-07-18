@@ -2846,9 +2846,10 @@ static void solver_set_critical_T()
 	double	 VpVsZ;	      /* the result of Vp / Vs * zeta		      */
 	double	 Vs;	      /* the Vs					      */
 
-	/* yigit says -- Buildings assume 5% damping */
+	/* yigit says -- Buildings get damping ratio from the parameters file */
 	int64_t   n_0;
-	double    z_m;
+	double    x_m, y_m, z_m;
+	double 	  damping_ratio;
 
 	/* Captures the element */
 
@@ -2862,21 +2863,20 @@ static void solver_set_critical_T()
 	/* Old formula for damping */
 	/* zeta	       = (edata->Vs < 1500) ? 25 / edata->Vs : 5 / edata->Vs; */
 	/* New formula acording to Graves */
-
-
-	n_0 = Global.myMesh->elemTable[eindex].lnid[0];
-	z_m = Global.theZForMeshOrigin + (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].z;
-
-	/* Shift the domain if buildings are considered */
-	if ( Param.includeBuildings == YES ) {
-		z_m -= get_surface_shift();
-	}
-
 	zeta = 10 / edata->Vs;
 
-	/*If element is in the building, use 5% damping.*/
-	if (z_m < 0) {
-		zeta = 0.05;
+	n_0 = Global.myMesh->elemTable[eindex].lnid[0];
+
+	x_m = (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].x;
+	y_m = (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].y;
+	z_m = (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].z;
+
+	/*If element is in the building+fdn, use the damping in the parameters file.*/
+	if ( Param.includeBuildings == YES ) {
+		damping_ratio = get_damping_ratio_bldgs( x_m, y_m, z_m );
+		if (damping_ratio != -1.0 ) {
+			zeta = damping_ratio ;
+		}
 	}
 
 	omega	    = 3.46410161514 / ratio;
@@ -3393,10 +3393,11 @@ static void solver_init()
 
         double zeta, a, b;
 
-    	/* yigit says -- Buildings assume 5% damping */
+    	/* yigit says -- Buildings get damping ratio from the parameters file */
 
         int32_t   n_0;
-        double    z_m;
+    	double    x_m, y_m, z_m;
+    	double 	  damping_ratio;
 
         /* Note the difference between the two tables */
         elemp = &Global.myMesh->elemTable[eindex];
@@ -3416,21 +3417,22 @@ static void solver_init()
         /* Old formula for damping */
         /* zeta = (edata->Vs < 1500) ? 25 / edata->Vs : 5 / edata->Vs; */
 
-        n_0 = Global.myMesh->elemTable[eindex].lnid[0];
-        z_m = Global.theZForMeshOrigin + (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].z;
-
-        /* Shift the domain if buildings are considered */
-        if ( Param.includeBuildings == YES ) {
-        	z_m -= get_surface_shift();
-        }
-
         /* New formula for damping according to Graves */
         zeta = 10 / edata->Vs;
 
-    	/* If element is in a building, use 5% damping */
-        if (z_m < 0) {
-        	zeta = 0.05;
-        }
+        n_0 = Global.myMesh->elemTable[eindex].lnid[0];
+
+    	x_m = (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].x;
+    	y_m = (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].y;
+    	z_m = (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].z;
+
+    	/*If element is in the building+fdn, use the damping in the parameters file.*/
+    	if ( Param.includeBuildings == YES ) {
+    		damping_ratio = get_damping_ratio_bldgs( x_m, y_m, z_m );
+    		if (damping_ratio != -1.0 ) {
+    			zeta = damping_ratio ;
+    		}
+    	}
 
         if ( zeta > Param.theThresholdDamping ) {
         	zeta = Param.theThresholdDamping;
@@ -3975,11 +3977,11 @@ static void solver_read_source_forces( int step )
 /**
  * TODO: This method uses global variable Param.theDeltaT
  */
-static void solver_load_fixedbase_displacements( mysolver_t* solver, int step )
+static void solver_load_fixedbase_displacements( mysolver_t* solver, mesh_t* mesh, int step )
 {
     Timer_Start( "Load Fixedbase Disps" );
     if ( get_fixedbase_flag() == YES ) {
-        bldgs_load_fixedbase_disps ( solver, Param.theDeltaT, step);
+        bldgs_load_fixedbase_disps ( solver, mesh, Param.theDeltaT, step);
     }
     Timer_Stop( "Load Fixedbase Disps" );
 }
@@ -4360,7 +4362,7 @@ static void solver_run()
         Timer_Start( "Compute Physics" );
         solver_compute_displacement( Global.mySolver, Global.myMesh );
         solver_geostatic_fix( step );
-        solver_load_fixedbase_displacements( Global.mySolver, step );
+        solver_load_fixedbase_displacements( Global.mySolver, Global.myMesh, step );
         solver_update_constrained_slab_displacements( Global.mySolver, step );
         Timer_Stop( "Compute Physics" );
 
@@ -4376,6 +4378,12 @@ static void solver_run()
     } /* for (step = ....): all steps */
 
     solver_drm_close();
+
+    if ( Param.includeBuildings == YES ) {
+
+    	solver_buildings_close();
+    }
+
     solver_constrained_buildings_close();
     solver_output_wavefield_close();
     solver_run_collect_timers();
@@ -7496,7 +7504,8 @@ int main( int argc, char** argv )
     	if ( get_constrained_slab_flag() == YES ) {
     		constrained_slabs_init( Global.myMesh, Param.theEndT-Param.theStartT, Global.theGroupSize, Global.myID );
     	}
-    	bldgs_finalize();
+    	/* Need the building information for rotational fixed base motion*/
+    	//bldgs_finalize();
     }
 
     if ( Param.drmImplement == YES ) {
@@ -7524,7 +7533,8 @@ int main( int argc, char** argv )
     if ( Param.storeMeshCoordinatesForMatlab == YES ) {
         saveMeshCoordinatesForMatlab( Global.myMesh, Global.myID, Param.parameters_input_file,
 				      Global.myOctree->ticksize,Param.theTypeOfDamping,Global.theXForMeshOrigin,
-				      Global.theYForMeshOrigin,Global.theZForMeshOrigin, Param.includeBuildings);
+				      Global.theYForMeshOrigin,Global.theZForMeshOrigin, Param.includeBuildings,
+				      Param.theThresholdDamping);
     }
 
     Timer_Start("Mesh Stats Print");

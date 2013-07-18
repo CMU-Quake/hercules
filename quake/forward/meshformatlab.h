@@ -23,7 +23,8 @@
 void saveMeshCoordinatesForMatlab( mesh_t      *myMesh,       int32_t myID,
                                    const char  *parametersin, double  ticksize,
                                    damping_type_t theTypeOfDamping, double xoriginm, double yoriginm,
-                                   double zoriginm, noyesflag_t includeBuildings );
+                                   double zoriginm, noyesflag_t includeBuildings,
+                                   double threshold_damping);
 
 #endif /* MESHFORMATLAB_H_ */
 
