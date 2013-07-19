@@ -2121,13 +2121,13 @@ mesh_generate()
 
     /* gggg */
 
-    /* Buildings Carving */
+    /* Buildings/Topography Carving */
     if ( Param.includeBuildings == YES ||  Param.includeTopography == YES ) {
 //    if ( Param.includeBuildings == YES ) {
     	int flag = 0;
     	Timer_Start("Carve Buildings");
     	if (Global.myID == 0) {
-    		fprintf(stdout, "Carving buildings");
+    		fprintf(stdout, "Carving Buildings/Topography");
     		fflush(stdout);
     	}
 
@@ -2175,7 +2175,9 @@ mesh_generate()
         fprintf(stdout, "Extracting the mesh %30s","");
         fflush(stdout);
     }
-    Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch,pushdowns_nodesearch,bldgs_nodesearch_com, find_topoAirOct);
+    Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch,pushdowns_nodesearch,bldgs_nodesearch_com,
+    		find_topoAirOct, topo_nodesearch);
+
     if (Global.myMesh == NULL) {
         fprintf(stderr, "Thread %d: mesh_generate: fail to extract mesh\n",
                 Global.myID);
@@ -4441,7 +4443,7 @@ static void solver_run()
 
         /* ------------------ */
         /* TODO: erase this later*/
-        compute_addforce_topoDRM ( Global.myMesh,Global.mySolver, Param.theDeltaT, step, Global.theK1, Global.theK2);
+        //compute_addforce_topoDRM ( Global.myMesh,Global.mySolver, Param.theDeltaT, step, Global.theK1, Global.theK2);
         /*----------*/
 
         Timer_Stop( "Compute Physics" );
@@ -7750,7 +7752,7 @@ int main( int argc, char** argv )
 
     if ( Param.includeTopography == YES ) {
     	/*TODO: this is a test. Erase later. Dorian */
-    	topo_DRM_init( Global.myMesh, Global.mySolver);
+    	//topo_DRM_init( Global.myMesh, Global.mySolver);
     }
 
     

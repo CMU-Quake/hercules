@@ -346,7 +346,8 @@ extern mesh_t *
 octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
 		pushdowns_nodesearch_t *pushdowns_nodesearch,
 		bldgs_nodesearch_com_t *bldgs_nodesearch_com,
-		find_topoAirOct_t      *find_topoAirOct );
+		find_topoAirOct_t      *find_topoAirOct,
+		topo_nodesearch_t      *topo_nodesearch);
 
 extern void
 octor_deletemesh(mesh_t *mesh);

@@ -380,37 +380,6 @@ double point_PlaneDist ( double xp, double yp, double zp ) {
 
 void get_airprops_topo( edata_t *edata )
 {
-//    int    res;
-//    double x, y, z;
-//    double edgesize;
-//    double halfedge;
-//
-//    cvmpayload_t props;
-//
-//    edgesize = edata->edgesize;
-//    halfedge = edgesize * 0.5;
-//
-//    x = ( leaf->lx * ticksize ) + halfedge;
-//    y = ( leaf->ly * ticksize ) + halfedge;
-//    z = ( leaf->lz * ticksize ) + halfedge;
-//
-//    if ( ( leaf->lz * ticksize + edgesize ) == thebase_zcoord ) {
-//
-//        /* Get the Vs at that location on the surface */
-//        /* Ensures same size in elements at the flat interface medium-air */
-//        if ( theEtreeType == FULL )
-//    		res = cvm_query( cvm, y, x, thebase_zcoord, &props );
-//        else
-//        	res = cvm_query( cvm, y, x, 0, &props );
-//
-//        if ( res != 0 ) {
-//            return;
-//            solver_abort ( __FUNCTION_NAME, "Error from cvm_query: ",
-//                           "No properties at east = %f, north = %f", y, x);
-//        }
-//    	edata->Vs  = props.Vs;
-//    } else
-//    	edata->Vs  = 1e10;
 
     edata->Vs  = 1.0e10;
 
@@ -425,15 +394,18 @@ void get_airprops_topo( edata_t *edata )
 
 
 /* finds if point (xp,yp,zp) is in the air.
- * 1 if it is in the air,
- * 0 if it does not   */
+ * -1 if topography is not considered
+ *  1 if it is in the air,
+ *  0 if it does not   */
 
-int
-find_topoAirOct( tick_t xTick, tick_t yTick, tick_t zTick,  double  ticksize )
+int find_topoAirOct( tick_t xTick, tick_t yTick, tick_t zTick,  double  ticksize )
 {
 
     tick_t  x0 = 0, y0 = 0, z0 = 0, edgesize_half;
     int8_t  xbit, ybit, zbit, level = 0;
+
+	 if ( thebase_zcoord == 0 )
+		 return -1;
 
     int node_pos = topo_nodesearch ( xTick, yTick, zTick, ticksize );
 
@@ -719,7 +691,7 @@ double interp_lin ( double xi, double yi, double xf, double yf, double xo  ){
 
 	 dist = point_PlaneDist( xo, yo, zo );
 
-	 if ( ( dist > 0 ) && ( thebase_zcoord > 0 ) )
+	 if ( ( dist >= 0 ) && ( thebase_zcoord > 0 ) )
 		 return 1;
 
 	 return 0;

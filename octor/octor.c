@@ -3331,7 +3331,8 @@ static int32_t
 node_setproperty ( tree_t             *tree,
                    vertex_t           *vertex,
                    unsigned char      *pproperty,
-                   bldgs_nodesearch_t  bldgs_nodesearch )
+                   bldgs_nodesearch_t  bldgs_nodesearch,
+                   topo_nodesearch_t   topo_nodesearch)
 {
     tick_t   nx, ny, nz;
     int32_t  where, onX = 0, onY = 0, onZ = 0, wrtSurface = -2;
@@ -3459,8 +3460,15 @@ node_setproperty ( tree_t             *tree,
     /* My friend, If you uncomment the following you can see the mesh after
      *  carving. This makes every node anchored, so the results would be errorneous.*/
 
-        *pproperty = 0X80;
-        return 0;
+	if ( topo_nodesearch( nx, ny, nz, tree->ticksize) == 1 ) {
+
+		*pproperty = 0X80;
+		return 0;
+	}
+
+
+//        *pproperty = 0X80;
+//        return 0;
 
     /* Yigit says: Every node that belongs to a building+foundation should be anchored*/
 
@@ -3808,7 +3816,8 @@ node_harboranchored(tree_t *tree, link_t **vertexHashTable,
                     int64_t ecount, mem_t *linkpool, mem_t *vertexpool,
                     com_t *allcom, point_t pt, int64_t *hbrcount,
                     bldgs_nodesearch_com_t *bldgs_nodesearch_com,
-                    pushdowns_nodesearch_t *pushdowns_nodesearch)
+                    pushdowns_nodesearch_t *pushdowns_nodesearch,
+                    find_topoAirOct_t *find_topoAirOct )
 {
     int32_t hashentry;
     link_t *link;
@@ -3923,7 +3932,52 @@ node_harboranchored(tree_t *tree, link_t **vertexHashTable,
         		}
         	}
         }
-        /* End of the block ... */
+        /* End of building block ... */
+
+        /* adjusting for topography */
+
+        int res = find_topoAirOct(
+        		pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
+
+
+        if ( res == 1 ) {
+
+        	/* ...then, adjust! */
+
+        	int    flag = 0;
+        	tick_t xadjust, yadjust, incrementx, incrementy;
+
+        	/* search for a neighbor point that is inside of a bldg */
+        	for ( xadjust = 0; xadjust < 2; xadjust++ ) {
+        		for ( yadjust = 0; yadjust < 2; yadjust++ ) {
+
+        			incrementx = - 1 + 2*xadjust;
+        			incrementy = - 1 + 2*yadjust;
+
+        			/* If the point is inside the buildings
+        			 *  and outside the pushdown */
+        			if (find_topoAirOct(
+        					pt.x + incrementx,
+        					pt.y + incrementy,
+        					pt.z + 1, tree->ticksize) == 0) {
+
+        				adjustedpt.x += incrementx;
+        				adjustedpt.y += incrementy;
+        				adjustedpt.z += 1;
+
+        				flag = 1;
+        				break;
+        			}
+        		}
+
+        		if ( flag == 1 ) break;
+        	}
+        }
+
+
+        /* end of topography adjustment   */
+
+
 
         vertex->owner = math_zsearch(tree->com->interval, tree->com->groupsize,
                                      &adjustedpt);
@@ -5241,7 +5295,8 @@ extern mesh_t *
 octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
 		pushdowns_nodesearch_t *pushdowns_nodesearch,
 		bldgs_nodesearch_com_t *bldgs_nodesearch_com,
-		find_topoAirOct_t      *find_topoAirOct )
+		find_topoAirOct_t      *find_topoAirOct,
+		topo_nodesearch_t      *topo_nodesearch)
 {
     tree_t *tree = (tree_t *)octree;
     int64_t *octCountTable;
@@ -5298,8 +5353,6 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
     	}
     }
     
-    /* =================== MY CHECK ===================== */
-    fprintf(stdout,"Paso tree-setcom DORIAN \n \n");
     /* How many elements I have */
     ecount = tree_countleaves(tree);
 
@@ -5477,7 +5530,6 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         			/* ...then, adjust! */
 
                         			int    flag = 0;
-//                        			tick_t xadjust, yadjust, incrementx, incrementy;
 
                         			/* search for a neighbor point that is inside of a bldg */
                         			for ( xadjust = 0; xadjust < 2; xadjust++ ) {
@@ -5513,14 +5565,6 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         }
                         /* End of block. See comments above. */
 
-
-
-                        if ( pt.x*tree->ticksize == 812.5 && pt.y*tree->ticksize == 1062.5 && pt.z*tree->ticksize == 109.375 ) {
-                             fprintf(stdout,"REAADY to compute increments, eindex=%d, i=%d, j=%d, k=%d \n\n", eindex, i,j,k);
-                         }
-
-
-
                         int res = find_topoAirOct(
                         		pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
 
@@ -5538,13 +5582,6 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         			incrementx = - 1 + 2*xadjust;
                         			incrementy = - 1 + 2*yadjust;
 
-                                    if ( eindex==26636 && pt.x*tree->ticksize == 812.5 && pt.y*tree->ticksize == 1062.5 && pt.z*tree->ticksize == 109.375  ) {
-
-                                    	int ttt= find_topoAirOct(pt.x + incrementx,pt.y + incrementy,pt.z + 1, tree->ticksize);
-
-                                    	fprintf(stdout,"first increment, ttt=%d \n\n", ttt);
-                                     }
-
                         			/* If the point is inside the buildings
                         			 *  and outside the pushdown */
                         			if (find_topoAirOct(
@@ -5560,14 +5597,9 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         				break;
                         			}
                         		}
+
+                        		if ( flag == 1 ) break;
                         	}
-                        	if ( flag == 1 ) break;
-                        }
-
-
-                        if ( eindex==26636 && pt.x*tree->ticksize == 812.5 && pt.y*tree->ticksize == 1062.5 && pt.z*tree->ticksize == 109.375  ){
-                            fprintf(stdout, "DORIANNNN vertex owner AFTER=%d\n",
-                            		vertex->owner);
                         }
 
                         vertex->owner = (tree->groupsize == 1) ? 0 :
@@ -5607,8 +5639,6 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
         geid++;
 
     } /* for all the local octants */
-
-    fprintf(stdout,"Paso OCTANTS DORIAN \n \n");
 
     /* RICARDO SANITY CHECKS */
     if ( oct != NULL ) {
@@ -5970,7 +6000,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
             vertex = (vertex_t *)link->record;
 
             int32_t rp = node_setproperty(tree, vertex, &vertex->property,
-                    bldgs_nodesearch );
+                    bldgs_nodesearch, topo_nodesearch );
 
             if ( rp != 0) {
                 double x = vertex->x * tree->ticksize;
@@ -6011,7 +6041,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     	node_harboranchored(tree, vertexHashTable, ecount,
                     			linkpool, vertexpool, allcom,
                     			pt, &harborcount, bldgs_nodesearch_com,
-                    			pushdowns_nodesearch);
+                    			pushdowns_nodesearch, find_topoAirOct );
                     }
                 }
 
@@ -6031,7 +6061,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     	node_harboranchored(tree, vertexHashTable, ecount,
                     			linkpool, vertexpool, allcom,
                     			pt, &harborcount,bldgs_nodesearch_com,
-                    			pushdowns_nodesearch);
+                    			pushdowns_nodesearch,find_topoAirOct);
                     }
                 }
                 break;
@@ -6050,7 +6080,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     	node_harboranchored(tree, vertexHashTable, ecount,
                     			linkpool, vertexpool, allcom,
                     			pt, &harborcount,bldgs_nodesearch_com,
-                    			pushdowns_nodesearch);
+                    			pushdowns_nodesearch, find_topoAirOct);
                     }
                 }
                 break;
@@ -6068,7 +6098,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     	node_harboranchored(tree, vertexHashTable, ecount,
                     			linkpool, vertexpool, allcom,
                     			pt, &harborcount,bldgs_nodesearch_com,
-                    			pushdowns_nodesearch);
+                    			pushdowns_nodesearch, find_topoAirOct);
                     }
                 }
                 break;
@@ -6086,7 +6116,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     	node_harboranchored(tree, vertexHashTable, ecount,
                     			linkpool, vertexpool, allcom,
                     			pt, &harborcount,bldgs_nodesearch_com,
-                    			pushdowns_nodesearch);
+                    			pushdowns_nodesearch, find_topoAirOct);
                     }
                 }
                 break;
@@ -6105,7 +6135,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     	node_harboranchored(tree, vertexHashTable, ecount,
                     			linkpool, vertexpool, allcom,
                     			pt, &harborcount,bldgs_nodesearch_com,
-                    			pushdowns_nodesearch);
+                    			pushdowns_nodesearch, find_topoAirOct);
                     }
                 }
                 break;
@@ -6615,10 +6645,6 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     if (link == NULL) {
                         fprintf(stderr, "Thread %d: %s %d: internal error\n",
                                 tree->procid, __FILE__, __LINE__);
-                        fprintf(stderr, "eindex=%d, node x,y,z=%f, %f, %f\n",
-                                eindex, pt.x*tree->ticksize, pt.y*tree->ticksize, pt.z*tree->ticksize);
-
-
                         MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
                         exit(1);
                     }
