@@ -207,6 +207,9 @@ typedef int topo_nodesearch_t ( tick_t x, tick_t y, tick_t z,
 typedef int topo_crossings_t ( double xo, double yo, double zo, double esize );
 typedef int topo_maxLevel_t ();
 
+typedef int find_topoAirOct_t ( tick_t xTick, tick_t yTick, tick_t zTick,  double  ticksize );
+
+
 /***************************/
 /* Octant-level operations */
 /***************************/
@@ -343,9 +346,7 @@ extern mesh_t *
 octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
 		pushdowns_nodesearch_t *pushdowns_nodesearch,
 		bldgs_nodesearch_com_t *bldgs_nodesearch_com,
-		topo_nodesearch_t      *topo_nodesearch,
-		topo_crossings_t       *topo_crossings,
-		topo_maxLevel_t        *topo_maxLevel);
+		find_topoAirOct_t      *find_topoAirOct );
 
 extern void
 octor_deletemesh(mesh_t *mesh);

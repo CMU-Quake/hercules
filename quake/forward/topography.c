@@ -424,38 +424,46 @@ void get_airprops_topo( edata_t *edata )
 }
 
 
-void elem_corners_elev ( double xo, double yo, double esize, double So, double corner_elev[4] ) {
+/* finds if point (xp,yp,zp) is in the air.
+ * 1 if it is in the air,
+ * 0 if it does not   */
 
-	int m, n, i, j;
-	double xp, yp, x_o, y_o, remi, remj, mesh_cz[4];
+int
+find_topoAirOct( tick_t xTick, tick_t yTick, tick_t zTick,  double  ticksize )
+{
 
-	for ( m = 0; m < 2; ++m ) {
+    tick_t  x0 = 0, y0 = 0, z0 = 0, edgesize_half;
+    int8_t  xbit, ybit, zbit, level = 0;
 
-		xp = xo + m * esize;
+    int node_pos = topo_nodesearch ( xTick, yTick, zTick, ticksize );
 
-		for ( n = 0; n < 2; ++n) {
-			yp = yo + n * esize;
+    if (node_pos == 1) {
 
-			remi = modf (xp  / So, &x_o );
-			remj = modf (yp  / So, &y_o );
+    	/* find octant coordinates */
+    	while ( level != theMaxoctlevel ) {
+    		edgesize_half = (tick_t)1 << (30 - level - 1);
+    		xbit = (( xTick-  x0) >= edgesize_half) ? 1 : 0;
+    		ybit = (( yTick - y0) >= edgesize_half) ? 1 : 0;
+    		zbit = (( zTick - z0) >= edgesize_half) ? 1 : 0;
 
-			i = x_o;
-			j = y_o;
+    		x0 += xbit * edgesize_half;
+    		y0 += ybit * edgesize_half;
+    		z0 += zbit * edgesize_half;
 
+    		++level;
+    	}
 
-			if ( ( remi == 0 ) && ( remj == 0) )
-				corner_elev[ 2 * m + n ] = thebase_zcoord - theTopoInfo [ np_ew * i + j ] ;
-			else {
-				mesh_cz[0] =  theTopoInfo [ np_ew * i + j ];
-				mesh_cz[1] =  theTopoInfo [ np_ew * i + j + 1 ];
-				mesh_cz[2] =  theTopoInfo [ np_ew * ( i + 1 ) + j + 1 ];
-				mesh_cz[3] =  theTopoInfo [ np_ew * ( i + 1 ) + j ];
+    	int topo_air = topo_crossings ( x0 * ticksize, y0 * ticksize, z0 * ticksize, ticksize * ( (tick_t)1 << (30 - level) ) );
 
-				corner_elev[ 2 * m + n ] = thebase_zcoord - interp_z( xp, yp, x_o*So, y_o*So, So, mesh_cz );
-			}
-		}
-	}
+    	if (topo_air == 0)
+    		return 1;
+
+    }
+
+    return 0;
+
 }
+
 
 
 /**
@@ -692,45 +700,6 @@ double interp_lin ( double xi, double yi, double xf, double yf, double xo  ){
 }
 
 
-/* Crossing check from volume. Checks the distance of npxnpxnp points to the targeted surface.
- 1 if mixed distances are found (surface crossing), 0 if it is not. */
-int topoXing_II ( double xo, double yo, double zo, double esize ) {
-
-	double   xp, yp, zp, dist;
-	int      air_flag=0, mat_flag=0;
-	int      i, j, k, np=5;
-
-	double Del = esize / (np - 1);
-
-
-	for ( i = 0; i < np; ++i ) {
-		xp = xo + Del * i;
-
-		for ( j = 0; j < np; ++j ) {
-			yp = yo + Del * j;
-
-			for ( k = 0; k < np; ++k ) {
-				zp = zo + Del * k;
-
-				dist = point_PlaneDist( xp, yp, zp );
-
-				if ( ( dist > 0 ) && air_flag == 0 ) {
-					air_flag = 1;
-				} else if ( ( dist <= 0 ) && mat_flag == 0 ) {
-					mat_flag = 1;
-				}
-
-				if ( (air_flag == 1) && (mat_flag==1) ) /* Found crossing  */
-					return 1;
-
-			} /* for every k */
-		} /* for every j */
-	} /* for every i */
-
-	return 0;
-}
-
-
 /**
   * Depending on the position of a node wrt to the surface it returns:
   *  1: node on, or outside topography,
@@ -750,7 +719,7 @@ int topoXing_II ( double xo, double yo, double zo, double esize ) {
 
 	 dist = point_PlaneDist( xo, yo, zo );
 
-	 if ( ( dist >= 0 ) && ( thebase_zcoord > 0 ) )
+	 if ( ( dist > 0 ) && ( thebase_zcoord > 0 ) )
 		 return 1;
 
 	 return 0;
@@ -760,7 +729,7 @@ int topoXing_II ( double xo, double yo, double zo, double esize ) {
 
 /* Checks the type of element wrt the topography surface:
  * -1: if topography is NOT considered.
- *  0: if fully air element.
+ *  0: if air element.
  *  1: if it crosses the topographic surface.
  *  2: if it's buried with top face on flat topography
  *  3: if it's a fully buried element
@@ -795,7 +764,7 @@ int topo_crossings ( double xo, double yo, double zo, double esize ) {
 				return 1; /* crossing found it */
 			} else if ( zp == zo ) {
 				++cnt_top;
-			} else if ( zp == zo ) {
+			} else if ( zp == zo + esize ) {
 				++cnt_bott;
 			}
 		}
@@ -851,9 +820,8 @@ int topo_setrec ( octant_t *leaf, double ticksize,
 
     int       res_exp, res_setr;
 
-//    res = topo_search( leaf, ticksize, edata );
     topo_searchII( leaf, ticksize, edata, &res_exp,  &res_setr );
-//    res = topo_search( leaf, ticksize, edata );
+
     if (  res_setr == -1  ) {
         get_airprops_topo( edata );
         return 1;

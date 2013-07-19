@@ -85,6 +85,9 @@ int    topo_nodesearch          ( tick_t x, tick_t y, tick_t z, double ticksize 
 int    topo_crossings           ( double xo, double yo, double zo, double esize );
 int8_t    topo_maxLevel();
 
+int find_topoAirOct              ( tick_t xTick, tick_t yTick, tick_t zTick,  double  ticksize );
+
+
 /* ERASE LATER THESE FUNCTIONS, ARE JUST FOR A QUICK CHECKING*/
 void topo_DRM_init ( mesh_t *myMesh, mysolver_t *mySolver);
 

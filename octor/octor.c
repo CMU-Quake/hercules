@@ -586,8 +586,7 @@ static void    tree_setdistribution(tree_t *tree, int64_t **pCountTable,
 static int32_t tree_setcom(octree_t *octree, tree_t *tree, int32_t msgsize,
                            bldgs_nodesearch_com_t *bldgs_nodesearch_com,
                            pushdowns_nodesearch_t *pushdowns_nodesearch,
-                           topo_crossings_t       *topo_crossings,
-                           topo_nodesearch_t  *topo_nodesearch);
+                           find_topoAirOct_t      *find_topoAirOct );
 
 static void    tree_deletecom(tree_t *tree);
 
@@ -848,8 +847,7 @@ static int32_t   com_allocpctl(octree_t *octree, com_t *com, int32_t msgsize, oc
                                tick_t surfacep, double ticksize,
                                bldgs_nodesearch_com_t *bldgs_nodesearch_com,
                                pushdowns_nodesearch_t *pushdowns_nodesearch,
-                               topo_crossings_t       *topo_crossings,
-                               topo_nodesearch_t      *topo_nodesearch);
+                               find_topoAirOct_t *find_topoAirOct );
 
 static int32_t   com_resetpctl(com_t *com, int32_t msgsize);
 
@@ -2236,7 +2234,7 @@ tree_showstat(tree_t *tree, int32_t mode, const char *comment)
  */
 static int32_t
 tree_setcom(octree_t *octree, tree_t *tree, int32_t msgsize, bldgs_nodesearch_com_t *bldgs_nodesearch_com,
-		pushdowns_nodesearch_t *pushdowns_nodesearch, topo_crossings_t  *topo_crossings, topo_maxLevel_t  *topo_maxLevel)
+		pushdowns_nodesearch_t *pushdowns_nodesearch, find_topoAirOct_t *find_topoAirOct)
 {
     /* Allocate a communication manager */
     tree->com = com_new(tree->procid, tree->groupsize);
@@ -2256,9 +2254,7 @@ tree_setcom(octree_t *octree, tree_t *tree, int32_t msgsize, bldgs_nodesearch_co
     if (com_allocpctl(octree, tree->com, msgsize, tree->firstleaf,
                        tree->nearendp, tree->farendp, tree->surfacep,
                        tree->ticksize, bldgs_nodesearch_com,
-                       pushdowns_nodesearch,
-                       topo_crossings,
-                       topo_maxLevel) != 0)
+                       pushdowns_nodesearch, find_topoAirOct ) != 0)
         return -1;
 
     return 0;
@@ -2655,14 +2651,12 @@ com_allocpctl(octree_t *octree, com_t *com, int32_t msgsize, oct_t *firstleaf,
               tick_t nearendp[3], tick_t farendp[3], tick_t surfacep,
               double ticksize, bldgs_nodesearch_com_t *bldgs_nodesearch_com,
               pushdowns_nodesearch_t *pushdowns_nodesearch,
-              topo_crossings_t       *topo_crossings,
-              topo_maxLevel_t        *topo_maxLevel )
+              find_topoAirOct_t *find_topoAirOct  )
 {
     oct_t *oct;
     tick_t ox, oy, oz, increment;
     point_t pt;
     int32_t procid;
-    int topo_Oct;
 
     /* Search neighbor for each LOCAL leaf oct */
 
@@ -2679,12 +2673,6 @@ com_allocpctl(octree_t *octree, com_t *com, int32_t msgsize, oct_t *firstleaf,
         ox = oct->lx - increment + 1 ;
         oy = oct->ly - increment + 1 ;
         oz = oct->lz - increment + 1 ;
-
-        /* added for topographic elements */
-        topo_Oct = -1;
-        double oct_size = ticksize * ( (tick_t)1 << (PIXELLEVEL - oct->level) );
-        if ( topo_crossings != NULL)
-        	topo_Oct = topo_crossings( ticksize * oct->lx, ticksize * oct->ly, ticksize * oct->lz, oct_size);
 
         for (k = 0; k < 4; k++) {
 
@@ -2742,30 +2730,9 @@ com_allocpctl(octree_t *octree, com_t *com, int32_t msgsize, oct_t *firstleaf,
                     	}
                     }
 
-                    /* Dorian says. Here I check if pt is truly in the air when considering topography */
-                    if ( ( topo_Oct == 1 ) || ( topo_Oct == 2 ) )  {
-                         octant_t *pnt_oct = octor_searchoctant( octree, pt.x, pt.y, pt.z, PIXELLEVEL, AGGREGATE_SEARCH ); /* what octant has pt */
-
-                    	if ( pnt_oct == NULL ) {  /* I know for sure that pt is in the air */
+                    if (find_topoAirOct != NULL) {
+                    	if ( ( find_topoAirOct (pt.x, pt.y, pt.z, ticksize) == 1 ) ) {
                     		continue;
-                    	} else{  /* check if octant is a topographic octant */
-                    		int has_topo   = topo_crossings( ticksize * pnt_oct->lx, ticksize * pnt_oct->ly, ticksize * pnt_oct->lz, oct_size );
-                    		int maxtopoLev = topo_maxLevel();
-
-                            //fprintf(stderr,
-//                                    "LEIDIN: Octant found for ptx=%f %f %f,"
-//                                    "with coords "
-//                                    "x,y,z = %f %f %f, and level=%d\n",
-//                                    pt.x*ticksize,
-//                                    pt.y*ticksize,
-//                                    pt.z*ticksize,
-//                                    pnt_oct->lx *ticksize,
-//                                    pnt_oct->ly*ticksize,
-//                                    pnt_oct->lz*ticksize, pnt_oct->level);
-
-                    		if ( ( has_topo == 0 ) && ( pnt_oct->level < maxtopoLev ) ) { /* this has to be a former air element some how returned by the aggregate search */
-                    			continue;
-                    		}
                     	}
                     }
 
@@ -3364,8 +3331,7 @@ static int32_t
 node_setproperty ( tree_t             *tree,
                    vertex_t           *vertex,
                    unsigned char      *pproperty,
-                   bldgs_nodesearch_t  bldgs_nodesearch,
-                   topo_nodesearch_t   topo_nodesearch )
+                   bldgs_nodesearch_t  bldgs_nodesearch )
 {
     tick_t   nx, ny, nz;
     int32_t  where, onX = 0, onY = 0, onZ = 0, wrtSurface = -2;
@@ -3493,16 +3459,8 @@ node_setproperty ( tree_t             *tree,
     /* My friend, If you uncomment the following you can see the mesh after
      *  carving. This makes every node anchored, so the results would be errorneous.*/
 
-//        *pproperty = 0X80;
-//        return 0;
-
-	if ( topo_nodesearch( nx, ny, nz, tree->ticksize ) != 0 ) {
-
-		*pproperty = 0X80;
-		return 0;
-	}
-
-
+        *pproperty = 0X80;
+        return 0;
 
     /* Yigit says: Every node that belongs to a building+foundation should be anchored*/
 
@@ -4265,7 +4223,7 @@ octor_newtree(double x, double y, double z, int32_t recsize,
 
         if (com_allocpctl(NULL,tree->com, 0, tree->firstleaf,
         		tree->nearendp, tree->farendp, 0,
-        		tree->ticksize, NULL, NULL, NULL, NULL) != 0)
+        		tree->ticksize, NULL, NULL, NULL ) != 0)
         	return NULL;
 
     } else {
@@ -5283,9 +5241,7 @@ extern mesh_t *
 octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
 		pushdowns_nodesearch_t *pushdowns_nodesearch,
 		bldgs_nodesearch_com_t *bldgs_nodesearch_com,
-		topo_nodesearch_t      *topo_nodesearch,
-		topo_crossings_t       *topo_crossings,
-		topo_maxLevel_t        *topo_maxLevel )
+		find_topoAirOct_t      *find_topoAirOct )
 {
     tree_t *tree = (tree_t *)octree;
     int64_t *octCountTable;
@@ -5333,7 +5289,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
     if (tree->groupsize > 1) {
     	tree_deletecom(tree);
 
-    	if (tree_setcom(octree, tree, 0, bldgs_nodesearch_com,pushdowns_nodesearch, topo_crossings, topo_maxLevel ) != 0) {
+    	if (tree_setcom(octree, tree, 0, bldgs_nodesearch_com,pushdowns_nodesearch, find_topoAirOct ) != 0) {
     		fprintf(stderr,
     				"Thread %d: %s %d: fail to create new communication manager\n",
     				tree->procid, __FILE__, __LINE__);
@@ -5342,6 +5298,8 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
     	}
     }
     
+    /* =================== MY CHECK ===================== */
+    fprintf(stdout,"Paso tree-setcom DORIAN \n \n");
     /* How many elements I have */
     ecount = tree_countleaves(tree);
 
@@ -5417,14 +5375,6 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
         int32_t i, j, k;
         tick_t  xadjust, yadjust, incrementx, incrementy;
 
-
-		int yuu;
-
-		if ( eindex == 47200 ) {
-
-			yuu=56;
-		}
-
         if (oct == NULL) {
             fprintf(stderr,
                     "\n\nThread %d: %s %d: internal error (too few octs)"
@@ -5443,10 +5393,6 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
         /* Produce eight mesh nodes, some of which may have been
            produced already. */
 
-        double topo_size = tree->ticksize * ( (tick_t)1 << (PIXELLEVEL - oct->level) );
-        /* check if element crosses the surface topography */
-        int topo_type = topo_crossings( tree->ticksize * oct->lx, tree->ticksize * oct->ly, tree->ticksize * oct->lz, topo_size );
-
         edgesize = (tick_t)1 << (PIXELLEVEL - oct->level);
         for (k = 0; k < 2; k++) {
             pt.z = oct->lz + k * edgesize;
@@ -5462,6 +5408,11 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     hashentry = math_hashuint32(&pt, 3) % ecount;
                     link = vertexHashTable[hashentry];
 
+                    if ( pt.x*tree->ticksize == 812.5 && pt.y*tree->ticksize == 1062.5 && pt.z*tree->ticksize == 109.375 ) {
+                         fprintf(stdout, "vertex owner BEFORE=%d eindex=%d\n",
+                         		vertex->owner, eindex);
+                     }
+
                     while (link != NULL) {
                         vertex = (vertex_t *)link->record;
                         if ((vertex->x == pt.x) &&
@@ -5472,6 +5423,8 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                             link = link->next;
                         }
                     }
+
+
 
                     if (link == NULL) {
                         /* A newly encounter vertex */
@@ -5560,78 +5513,62 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         }
                         /* End of block. See comments above. */
 
-//                		int yuu;
 
-//                		if ( (  oct->lx == 570425344) && (  oct->ly  == 444596224 ) && (  oct->lz == 58720256 ) ) {
-//
-//                			yuu=56;
-//                		}
 
-                        /* if I have a topographic octant or one with its top face on a flat surface */
-                        if ( ( topo_type == 1 ) || ( topo_type == 2 ) ) {
+                        if ( pt.x*tree->ticksize == 812.5 && pt.y*tree->ticksize == 1062.5 && pt.z*tree->ticksize == 109.375 ) {
+                             fprintf(stdout,"REAADY to compute increments, eindex=%d, i=%d, j=%d, k=%d \n\n", eindex, i,j,k);
+                         }
 
 
 
-                        	octant_t *oct_tofind;
-                        	oct_tofind = octor_searchoctant( octree, pt.x + 1, pt.y + 1, pt.z + 1, PIXELLEVEL, AGGREGATE_SEARCH );
-                        	int topo_flag = 0;
-                        	int has_topo;
-                        	int8_t maxtopoLev = topo_maxLevel();
+                        int res = find_topoAirOct(
+                        		pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
 
-                        	/* check if I have a topographic octant */
-                        	if (oct_tofind != NULL) {
+                        /* ... and point+1 is out of buildings or in the pushdown  */
+                        if ( res == 1 ) {
 
-                        		has_topo   = topo_crossings( tree->ticksize * oct_tofind->lx, tree->ticksize * oct_tofind->ly, tree->ticksize * oct_tofind->lz,
-                        				                     tree->ticksize * ( (tick_t)1 << (PIXELLEVEL - oct_tofind->level) ) );
+                        	/* ...then, adjust! */
 
-                        		/*sanity check:  */
-                        		if ( ( has_topo == 1 ) && ( oct_tofind->level != maxtopoLev ) ) {
+                        	int    flag = 0;
 
-                          			fprintf(stdout," Found octant x,y,z: %f,%f,%f\n", tree->ticksize * oct_tofind->lx,
-                          					                                          tree->ticksize * oct_tofind->ly,
-                          					                                          tree->ticksize * oct_tofind->lz);
+                        	/* search for a neighbor point that is inside of a bldg */
+                        	for ( xadjust = 0; xadjust < 2; xadjust++ ) {
+                        		for ( yadjust = 0; yadjust < 2; yadjust++ ) {
 
-                        			fprintf(stdout," pt with x,y,z: %f,%f,%f. eindex=%d\n", pt.x * tree->ticksize, pt.y * tree->ticksize, pt.z * tree->ticksize, eindex);
+                        			incrementx = - 1 + 2*xadjust;
+                        			incrementy = - 1 + 2*yadjust;
 
-                        			fprintf(stderr, "%s %d: internal error.\n"
-                        					"Different level size of topographic octant: %d "
-                        					"than expected from parameters.in: %d \n",
-                        					__FILE__, __LINE__, oct_tofind->level, maxtopoLev);
-                        			MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
-                        			exit(1);
+                                    if ( eindex==26636 && pt.x*tree->ticksize == 812.5 && pt.y*tree->ticksize == 1062.5 && pt.z*tree->ticksize == 109.375  ) {
 
-                        		}
-                        	}
+                                    	int ttt= find_topoAirOct(pt.x + incrementx,pt.y + incrementy,pt.z + 1, tree->ticksize);
 
-                        	if ( (oct_tofind == NULL) || ( has_topo == 0 ) ) { /* pixel is truly in the air  */
+                                    	fprintf(stdout,"first increment, ttt=%d \n\n", ttt);
+                                     }
 
-                        		for ( xadjust = 0; xadjust < 2; xadjust++ ) {
-                        			for ( yadjust = 0; yadjust < 2; yadjust++ ) {
+                        			/* If the point is inside the buildings
+                        			 *  and outside the pushdown */
+                        			if (find_topoAirOct(
+                        					pt.x + incrementx,
+                        					pt.y + incrementy,
+                        					pt.z + 1, tree->ticksize) == 0) {
 
-                        				incrementx = - 1 + 2*xadjust;
-                        				incrementy = - 1 + 2*yadjust;
-                        				oct_tofind = octor_searchoctant( octree, pt.x + incrementx, pt.y + incrementy, pt.z + 1, PIXELLEVEL, AGGREGATE_SEARCH );
+                        				adjustedpt.x += incrementx;
+                        				adjustedpt.y += incrementy;
+                        				adjustedpt.z += 1;
 
-                        				if (oct_tofind != NULL) {
-                        					has_topo   = topo_crossings( tree->ticksize * oct_tofind->lx, tree->ticksize * oct_tofind->ly, tree->ticksize * oct_tofind->lz,
-                        							tree->ticksize * ( (tick_t)1 << (PIXELLEVEL - oct_tofind->level) ) );
-
-                        					if ( (has_topo != 0) ) {
-                        						topo_flag = 1;
-                        						adjustedpt.x += incrementx;
-                        						adjustedpt.y += incrementy;
-                        						adjustedpt.z += 1;
-                        						break;
-                        					}
-
-                        					if ( topo_flag == 1 )
-                        						break;
-                        				}
+                        				flag = 1;
+                        				break;
                         			}
-
                         		}
                         	}
-                        } /* end of topographic adjustemnt */
+                        	if ( flag == 1 ) break;
+                        }
+
+
+                        if ( eindex==26636 && pt.x*tree->ticksize == 812.5 && pt.y*tree->ticksize == 1062.5 && pt.z*tree->ticksize == 109.375  ){
+                            fprintf(stdout, "DORIANNNN vertex owner AFTER=%d\n",
+                            		vertex->owner);
+                        }
 
                         vertex->owner = (tree->groupsize == 1) ? 0 :
                         		math_zsearch(tree->com->interval,
@@ -5649,6 +5586,8 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
 
                         /* Update the statistics */
                         harborcount++;
+
+
 
                     } else {
                         /* We have encountered this vertex already */
@@ -5669,8 +5608,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
 
     } /* for all the local octants */
 
-    fprintf(stdout,
-    		"Second test done \n\n");
+    fprintf(stdout,"Paso OCTANTS DORIAN \n \n");
 
     /* RICARDO SANITY CHECKS */
     if ( oct != NULL ) {
@@ -5781,42 +5719,23 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                 			}
 
 
-
-                         	/* if topography is considered find the topo_octant holding pt... */
-                            if ( (topo_nodesearch( vertex->x, vertex->y, vertex->z, tree->ticksize) == 1) ) {
-//
-                                octant_t *topo_oct = octor_searchoctant( octree, pt.x, pt.y, pt.z, PIXELLEVEL, AGGREGATE_SEARCH );
-                            	if ( ( topo_oct == NULL ) ||
-                            	     ( topo_crossings( tree->ticksize * oct->lx, tree->ticksize * oct->ly, tree->ticksize * oct->lz, tree->ticksize * oct->level) == 0 )) {  /* I know for sure that pt is in the air */
+                            if (find_topoAirOct != NULL) {
+                            	if ( ( find_topoAirOct (pt.x, pt.y, pt.z, tree->ticksize) == 1 ) ) {
                             		continue;
                             	}
-
-                            	/* discard octant if is an air octant */
-                         		if ( topo_crossings( tree->ticksize * oct->lx, tree->ticksize * oct->ly, tree->ticksize * oct->lz, tree->ticksize * oct->level) == 0 )
-                         			continue;
-
-
                             }
+
 
                 			/* Find who possess the pixel */
                 			procid = math_zsearch(tree->com->interval,
                 					tree->groupsize, &pt);
-
-//                			/* THIS PART IS WORKING. DO NOT KNOW WHY, IT JUST DOES !!! */
-//                          /* continue if procid is not found and air point exists  */
-//                            if ( ( ( procid < 0 ) || ( procid > tree->groupsize ) ) &&
-//                            		topo_nodesearch( pt.x, pt.y, pt.z, tree->ticksize) == 1 ) {
-//                            	continue;
-//                            }
-
-                            /* END WORKING PART */
 
                 			/* Sanity check introduced after the buildings
                 			 * options were incorporated. Should never occur */
                 			if ( ( procid < 0 ) ||
                 					( procid > tree->groupsize ) ) {
                 				fprintf(stderr,
-                						"Thread %d: RESTREPO wrong procid from math "
+                						"Thread %d: wrong procid from math "
                 						"search at octor_extractmesh direct "
                 						"sharing in vertex with coords "
                 						"x,y,z = %f %f %f\n",
@@ -6051,7 +5970,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
             vertex = (vertex_t *)link->record;
 
             int32_t rp = node_setproperty(tree, vertex, &vertex->property,
-                    bldgs_nodesearch, topo_nodesearch);
+                    bldgs_nodesearch );
 
             if ( rp != 0) {
                 double x = vertex->x * tree->ticksize;
@@ -6696,6 +6615,10 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     if (link == NULL) {
                         fprintf(stderr, "Thread %d: %s %d: internal error\n",
                                 tree->procid, __FILE__, __LINE__);
+                        fprintf(stderr, "eindex=%d, node x,y,z=%f, %f, %f\n",
+                                eindex, pt.x*tree->ticksize, pt.y*tree->ticksize, pt.z*tree->ticksize);
+
+
                         MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
                         exit(1);
                     }
