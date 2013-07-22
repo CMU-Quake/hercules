@@ -4362,8 +4362,8 @@ static void solver_run()
         Timer_Start( "Compute Physics" );
         solver_compute_displacement( Global.mySolver, Global.myMesh );
         solver_geostatic_fix( step );
-        solver_load_fixedbase_displacements( Global.mySolver, Global.myMesh, step );
         solver_update_constrained_slab_displacements( Global.mySolver, step );
+        solver_load_fixedbase_displacements( Global.mySolver, Global.myMesh, step );
         Timer_Stop( "Compute Physics" );
 
         Timer_Start( "Communication" );
