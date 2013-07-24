@@ -7502,7 +7502,7 @@ int main( int argc, char** argv )
     		bldgs_fixedbase_init( Global.myMesh, Param.theEndT-Param.theStartT );
     	}
     	if ( get_constrained_slab_flag() == YES ) {
-    		constrained_slabs_init( Global.myMesh, Param.theEndT-Param.theStartT, Global.theGroupSize, Global.myID );
+    		constrained_slabs_init( Global.myMesh, Param.theEndT-Param.theStartT, Param.theDeltaT,  Global.theGroupSize, Global.myID );
     	}
     	/* Need the building information for rotational fixed base motion*/
     	//bldgs_finalize();

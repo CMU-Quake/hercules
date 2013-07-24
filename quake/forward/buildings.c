@@ -134,6 +134,10 @@ typedef struct basenode_t {
  */
 typedef struct master_constrained_slab_bldg {
 
+	/* file to print the 6 dofs per level  for each building */
+
+	FILE   *bldgDisp;
+
 	/* general building information */
 
 	int l; /* # of plan-levels in each building + foundation */
@@ -250,6 +254,12 @@ static noyesflag_t  constrainedSlabs = 0;
 static char         theBaseFixedDir[256];
 static char         theBaseFixedSufix[64];
 static char         theTypeBaseExcitation[64];
+
+static char         theConstrainedDispDir[256];
+static int          theConstrainedDispPrintRate;
+static double       theConstrainedDispDeltaHeight; /* Delta distance along the height
+of the building that dis is printed */
+
 
 static fixed_excitation_type_t theBaseFixedType;
 
@@ -1234,17 +1244,17 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 						///* eccentricity is perpendicular to NS */
 						//if ( theBuilding[i].ecc_direction  == 0 ) {
 						//	eccentricity += (y_physical - theBuilding[i].bounds.ymin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
-						//			(pow(225.0,2) * 10 * 10 * 18);
+						//			(pow(300.00,2) * 10 * 10 * 30);
 						//}
 						//
-						//* eccentricity is perpendicular to EW */
+						///* eccentricity is perpendicular to EW */
 						//if ( theBuilding[i].ecc_direction  == 1 ) {
 						//	eccentricity += (x_physical - theBuilding[i].bounds.xmin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
-						//			(pow(225.0,2) * 10 * 10 * 18);
+						//			(pow(300.00,2) *  10 * 10 * 30);
 						//}
 						//
-						//totVssq += pow(edata->Vs,2)/pow(225.0,2) /( 10 * 10 * 18);
-						//totVpsq += pow(edata->Vp,2)/pow(225.0*2.5,2) /( 10 * 10 * 18);
+						//totVssq += pow(edata->Vs,2)/pow(300.00,2) /(  10 * 10 * 30);
+						//totVpsq += pow(edata->Vp,2)/pow(300.00*2.5,2) /(  10 * 10 * 30);
 
 					}
 				}
@@ -1402,7 +1412,6 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     		MPI_Bcast(theOuterElemCount,   theNumberOfBuildings, MPI_INT, 0, comm_solver);
     		MPI_Bcast(theEccDirection,     theNumberOfBuildings, MPI_INT, 0, comm_solver);
 
-
     	}
 
 
@@ -1432,6 +1441,19 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     		}
 
     		theBaseFixedType = base_fixed_type;
+    	}
+
+
+    	/* Broadcast constrained buildings data */
+    	if ( constrainedSlabs == YES ) {
+
+    		broadcast_char_array( theConstrainedDispDir,   sizeof(theConstrainedDispDir),
+    				0, comm_solver );
+
+    		MPI_Bcast(&theConstrainedDispPrintRate, 1, MPI_INT, 0, comm_solver);
+
+    		MPI_Bcast(&theConstrainedDispDeltaHeight, 1, MPI_DOUBLE, 0, comm_solver);
+
     	}
 
     	theBuilding = (bldg_t *)malloc( sizeof(bldg_t) * theNumberOfBuildings );
@@ -1726,6 +1748,39 @@ buildings_initparameters ( const char *parametersin )
 	/* Detour for fixed base option */
 	if ( areBaseFixed == YES ) {
 		fixedbase_read( fp );
+	}
+
+	if ( constrainedSlabs == YES ) {
+
+		if (( parsetext(fp, "constrained_bldg_file", 's', &theConstrainedDispDir ) != 0) )
+		{
+			fprintf( stderr,
+					"Parsetext returned non-zero from %s."
+					"Error parsing constrained building option\n",
+					parametersin );
+			return -1;
+		}
+
+		if (( parsetext(fp, "constrained_bldg_print_rate", 'i', &theConstrainedDispPrintRate ) != 0) )
+		{
+			fprintf( stderr,
+					"Parsetext returned non-zero from %s."
+					"Error parsing constrained_bldg_print_rate\n",
+					parametersin );
+			return -1;
+		}
+
+		if (( parsetext(fp, "constrained_bldg_print_height", 'd', &theConstrainedDispDeltaHeight ) != 0) )
+		{
+			fprintf( stderr,
+					"Parsetext returned non-zero from %s."
+					"Error parsing constrained_bldg_print_height\n",
+					parametersin );
+			return -1;
+		}
+
+		theConstrainedDispDeltaHeight = adjust( theConstrainedDispDeltaHeight );
+
 	}
 
 	if ( numBldgs > 0 ) {
@@ -2158,7 +2213,7 @@ void bldgs_fixedbase_init ( mesh_t *myMesh, double simTime ) {
     return;
 }
 
-void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_number, int32_t myID ) {
+void constrained_slabs_init ( mesh_t *myMesh, double simTime, double deltaT, int32_t group_number, int32_t myID ) {
 
 	int iBldg, i, j, k, l, iMaster = -1, iSharer = -1;
 	int nodes_x, nodes_y;
@@ -2171,7 +2226,7 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 	int* sharerproc_all; /* how many nodes does the procs( only sharers)  have in each building + foundation. 0 if I am the master.
 	First the information of Proc0 for each building, then Proc1 for each building and goes on like this... */
 
-//	printf(" \n eccentricity = %f tot Vp = %f tot Vs = %f \n", eccentricity , totVpsq, totVssq);
+	//printf(" \n eccentricity = %f tot Vp = %f tot Vs = %f \n", eccentricity , totVpsq, totVssq);
 
 	ticksize = myMesh->ticksize;
 
@@ -2269,6 +2324,12 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 				int sharer_count = 0;
 				double x_m;
 				double y_m;
+
+				char       filename [256];
+
+				/* Open files to write displacements in the constrained building */
+				sprintf(filename, "%s%s%d", theConstrainedDispDir, "bld.", iBldg);
+				theMasterConstrainedSlab[iMaster].bldgDisp = hu_fopen( filename,"w" );
 
 				/* These are general building + foundation information */
 				theMasterConstrainedSlab[iMaster].l = ( theBuilding[iBldg].height + theBuilding[iBldg].depth) /
@@ -2410,6 +2471,52 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_numb
 						theBuilding[iBldg].bounds.xmin)/2;
 				bldg_center_y_m = (theBuilding[iBldg].bounds.ymax +
 						theBuilding[iBldg].bounds.ymin)/2;
+
+
+				/* fill in the header for the constrained dis file */
+
+				hu_fwrite( &theBuilding[iBldg].ecc_direction,  sizeof(int), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+
+				hu_fwrite( &theBuilding[iBldg].bounds.xmin, sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bounds.xmax, sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bounds.ymin, sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bounds.ymax, sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].height, sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].depth,  sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+
+				hu_fwrite( &theBuilding[iBldg].bldgprops_up_down.Vp,     sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bldgprops_left_left.Vp,   sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bldgprops_left_right.Vp,  sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bldgprops_right_left.Vp,  sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bldgprops_right_right.Vp, sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+
+				hu_fwrite( &theBuilding[iBldg].bldgprops_up_down.Vs,     sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bldgprops_left_left.Vs,   sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bldgprops_left_right.Vs,  sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bldgprops_right_left.Vs,  sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bldgprops_right_right.Vs, sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+
+				hu_fwrite( &theBuilding[iBldg].bldgprops_up_down.rho,     sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bldgprops_left_left.rho,   sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bldgprops_left_right.rho,  sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bldgprops_right_left.rho,  sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].bldgprops_right_right.rho, sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+
+				hu_fwrite( &theBuilding[iBldg].outer_elems_count,  sizeof(int), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].inner_elems_count,  sizeof(int), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].building_damping,   sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+
+				hu_fwrite( &theBuilding[iBldg].fdtnprops.Vp,  		 sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].fdtnprops.Vs,  		 sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].fdtnprops.rho,  		 sizeof(float), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theBuilding[iBldg].foundation_damping,   sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+
+				hu_fwrite( &theMinOctSizeMeters,   sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &deltaT,   sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &simTime,   sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theConstrainedDispPrintRate,   sizeof(int), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &theConstrainedDispDeltaHeight, sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+
 
 				for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
 
@@ -2847,8 +2954,6 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 		}
 	}
 
-
-
 	/* First, masters post receives */
 
 	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
@@ -2918,6 +3023,13 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
 
 		/* Calculate for each level */
+
+		double time = simDT * step;
+
+		/* Fill in the constrained building disp file */
+		if (step % theConstrainedDispPrintRate == 0) {
+			hu_fwrite( &time,  sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp );
+		}
 
 		for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
 
@@ -3083,10 +3195,28 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 			theMasterConstrainedSlab[iMaster].average_values[6*l + 3] = average_values[3];
 			theMasterConstrainedSlab[iMaster].average_values[6*l + 4] = average_values[4];
 			theMasterConstrainedSlab[iMaster].average_values[6*l + 5] = average_values[5];
+
+//			theMasterConstrainedSlab[iMaster].average_values[6*l + 4] = 0;
+//			theMasterConstrainedSlab[iMaster].average_values[6*l + 5] = 0;
+
+			/* Fill in the constrained building disp file */
+
+			if (step % theConstrainedDispPrintRate == 0) {
+
+				if (l % (int)(theConstrainedDispDeltaHeight/theMinOctSizeMeters) == 0) {
+
+					hu_fwrite( &theMasterConstrainedSlab[iMaster].average_values[6*l + 0],  sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+					hu_fwrite( &theMasterConstrainedSlab[iMaster].average_values[6*l + 1],  sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+					hu_fwrite( &theMasterConstrainedSlab[iMaster].average_values[6*l + 2],  sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+
+					hu_fwrite( &theMasterConstrainedSlab[iMaster].average_values[6*l + 3],  sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+					hu_fwrite( &theMasterConstrainedSlab[iMaster].average_values[6*l + 4],  sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+					hu_fwrite( &theMasterConstrainedSlab[iMaster].average_values[6*l + 5],  sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				}
+			}
+
 		}
 	}
-
-
 
 	/* Now sharers post receives */
 
@@ -3224,6 +3354,9 @@ void solver_constrained_buildings_close () {
 	if ( get_constrained_slab_flag() == YES ) {
 
 		for ( i = 0; i < theNumberOfBuildingsMaster; i++ ) {
+
+			hu_fclosep( &theMasterConstrainedSlab[i].bldgDisp );
+
 			free(theMasterConstrainedSlab[i].owner_ids);
 			free(theMasterConstrainedSlab[i].node_counts);
 			free(theMasterConstrainedSlab[i].average_values);

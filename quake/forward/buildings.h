@@ -72,7 +72,7 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 );
 
 void bldgs_fixedbase_init ( mesh_t *myMesh, double simTime );
 
-void constrained_slabs_init ( mesh_t *myMesh, double simTime, int32_t group_number, int32_t myID);
+void constrained_slabs_init ( mesh_t *myMesh, double simTime, double deltaT, int32_t group_number, int32_t myID);
 
 void bldgs_load_fixedbase_disps ( mysolver_t* mySolver, mesh_t *myMesh, double simDT, int step );
 
