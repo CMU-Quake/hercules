@@ -249,11 +249,15 @@ typedef struct sharer_constrained_slab_bldg {
 static noyesflag_t  areBaseFixed = 0;
 static noyesflag_t  asymmetricBuildings = 0;
 static noyesflag_t  constrainedSlabs = 0;
+static noyesflag_t  shearBuildings = 0;
+static noyesflag_t  parabolicVariation = 0;
 
 
 static char         theBaseFixedDir[256];
 static char         theBaseFixedSufix[64];
 static char         theTypeBaseExcitation[64];
+static char         theShearBuildingOption[64];
+static char         theParabolicShearVariation[64];
 
 static char         theConstrainedDispDir[256];
 static int          theConstrainedDispPrintRate;
@@ -1164,22 +1168,32 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 						/* NOTE: Buildings should have even number of elements in  the y direction. */
 						/* non-uniform Vp and Vs distribution in y direction only */
 
-						int n1, n2, n_x, n_y, location1, location2, location_x, location_y;
-						double y_physical, x_physical;
+						int n1, n2, n_x, n_y, n_z, location1, location2, location_x, location_y, location_z;
+						double y_physical, x_physical, Vs_upper, Vs_lower, z_norm_upper, z_norm_lower;
 
 						y_physical = y * ticksize;
 						x_physical = x * ticksize;
 
 						/* number of elements along y */
 						n_y = (theBuilding[i].bounds.ymax - theBuilding[i].bounds.ymin)/theMinOctSizeMeters;
+
 						/* number of elements along x */
 						n_x = (theBuilding[i].bounds.xmax - theBuilding[i].bounds.xmin)/theMinOctSizeMeters;
+
+						/* number of elements along z */
+						n_z = (theSurfaceShift - theBuilding[i].bounds.zmin)/theMinOctSizeMeters;
 
 						/* location(wrt lower left building corner) goes from 0 to n-1*/
 						location_y = (y_physical - theBuilding[i].bounds.ymin)/theMinOctSizeMeters;
 
 						/* location(wrt lower left building corner) goes from 0 to n-1*/
 						location_x = (x_physical - theBuilding[i].bounds.xmin)/theMinOctSizeMeters;
+
+						/* location(wrt lower left building base corner) goes from 1 to n*/
+						location_z = (theSurfaceShift  - z_m)/theMinOctSizeMeters;
+
+						z_norm_upper = (double)location_z / (double)n_z;
+						z_norm_lower = (double)(location_z - 1) / (double)n_z;
 
 						/* eccentricity is perpendicular to NS */
 						if ( theBuilding[i].ecc_direction  == 0 ) {
@@ -1201,16 +1215,101 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 
 						/* outer edge properties perpendicular to eccentricity */
 						if ( location2 < theBuilding[i].outer_elems_count ) {
-							edata->Vp =      theBuilding[i].bldgprops_up_down.Vp;
-							edata->Vs =      theBuilding[i].bldgprops_up_down.Vs;
-							edata->rho = 	 theBuilding[i].bldgprops_up_down.rho;
+
+							if ( location1 >= 1 && location1 < n1 - 1 ) {
+
+								edata->Vp =      100.0;
+								edata->Vs =      50.0;
+								edata->rho = 	 theBuilding[i].bldgprops_up_down.rho;
+
+								/* Parabolic distribution of Vs^2 and Vp^2 along height. smaller at top (0.3 Vsave^2) */
+
+								if ( parabolicVariation == YES ) {
+
+									Vs_upper = 1.05 * z_norm_upper - 1.05 * pow (z_norm_upper, 3) / 3 + 0.3 * z_norm_upper;
+									Vs_lower = 1.05 * z_norm_lower - 1.05 * pow (z_norm_lower, 3) / 3 + 0.3 * z_norm_lower;
+
+									edata->Vp =      pow( pow( edata->Vp,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+									edata->Vs =      pow( pow( edata->Vs,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+								}
+
+
+							}
+
+							else {
+
+								double newVs;
+
+								newVs = pow ( (pow (theBuilding[i].bldgprops_up_down.Vs,2) * n1 - pow (50,2) * (n1 - 2)) / 2  ,0.5 );
+
+								edata->Vp =      2 * newVs;
+								edata->Vs =      newVs;
+								edata->rho = 	 theBuilding[i].bldgprops_up_down.rho;
+
+
+								/* Parabolic distribution of Vs^2 and Vp^2 along height. smaller at top (0.3 Vsave^2) */
+
+								if ( parabolicVariation == YES ) {
+
+									Vs_upper = 1.05 * z_norm_upper - 1.05 * pow (z_norm_upper, 3) / 3 + 0.3 * z_norm_upper;
+									Vs_lower = 1.05 * z_norm_lower - 1.05 * pow (z_norm_lower, 3) / 3 + 0.3 * z_norm_lower;
+
+									edata->Vp =      pow( pow( edata->Vp,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+									edata->Vs =      pow( pow( edata->Vs,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+								}
+
+							}
 						}
 
+
+
 						else if (location2 >= n2 - theBuilding[i].outer_elems_count ) {
-							edata->Vp =      theBuilding[i].bldgprops_up_down.Vp;
-							edata->Vs =      theBuilding[i].bldgprops_up_down.Vs;
-							edata->rho = 	 theBuilding[i].bldgprops_up_down.rho;
+
+							if ( location1 >= 1 && location1 < n1 - 1 ) {
+
+								edata->Vp =      100.0;
+								edata->Vs =      50.0;
+								edata->rho = 	 theBuilding[i].bldgprops_up_down.rho;
+
+
+								/* Parabolic distribution of Vs^2 and Vp^2 along height. smaller at top (0.3 Vsave^2) */
+
+								if ( parabolicVariation == YES ) {
+
+									Vs_upper = 1.05 * z_norm_upper - 1.05 * pow (z_norm_upper, 3) / 3 + 0.3 * z_norm_upper;
+									Vs_lower = 1.05 * z_norm_lower - 1.05 * pow (z_norm_lower, 3) / 3 + 0.3 * z_norm_lower;
+
+									edata->Vp =      pow( pow( edata->Vp,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+									edata->Vs =      pow( pow( edata->Vs,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+								}
+
+							}
+
+							else {
+
+								double newVs;
+
+								newVs = pow ( (pow (theBuilding[i].bldgprops_up_down.Vs,2) * n1 - pow (50,2) * (n1 - 2))/2  ,0.5 );
+
+								edata->Vp =      2 * newVs;
+								edata->Vs =      newVs;
+								edata->rho = 	 theBuilding[i].bldgprops_up_down.rho;
+
+
+								/* Parabolic distribution of Vs^2 and Vp^2 along height. smaller at top (0.3 Vsave^2) */
+
+								if ( parabolicVariation == YES ) {
+
+									Vs_upper = 1.05 * z_norm_upper - 1.05 * pow (z_norm_upper, 3) / 3 + 0.3 * z_norm_upper;
+									Vs_lower = 1.05 * z_norm_lower - 1.05 * pow (z_norm_lower, 3) / 3 + 0.3 * z_norm_lower;
+
+									edata->Vp =      pow( pow( edata->Vp,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+									edata->Vs =      pow( pow( edata->Vs,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+								}
+
+							}
 						}
+
 
 						else {
 
@@ -1220,41 +1319,93 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 								edata->Vp =      theBuilding[i].bldgprops_left_left.Vp;
 								edata->Vs =      theBuilding[i].bldgprops_left_left.Vs;
 								edata->rho = 	 theBuilding[i].bldgprops_left_left.rho;
+
+
+								/* Parabolic distribution of Vs^2 and Vp^2 along height. smaller at top (0.3 Vsave^2) */
+
+								if ( parabolicVariation == YES ) {
+
+									Vs_upper = 1.05 * z_norm_upper - 1.05 * pow (z_norm_upper, 3) / 3 + 0.3 * z_norm_upper;
+									Vs_lower = 1.05 * z_norm_lower - 1.05 * pow (z_norm_lower, 3) / 3 + 0.3 * z_norm_lower;
+
+									edata->Vp =      pow( pow( edata->Vp,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+									edata->Vs =      pow( pow( edata->Vs,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+								}
+
 							}
 
 							if (location1 >= n1/2 - theBuilding[i].inner_elems_count && location1 < n1/2 ) {
 								edata->Vp =      theBuilding[i].bldgprops_left_right.Vp;
 								edata->Vs =      theBuilding[i].bldgprops_left_right.Vs;
 								edata->rho = 	 theBuilding[i].bldgprops_left_right.rho;
+
+
+								/* Parabolic distribution of Vs^2 and Vp^2 along height. smaller at top (0.3 Vsave^2) */
+
+								if ( parabolicVariation == YES ) {
+
+									Vs_upper = 1.05 * z_norm_upper - 1.05 * pow (z_norm_upper, 3) / 3 + 0.3 * z_norm_upper;
+									Vs_lower = 1.05 * z_norm_lower - 1.05 * pow (z_norm_lower, 3) / 3 + 0.3 * z_norm_lower;
+
+									edata->Vp =      pow( pow( edata->Vp,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+									edata->Vs =      pow( pow( edata->Vs,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+								}
+
 							}
 
 							if (location1 >= n1/2 && location1 < n1/2 + theBuilding[i].inner_elems_count ) {
 								edata->Vp =      theBuilding[i].bldgprops_right_left.Vp;
 								edata->Vs =      theBuilding[i].bldgprops_right_left.Vs;
 								edata->rho = 	 theBuilding[i].bldgprops_right_left.rho;
+
+
+								/* Parabolic distribution of Vs^2 and Vp^2 along height. smaller at top (0.3 Vsave^2) */
+
+								if ( parabolicVariation == YES ) {
+
+									Vs_upper = 1.05 * z_norm_upper - 1.05 * pow (z_norm_upper, 3) / 3 + 0.3 * z_norm_upper;
+									Vs_lower = 1.05 * z_norm_lower - 1.05 * pow (z_norm_lower, 3) / 3 + 0.3 * z_norm_lower;
+
+									edata->Vp =      pow( pow( edata->Vp,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+									edata->Vs =      pow( pow( edata->Vs,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+								}
+
 							}
 
 							if (location1 >= n1/2 + theBuilding[i].inner_elems_count ) {
 								edata->Vp =      theBuilding[i].bldgprops_right_right.Vp;
 								edata->Vs =      theBuilding[i].bldgprops_right_right.Vs;
 								edata->rho = 	 theBuilding[i].bldgprops_right_right.rho;
+
+
+								/* Parabolic distribution of Vs^2 and Vp^2 along height. smaller at top (0.3 Vsave^2) */
+
+								if ( parabolicVariation == YES ) {
+
+									Vs_upper = 1.05 * z_norm_upper - 1.05 * pow (z_norm_upper, 3) / 3 + 0.3 * z_norm_upper;
+									Vs_lower = 1.05 * z_norm_lower - 1.05 * pow (z_norm_lower, 3) / 3 + 0.3 * z_norm_lower;
+
+									edata->Vp =      pow( pow( edata->Vp,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+									edata->Vs =      pow( pow( edata->Vs,2 ) * ( Vs_upper - Vs_lower) * n_z, 0.5);
+								}
+
 							}
 
 						}
-						///* eccentricity is perpendicular to NS */
-						//if ( theBuilding[i].ecc_direction  == 0 ) {
-						//	eccentricity += (y_physical - theBuilding[i].bounds.ymin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
-						//			(pow(300.00,2) * 10 * 10 * 30);
-						//}
-						//
-						///* eccentricity is perpendicular to EW */
-						//if ( theBuilding[i].ecc_direction  == 1 ) {
-						//	eccentricity += (x_physical - theBuilding[i].bounds.xmin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
-						//			(pow(300.00,2) *  10 * 10 * 30);
-						//}
-						//
-						//totVssq += pow(edata->Vs,2)/pow(300.00,2) /(  10 * 10 * 30);
-						//totVpsq += pow(edata->Vp,2)/pow(300.00*2.5,2) /(  10 * 10 * 30);
+//						/* eccentricity is perpendicular to NS */
+//						if ( theBuilding[i].ecc_direction  == 0 ) {
+//							eccentricity += (y_physical - theBuilding[i].bounds.ymin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
+//									(pow(144.00,2) * 8 * 12 * 12);
+//						}
+//
+//						/* eccentricity is perpendicular to EW */
+//						if ( theBuilding[i].ecc_direction  == 1 ) {
+//							eccentricity += (x_physical - theBuilding[i].bounds.xmin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
+//									(pow(144.00,2) *  8 * 12 * 12);
+//						}
+//
+//						totVssq += pow(edata->Vs,2)/pow(144.00,2) /(  8 * 12 * 12);
+//						totVpsq += pow(edata->Vp,2)/pow(144.00*2.5,2) /(  8 * 12 * 12);
 
 					}
 				}
@@ -1447,6 +1598,16 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     	/* Broadcast constrained buildings data */
     	if ( constrainedSlabs == YES ) {
 
+    		noyesflag_t shearbldg = -1;
+    		noyesflag_t parabolicdist = -1;
+
+
+			broadcast_char_array( theParabolicShearVariation, sizeof(theParabolicShearVariation),
+    				0, comm_solver );
+    				
+    		broadcast_char_array( theShearBuildingOption, sizeof(theShearBuildingOption),
+    				0, comm_solver );
+
     		broadcast_char_array( theConstrainedDispDir,   sizeof(theConstrainedDispDir),
     				0, comm_solver );
 
@@ -1454,6 +1615,31 @@ void bldgs_init ( int32_t myID, const char *parametersin )
 
     		MPI_Bcast(&theConstrainedDispDeltaHeight, 1, MPI_DOUBLE, 0, comm_solver);
 
+
+    		if ( strcasecmp(theShearBuildingOption, "yes") == 0 ) {
+    			shearbldg = YES;
+    		} else if ( strcasecmp(theShearBuildingOption, "no") == 0 ) {
+    			shearbldg = NO;
+    		} else {
+    			solver_abort( __FUNCTION_NAME, NULL,
+    					"Unknown response for shearbldg"
+    					"option (yes or no): %s\n",
+    					theShearBuildingOption );
+    		}
+
+			if ( strcasecmp(theParabolicShearVariation, "yes") == 0 ) {
+    			parabolicdist = YES;
+    		} else if ( strcasecmp(theParabolicShearVariation, "no") == 0 ) {
+    			parabolicdist = NO;
+    		} else {
+    			solver_abort( __FUNCTION_NAME, NULL,
+    					"Unknown response for parabolicdist"
+    					"option (yes or no): %s\n",
+    					theParabolicShearVariation );
+    		}
+
+			parabolicVariation = parabolicdist;
+    		shearBuildings = shearbldg;
     	}
 
     	theBuilding = (bldg_t *)malloc( sizeof(bldg_t) * theNumberOfBuildings );
@@ -1779,8 +1965,26 @@ buildings_initparameters ( const char *parametersin )
 			return -1;
 		}
 
-		theConstrainedDispDeltaHeight = adjust( theConstrainedDispDeltaHeight );
+		if (( parsetext(fp, "parabolic_modulus_variation", 's', &theParabolicShearVariation ) != 0) )
+		{
+			fprintf( stderr,
+					"Parsetext returned non-zero from %s."
+					"Error parsing parabolic_modulus_variation\n",
+					parametersin );
+			return -1;
+		}
+		
+		
+		if (( parsetext(fp, "pure_shear_bldgs", 's', &theShearBuildingOption ) != 0) )
+		{
+			fprintf( stderr,
+					"Parsetext returned non-zero from %s."
+					"Error parsing pure_shear_bldgs\n",
+					parametersin );
+			return -1;
+		}
 
+		theConstrainedDispDeltaHeight = adjust( theConstrainedDispDeltaHeight );
 	}
 
 	if ( numBldgs > 0 ) {
@@ -2226,7 +2430,7 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, double deltaT, int
 	int* sharerproc_all; /* how many nodes does the procs( only sharers)  have in each building + foundation. 0 if I am the master.
 	First the information of Proc0 for each building, then Proc1 for each building and goes on like this... */
 
-	//printf(" \n eccentricity = %f tot Vp = %f tot Vs = %f \n", eccentricity , totVpsq, totVssq);
+//	printf(" \n eccentricity = %f tot Vp = %f tot Vs = %f \n", eccentricity , totVpsq, totVssq);
 
 	ticksize = myMesh->ticksize;
 
@@ -3196,8 +3400,11 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 			theMasterConstrainedSlab[iMaster].average_values[6*l + 4] = average_values[4];
 			theMasterConstrainedSlab[iMaster].average_values[6*l + 5] = average_values[5];
 
-//			theMasterConstrainedSlab[iMaster].average_values[6*l + 4] = 0;
-//			theMasterConstrainedSlab[iMaster].average_values[6*l + 5] = 0;
+			if (shearBuildings == YES) {
+				/* Pure shear buildings */
+				theMasterConstrainedSlab[iMaster].average_values[6*l + 4] = 0;
+				theMasterConstrainedSlab[iMaster].average_values[6*l + 5] = 0;
+			}
 
 			/* Fill in the constrained building disp file */
 
