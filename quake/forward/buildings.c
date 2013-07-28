@@ -1218,8 +1218,11 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 
 							if ( location1 >= 1 && location1 < n1 - 1 ) {
 
+								/* Manually center elements are made softer ( 46 m/s) */
+								/* Corner elements are stiffer */
+
 								edata->Vp =      100.0;
-								edata->Vs =      50.0;
+								edata->Vs =      46.0;
 								edata->rho = 	 theBuilding[i].bldgprops_up_down.rho;
 
 								/* Parabolic distribution of Vs^2 and Vp^2 along height. smaller at top (0.3 Vsave^2) */
@@ -1240,7 +1243,7 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 
 								double newVs;
 
-								newVs = pow ( (pow (theBuilding[i].bldgprops_up_down.Vs,2) * n1 - pow (50,2) * (n1 - 2)) / 2  ,0.5 );
+								newVs = pow ( (pow (theBuilding[i].bldgprops_up_down.Vs,2) * n1 - pow (46,2) * (n1 - 2)) / 2  ,0.5 );
 
 								edata->Vp =      2 * newVs;
 								edata->Vs =      newVs;
@@ -1267,8 +1270,11 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 
 							if ( location1 >= 1 && location1 < n1 - 1 ) {
 
+								/* Manually center elements are made softer ( 46 m/s) */
+								/* Corner elements are stiffer */
+
 								edata->Vp =      100.0;
-								edata->Vs =      50.0;
+								edata->Vs =      46.0;
 								edata->rho = 	 theBuilding[i].bldgprops_up_down.rho;
 
 
@@ -1289,7 +1295,7 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 
 								double newVs;
 
-								newVs = pow ( (pow (theBuilding[i].bldgprops_up_down.Vs,2) * n1 - pow (50,2) * (n1 - 2))/2  ,0.5 );
+								newVs = pow ( (pow (theBuilding[i].bldgprops_up_down.Vs,2) * n1 - pow (46,2) * (n1 - 2))/2  ,0.5 );
 
 								edata->Vp =      2 * newVs;
 								edata->Vs =      newVs;
@@ -1392,23 +1398,23 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 							}
 
 						}
-					 //	/* eccentricity is perpendicular to NS */
-					 //	if ( theBuilding[i].ecc_direction  == 0 ) {
-					 //		eccentricity += (y_physical - theBuilding[i].bounds.ymin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
-					 //				(pow(144.00,2) * 8 * 12 * 12);
-					 //	}
-                     //
-					 //	/* eccentricity is perpendicular to EW */
-					 //	 if ( theBuilding[i].ecc_direction  == 1 ) {
-					 //		eccentricity += (x_physical - theBuilding[i].bounds.xmin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
-					 //				(pow(144.00,2) *  8 * 12 * 12);
-   					 //}
-                        // 
-						//totVssq += pow(edata->Vs,2)/pow(144.00,2) /(  8 * 12 * 12);
-						//totVpsq += pow(edata->Vp,2)/pow(144.00*2.5,2) /(  8 * 12 * 12);
+//					 	/* eccentricity is perpendicular to NS */
+//					 	if ( theBuilding[i].ecc_direction  == 0 ) {
+//					 		eccentricity += (y_physical - theBuilding[i].bounds.ymin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
+//					 				(pow(138.00,2) * 8 * 12 * 12);
+//					 	}
+//
+//					 	/* eccentricity is perpendicular to EW */
+//					 	 if ( theBuilding[i].ecc_direction  == 1 ) {
+//					 		eccentricity += (x_physical - theBuilding[i].bounds.xmin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
+//					 				(pow(138.00,2) *  8 * 12 * 12);
+//  					 }
+//
+//						totVssq += pow(edata->Vs,2)/pow(138.00,2) /(  8 * 12 * 12);
+//						totVpsq += pow(edata->Vp,2)/pow(138.00*2.5,2) /(  8 * 12 * 12);
 
-//						totVssq += pow(edata->Vs,1)/pow(144.00,1) /(  8 * 12 * 12);
-//						totVpsq += pow(edata->Vp,1)/pow(144.00*2.5,1) /(  8 * 12 * 12);
+//						totVssq += pow(edata->Vs,1)/pow(138.00,1) /(  8 * 12 * 12);
+//						totVpsq += pow(edata->Vp,1)/pow(138.00*2.5,1) /(  8 * 12 * 12);
 					}
 				}
 
