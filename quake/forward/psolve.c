@@ -56,6 +56,7 @@
 #include "quake_util.h"
 #include "buildings.h"
 #include "drm.h"
+#include "softsoil.h"
 #include "meshformatlab.h"
 
 
@@ -261,6 +262,7 @@ static struct Param_t {
     double  theDomainZ;
     noyesflag_t  drmImplement;
     drm_part_t   theDrmPart;
+	noyesflag_t  softerSoil;
 
 } Param = {
     .FourDOutFp = NULL,
@@ -367,7 +369,7 @@ monitor_print( const char* format, ... )
 static void read_parameters( int argc, char** argv ){
 
 #define LOCAL_INIT_DOUBLE_MESSAGE_LENGTH 18  /* Must adjust this if adding double params */
-#define LOCAL_INIT_INT_MESSAGE_LENGTH 20     /* Must adjust this if adding int params */
+#define LOCAL_INIT_INT_MESSAGE_LENGTH 21     /* Must adjust this if adding int params */
 
     double  double_message[LOCAL_INIT_DOUBLE_MESSAGE_LENGTH];
     int     int_message[LOCAL_INIT_INT_MESSAGE_LENGTH];
@@ -446,6 +448,8 @@ static void read_parameters( int argc, char** argv ){
     int_message[17] = (int)Param.drmImplement;
     int_message[18] = (int)Param.useInfQk;
     int_message[19] = Param.theStepMeshingFactor;
+	int_message[20] = (int)Param.softerSoil;
+
 
 
     MPI_Bcast(int_message, LOCAL_INIT_INT_MESSAGE_LENGTH, MPI_INT, 0, comm_solver);
@@ -470,6 +474,8 @@ static void read_parameters( int argc, char** argv ){
     Param.drmImplement                   = int_message[17];
     Param.useInfQk                       = int_message[18];
     Param.theStepMeshingFactor           = int_message[19];
+	Param.softerSoil					 = int_message[20];
+
 
     /*Broadcast all string params*/
     MPI_Bcast (Param.parameters_input_file,  256, MPI_CHAR, 0, comm_solver);
@@ -669,7 +675,8 @@ static int32_t parse_parameters( const char* numericalin )
               print_station_accelerations[64],
 	      	  mesh_coordinates_for_matlab[64],
     		  implement_drm[64],
-    		  use_infinite_qk[64];
+    		  use_infinite_qk[64],
+    		  soil_softening[64];
 
     damping_type_t   typeOfDamping     = -1;
     stiffness_type_t stiffness_method  = -1;
@@ -682,7 +689,7 @@ static int32_t parse_parameters( const char* numericalin )
 
     noyesflag_t      meshCoordinatesForMatlab  = -1;
     noyesflag_t      implementdrm  = -1;
-
+	noyesflag_t      soilsoftening  = -1;
 
     /* Obtain the specification of the simulation */
     if ((fp = fopen(physicsin, "r")) == NULL)
@@ -774,6 +781,7 @@ static int32_t parse_parameters( const char* numericalin )
         (parsetext(fp, "include_buildings",              's', &include_buildings           ) != 0) ||
         (parsetext(fp, "mesh_coordinates_for_matlab",    's', &mesh_coordinates_for_matlab ) != 0) ||
         (parsetext(fp, "implement_drm",    				 's', &implement_drm               ) != 0) ||
+		(parsetext(fp, "soil_softening",    			 's', &soil_softening              ) != 0) ||
         (parsetext(fp, "simulation_velocity_profile_freq_hz",'d', &freq_vel                ) != 0) ||
         (parsetext(fp, "use_infinite_qk",                's', &use_infinite_qk             ) != 0) )
     {
@@ -984,6 +992,16 @@ static int32_t parse_parameters( const char* numericalin )
                 use_infinite_qk);
     }
 
+	if ( strcasecmp(soil_softening, "yes") == 0 ) {
+		soilsoftening = YES;
+	} else if ( strcasecmp(soil_softening, "no") == 0 ) {
+		soilsoftening = NO;
+	} else {
+		solver_abort( __FUNCTION_NAME, NULL,
+				"Unknown response for soil_softening (yes or no): %s\n",
+				soil_softening );
+	}
+
     /* Init the static global variables */
 
     Param.theRegionLat      = region_origin_latitude_deg;
@@ -1035,6 +1053,8 @@ static int32_t parse_parameters( const char* numericalin )
 
     Param.drmImplement              = implementdrm;
 
+	Param.softerSoil				= soilsoftening;
+
     strcpy( Param.theCheckPointingDirOut, checkpoint_path );
 
     monitor_print("\n\n---------------- Some Input Data ----------------\n\n");
@@ -1050,6 +1070,7 @@ static int32_t parse_parameters( const char* numericalin )
     monitor_print("Mesh Coordinates For Matlab:        %s\n", mesh_coordinates_for_matlab);
     monitor_print("cvmdb_input_file:                   %s\n", Param.cvmdb_input_file);
     monitor_print("Implement drm:      	               %s\n", implement_drm);
+	monitor_print("Soil Softening:      	           %s\n", soil_softening);
     monitor_print("\n-------------------------------------------------\n\n");
 
     fflush(Param.theMonitorFileFp);
@@ -1318,6 +1339,9 @@ setrec( octant_t* leaf, double ticksize, void* data )
     int res = 0;
     edata_t* edata = (edata_t*)data;
 
+    /* if equivalent soil degradation option is on */
+	double modulusfactor;
+
     points[0] = 0.01;
     points[1] = 1;
     points[2] = 1.99;
@@ -1327,7 +1351,9 @@ setrec( octant_t* leaf, double ticksize, void* data )
 
     /* Check for buildings and proceed according to the buildings setrec */
     if ( Param.includeBuildings == YES ) {
-		if ( bldgs_setrec( leaf, ticksize, edata, Global.theCVMEp,Global.theXForMeshOrigin,Global.theYForMeshOrigin,Global.theZForMeshOrigin ) ) {
+		if ( bldgs_setrec( leaf, ticksize, edata, Global.theCVMEp,
+				Global.theXForMeshOrigin, Global.theYForMeshOrigin,
+				Global.theZForMeshOrigin ) ) {
             return;
         }
     }
@@ -1353,7 +1379,7 @@ setrec( octant_t* leaf, double ticksize, void* data )
 
 		/* Shift the domain if buildings are considered */
 		if ( Param.includeBuildings == YES ) {
-                    z_m -= get_surface_shift();
+			z_m -= get_surface_shift();
 		}
 
 		res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
@@ -1361,6 +1387,20 @@ setrec( octant_t* leaf, double ticksize, void* data )
 		if (res != 0) {
 		    continue;
 		}
+
+
+		if ( Param.softerSoil == YES ){
+			modulusfactor = get_modulus_factor( x_m, y_m, z_m,
+					Global.theXForMeshOrigin, Global.theYForMeshOrigin,
+					Global.theZForMeshOrigin);
+
+			/*Shear strain is proportional to the square root of the modulus ratio*/
+
+			g_props.Vs = g_props.Vs*sqrt(modulusfactor);
+			g_props.Vp = g_props.Vp*sqrt(modulusfactor);
+
+		}
+
 
 		if ( g_props.Vs < g_props_min.Vs ) {
 		    /* assign minimum value of vs to produce elements
@@ -2871,6 +2911,22 @@ static void solver_set_critical_T()
 	y_m = (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].y;
 	z_m = (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].z;
 
+
+	if ( Param.softerSoil == YES ) {
+		/* Get it from the damping vs strain curves */
+		zeta = get_damping_ratio( x_m + Global.theXForMeshOrigin,
+				y_m + Global.theYForMeshOrigin,
+				z_m + Global.theZForMeshOrigin - get_surface_shift(),
+				Global.theXForMeshOrigin,
+				Global.theYForMeshOrigin,
+				Global.theZForMeshOrigin);
+
+		/*If element is not in the soft-soil box, use the Graves damping formula*/
+		if (zeta == -1) {
+			zeta = 10 / edata->Vs;
+		}
+	}
+
 	/*If element is in the building+fdn, use the damping in the parameters file.*/
 	if ( Param.includeBuildings == YES ) {
 		damping_ratio = get_damping_ratio_bldgs( x_m, y_m, z_m );
@@ -2878,6 +2934,10 @@ static void solver_set_critical_T()
 			zeta = damping_ratio ;
 		}
 	}
+
+    if ( zeta > Param.theThresholdDamping ) {
+     	zeta = Param.theThresholdDamping;
+     }
 
 	omega	    = 3.46410161514 / ratio;
 	a	    = zeta * Global.theABase;
@@ -3425,6 +3485,22 @@ static void solver_init()
     	x_m = (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].x;
     	y_m = (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].y;
     	z_m = (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].z;
+
+
+    	if ( Param.softerSoil == YES ) {
+    		/* Get it from the damping vs strain curves */
+    		zeta = get_damping_ratio( x_m + Global.theXForMeshOrigin,
+    				y_m + Global.theYForMeshOrigin,
+    				z_m + Global.theZForMeshOrigin - get_surface_shift(),
+    				Global.theXForMeshOrigin,
+    				Global.theYForMeshOrigin,
+    				Global.theZForMeshOrigin);
+
+    		/*If element is not in the soft-soil box, use the Graves damping formula*/
+    		if (zeta == -1) {
+    			zeta = 10 / edata->Vs;
+    		}
+    	}
 
     	/*If element is in the building+fdn, use the damping in the parameters file.*/
     	if ( Param.includeBuildings == YES ) {
@@ -7185,6 +7261,7 @@ mesh_correct_properties( etree_t* cvm )
     double   vs, vp, rho;
     double   points[3];
     int32_t  lnid0;
+	double   modulusfactor;
 
     // INTRODUCE BKT MODEL
 
@@ -7256,6 +7333,16 @@ mesh_correct_properties( etree_t* cvm )
         			if (res != 0) {
         				fprintf(stderr, "Cannot find the query point\n");
         				exit(1);
+        			}
+
+        			if ( Param.softerSoil == YES ){
+        				modulusfactor = get_modulus_factor( north_m, east_m, depth_m,
+        						Global.theXForMeshOrigin, Global.theYForMeshOrigin,
+        						Global.theZForMeshOrigin);
+
+        				/*Shear strain is proportional to the square root of the modulus ratio */
+        				g_props.Vs = g_props.Vs*sqrt(modulusfactor);
+        				g_props.Vp = g_props.Vp*sqrt(modulusfactor);
         			}
 
         			vp  += g_props.Vp;
@@ -7490,6 +7577,10 @@ int main( int argc, char** argv )
     	Timer_Reduce("Init Drm Parameters", MAX | MIN | AVERAGE , comm_solver);
     }
 
+    if ( Param.softerSoil == YES ){
+    	softsoil_init( Global.myID, Param.parameters_input_file );
+    }
+
     // INTRODUCE BKT MODEL
     /* Init Quality Factor Table */
     constract_Quality_Factor_Table();
@@ -7534,7 +7625,7 @@ int main( int argc, char** argv )
         saveMeshCoordinatesForMatlab( Global.myMesh, Global.myID, Param.parameters_input_file,
 				      Global.myOctree->ticksize,Param.theTypeOfDamping,Global.theXForMeshOrigin,
 				      Global.theYForMeshOrigin,Global.theZForMeshOrigin, Param.includeBuildings,
-				      Param.theThresholdDamping);
+				      Param.theThresholdDamping, Param.softerSoil);
     }
 
     Timer_Start("Mesh Stats Print");

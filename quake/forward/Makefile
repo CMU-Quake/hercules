@@ -49,7 +49,7 @@ endif
 # Object modules 
 #
 PSOLVE_OBJECTS = psolve.o nrutila.o quakesource.o geometrics.o nonlinear.o \
-	commutil.o util.o output.o io_planes.o io_checkpoint.o stiffness.o damping.o quake_util.o timers.o buildings.o meshformatlab.o drm.o 
+	commutil.o util.o output.o io_planes.o io_checkpoint.o stiffness.o damping.o quake_util.o timers.o buildings.o meshformatlab.o drm.o softsoil.o
 
 OBJECTS = qmesh.o q4.o single_query.o ${PSOLVE_OBJECTS}
 
@@ -89,7 +89,7 @@ single_query: single_query.o q4.o
 
 output.o: output.c output.h psolve.h
 psolve.o: psolve.c psolve.h output.h quakesource.h nonlinear.h io_planes.h \
-          io_checkpoint.h stiffness.h damping.h quake_util.h timers.h buildings.h meshformatlab.h drm.h        
+          io_checkpoint.h stiffness.h damping.h quake_util.h timers.h buildings.h meshformatlab.h drm.h  softsoil.h      
 quakesource.o: quakesource.c quakesource.h psolve.h
 
 

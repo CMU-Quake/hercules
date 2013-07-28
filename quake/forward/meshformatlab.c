@@ -28,6 +28,7 @@
 #include "damping.h"
 #include "buildings.h"
 #include "meshformatlab.h"
+#include "softsoil.h"
 
 
 /* -------------------------------------------------------------------------- */
@@ -52,7 +53,8 @@ theMatlabZMax,   theMatlabZMin;
 void saveMeshCoordinatesForMatlab( mesh_t      *myMesh,       int32_t myID,
 		const char  *parametersin, double  ticksize,
 		damping_type_t theTypeOfDamping, double xoriginm, double yoriginm,
-		double zoriginm, noyesflag_t includeBuildings, double threshold_damping )
+		double zoriginm, noyesflag_t includeBuildings, double threshold_damping,
+		noyesflag_t softerSoil)
 {
 
 	int      i, j, k, counter = 0;
@@ -203,7 +205,7 @@ void saveMeshCoordinatesForMatlab( mesh_t      *myMesh,       int32_t myID,
 
 						int32_t   n_0;
 						double    x_m,y_m,z_m;
-						float     zeta =-1;
+						float     zeta;
 						double    damping_ratio;
 
 						n_0 = myMesh->elemTable[i].lnid[0];
@@ -211,18 +213,19 @@ void saveMeshCoordinatesForMatlab( mesh_t      *myMesh,       int32_t myID,
 						x_m = (ticksize)*myMesh->nodeTable[n_0].x;
 						y_m = (ticksize)*myMesh->nodeTable[n_0].y;
 
-						//if ( softerSoil == YES ) {
-						/* Get it from the damping vs strain curves */
-						//		zeta = get_damping_ratio(x_m,y_m,z_m,xoriginm,yoriginm,zoriginm);
-						//	}
-						//	else {
-						/* New formula for damping according to Graves */
-						//		zeta = 10 / edata_temp->Vs;
-						//	}
+						zeta = 10 / edata_temp->Vs;
 
-						//If element is not in the soft-soil box, use the Graves damping formula
-						if (zeta == -1) {
-							zeta = 10 / edata_temp->Vs;
+						if ( softerSoil == YES ) {
+							/* Get it from the damping vs strain curves */
+							zeta = get_damping_ratio( x_m + xoriginm,
+									y_m + yoriginm,
+									z_m + zoriginm- get_surface_shift(),
+									xoriginm, yoriginm, zoriginm);
+
+							/*If element is not in the soft-soil box, use the Graves damping formula*/
+							if (zeta == -1) {
+								zeta = 10 / edata_temp->Vs;
+							}
 						}
 
 				    	/*If element is in the building+fdn, use the damping in the parameters file.*/
