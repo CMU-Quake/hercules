@@ -1398,23 +1398,21 @@ int bldgs_correctproperties ( mesh_t *myMesh, edata_t *edata, int32_t lnid0 )
 							}
 
 						}
-//					 	/* eccentricity is perpendicular to NS */
-//					 	if ( theBuilding[i].ecc_direction  == 0 ) {
-//					 		eccentricity += (y_physical - theBuilding[i].bounds.ymin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
-//					 				(pow(138.00,2) * 8 * 12 * 12);
-//					 	}
-//
-//					 	/* eccentricity is perpendicular to EW */
-//					 	 if ( theBuilding[i].ecc_direction  == 1 ) {
-//					 		eccentricity += (x_physical - theBuilding[i].bounds.xmin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
-//					 				(pow(138.00,2) *  8 * 12 * 12);
-//  					 }
-//
-//						totVssq += pow(edata->Vs,2)/pow(138.00,2) /(  8 * 12 * 12);
-//						totVpsq += pow(edata->Vp,2)/pow(138.00*2.5,2) /(  8 * 12 * 12);
-
-//						totVssq += pow(edata->Vs,1)/pow(138.00,1) /(  8 * 12 * 12);
-//						totVpsq += pow(edata->Vp,1)/pow(138.00*2.5,1) /(  8 * 12 * 12);
+					// 	/* eccentricity is perpendicular to NS */
+					// 	if ( theBuilding[i].ecc_direction  == 0 ) {
+					// 		eccentricity += (y_physical - theBuilding[i].bounds.ymin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
+					// 				(pow(138.00,2) * 18 * 12 * 60);
+					// 	}
+					//
+					//	/* eccentricity is perpendicular to EW */
+					// 	 if ( theBuilding[i].ecc_direction  == 1 ) {
+					// 		eccentricity += (x_physical - theBuilding[i].bounds.xmin + theMinOctSizeMeters * 0.5) * pow(edata->Vs,2)  /
+					// 				(pow(138.00,2) *  18 * 12 * 60);
+  					//}
+					//
+					//	totVssq += pow(edata->Vs,2)/pow(138.00,2) /(  18 * 12 * 60);
+					//	totVpsq += pow(edata->Vp,2)/pow(138.00*2.5,2) /(  18 * 12 * 60);
+					//
 					}
 				}
 
@@ -2728,6 +2726,8 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, double deltaT, int
 				hu_fwrite( &simTime,   sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
 				hu_fwrite( &theConstrainedDispPrintRate,   sizeof(int), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
 				hu_fwrite( &theConstrainedDispDeltaHeight, sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+				hu_fwrite( &parabolicVariation, sizeof(int), 1, theMasterConstrainedSlab[iMaster].bldgDisp  );
+
 
 
 				for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
