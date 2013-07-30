@@ -2730,11 +2730,11 @@ com_allocpctl(octree_t *octree, com_t *com, int32_t msgsize, oct_t *firstleaf,
                     	}
                     }
 
-                    if (find_topoAirOct != NULL) {
-                    	if ( ( find_topoAirOct (pt.x, pt.y, pt.z, ticksize) == 1 ) ) {
-                    		continue;
-                    	}
-                    }
+                    //if (find_topoAirOct != NULL) {
+                    //	if ( ( find_topoAirOct (pt.x, pt.y, pt.z, ticksize) == 1 ) ) {
+                    //		continue;
+                    //	}
+                    //}
 
                     /* Search the interval table */
                     procid = math_zsearch(com->interval, com->groupsize, &pt);
@@ -2743,7 +2743,7 @@ com_allocpctl(octree_t *octree, com_t *com, int32_t msgsize, oct_t *firstleaf,
                      * options were incorporated. Should never occur */
                     if ( ( ( procid < 0 ) || ( procid > com->groupsize ) )  ) {
                         fprintf(stderr,
-                                "Thread %d: DORIAN at COM_ALLOCPCTL wrong procid from math search at "
+                                "Thread %d: at COM_ALLOCPCTL wrong procid from math search at "
                                 "com_allocpctl in vertex with coords "
                                 "x,y,z = %f %f %f\n",
                                 procid,
@@ -3460,11 +3460,11 @@ node_setproperty ( tree_t             *tree,
     /* My friend, If you uncomment the following you can see the mesh after
      *  carving. This makes every node anchored, so the results would be errorneous.*/
 
-	if ( topo_nodesearch( nx, ny, nz, tree->ticksize) == 1 ) {
-
-		*pproperty = 0X80;
-		return 0;
-	}
+//	if ( topo_nodesearch( nx, ny, nz, tree->ticksize) == 1 ) {
+//
+//		*pproperty = 0X80;
+//		return 0;
+//	}
 
 
 //        *pproperty = 0X80;
@@ -3839,14 +3839,11 @@ node_harboranchored(tree_t *tree, link_t **vertexHashTable,
         }
     }
 
-//    fprintf(stdout,"I am inside node_harboranchored\n");
 
     if (link == NULL) {
         point_t adjustedpt;
         point_t *anchored;
         pctl_t *topctl;
-
-//        fprintf(stdout,"I am inside the loop. Doriam Rpo");
 
         /* Harbor this derived anchored vertex. */
 
@@ -3936,43 +3933,43 @@ node_harboranchored(tree_t *tree, link_t **vertexHashTable,
 
         /* adjusting for topography */
 
-        int res = find_topoAirOct(
-        		pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
+//        int res = find_topoAirOct(
+//        		pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
 
 
-        if ( res == 1 ) {
-
-        	/* ...then, adjust! */
-
-        	int    flag = 0;
-        	tick_t xadjust, yadjust, incrementx, incrementy;
-
-        	/* search for a neighbor point that is inside of a bldg */
-        	for ( xadjust = 0; xadjust < 2; xadjust++ ) {
-        		for ( yadjust = 0; yadjust < 2; yadjust++ ) {
-
-        			incrementx = - 1 + 2*xadjust;
-        			incrementy = - 1 + 2*yadjust;
-
-        			/* If the point is inside the buildings
-        			 *  and outside the pushdown */
-        			if (find_topoAirOct(
-        					pt.x + incrementx,
-        					pt.y + incrementy,
-        					pt.z + 1, tree->ticksize) == 0) {
-
-        				adjustedpt.x += incrementx;
-        				adjustedpt.y += incrementy;
-        				adjustedpt.z += 1;
-
-        				flag = 1;
-        				break;
-        			}
-        		}
-
-        		if ( flag == 1 ) break;
-        	}
-        }
+//        if ( res == 1 ) {
+//
+//        	/* ...then, adjust! */
+//
+//        	int    flag = 0;
+//        	tick_t xadjust, yadjust, incrementx, incrementy;
+//
+//        	/* search for a neighbor point that is inside of a bldg */
+//        	for ( xadjust = 0; xadjust < 2; xadjust++ ) {
+//        		for ( yadjust = 0; yadjust < 2; yadjust++ ) {
+//
+//        			incrementx = - 1 + 2*xadjust;
+//        			incrementy = - 1 + 2*yadjust;
+//
+//        			/* If the point is inside the buildings
+//        			 *  and outside the pushdown */
+//        			if (find_topoAirOct(
+//        					pt.x + incrementx,
+//        					pt.y + incrementy,
+//        					pt.z + 1, tree->ticksize) == 0) {
+//
+//        				adjustedpt.x += incrementx;
+//        				adjustedpt.y += incrementy;
+//        				adjustedpt.z += 1;
+//
+//        				flag = 1;
+//        				break;
+//        			}
+//        		}
+//
+//        		if ( flag == 1 ) break;
+//        	}
+//        }
 
 
         /* end of topography adjustment   */
@@ -5461,11 +5458,6 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     hashentry = math_hashuint32(&pt, 3) % ecount;
                     link = vertexHashTable[hashentry];
 
-                    if ( pt.x*tree->ticksize == 812.5 && pt.y*tree->ticksize == 1062.5 && pt.z*tree->ticksize == 109.375 ) {
-                         fprintf(stdout, "vertex owner BEFORE=%d eindex=%d\n",
-                         		vertex->owner, eindex);
-                     }
-
                     while (link != NULL) {
                         vertex = (vertex_t *)link->record;
                         if ((vertex->x == pt.x) &&
@@ -5476,8 +5468,6 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                             link = link->next;
                         }
                     }
-
-
 
                     if (link == NULL) {
                         /* A newly encounter vertex */
@@ -5565,42 +5555,42 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                         }
                         /* End of block. See comments above. */
 
-                        int res = find_topoAirOct(
-                        		pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
+                        //int res = find_topoAirOct(
+                        	//	pt.x + 1, pt.y + 1, pt.z + 1, tree->ticksize);
 
                         /* ... and point+1 is out of buildings or in the pushdown  */
-                        if ( res == 1 ) {
-
-                        	/* ...then, adjust! */
-
-                        	int    flag = 0;
-
-                        	/* search for a neighbor point that is inside of a bldg */
-                        	for ( xadjust = 0; xadjust < 2; xadjust++ ) {
-                        		for ( yadjust = 0; yadjust < 2; yadjust++ ) {
-
-                        			incrementx = - 1 + 2*xadjust;
-                        			incrementy = - 1 + 2*yadjust;
-
-                        			/* If the point is inside the buildings
-                        			 *  and outside the pushdown */
-                        			if (find_topoAirOct(
-                        					pt.x + incrementx,
-                        					pt.y + incrementy,
-                        					pt.z + 1, tree->ticksize) == 0) {
-
-                        				adjustedpt.x += incrementx;
-                        				adjustedpt.y += incrementy;
-                        				adjustedpt.z += 1;
-
-                        				flag = 1;
-                        				break;
-                        			}
-                        		}
-
-                        		if ( flag == 1 ) break;
-                        	}
-                        }
+//                        if ( res == 1 ) {
+//
+//                        	/* ...then, adjust! */
+//
+//                        	int    flag = 0;
+//
+//                        	/* search for a neighbor point that is inside of a bldg */
+//                        	for ( xadjust = 0; xadjust < 2; xadjust++ ) {
+//                        		for ( yadjust = 0; yadjust < 2; yadjust++ ) {
+//
+//                        			incrementx = - 1 + 2*xadjust;
+//                        			incrementy = - 1 + 2*yadjust;
+//
+//                        			/* If the point is inside the buildings
+//                        			 *  and outside the pushdown */
+//                        			if (find_topoAirOct(
+//                        					pt.x + incrementx,
+//                        					pt.y + incrementy,
+//                        					pt.z + 1, tree->ticksize) == 0) {
+//
+//                        				adjustedpt.x += incrementx;
+//                        				adjustedpt.y += incrementy;
+//                        				adjustedpt.z += 1;
+//
+//                        				flag = 1;
+//                        				break;
+//                        			}
+//                        		}
+//
+//                        		if ( flag == 1 ) break;
+//                        	}
+//                        }
 
                         vertex->owner = (tree->groupsize == 1) ? 0 :
                         		math_zsearch(tree->com->interval,
@@ -5749,11 +5739,11 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                 			}
 
 
-                            if (find_topoAirOct != NULL) {
-                            	if ( ( find_topoAirOct (pt.x, pt.y, pt.z, tree->ticksize) == 1 ) ) {
-                            		continue;
-                            	}
-                            }
+//                            if (find_topoAirOct != NULL) {
+//                            	if ( ( find_topoAirOct (pt.x, pt.y, pt.z, tree->ticksize) == 1 ) ) {
+//                            		continue;
+//                            	}
+//                            }
 
 
                 			/* Find who possess the pixel */
