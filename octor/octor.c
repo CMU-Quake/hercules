@@ -2743,7 +2743,7 @@ com_allocpctl(octree_t *octree, com_t *com, int32_t msgsize, oct_t *firstleaf,
                      * options were incorporated. Should never occur */
                     if ( ( ( procid < 0 ) || ( procid > com->groupsize ) )  ) {
                         fprintf(stderr,
-                                "Thread %d: DORIAN at COM_ALLOCPCTL wrong procid from math search at "
+                                "Thread %d: at COM_ALLOCPCTL wrong procid from math search at "
                                 "com_allocpctl in vertex with coords "
                                 "x,y,z = %f %f %f\n",
                                 procid,
@@ -5461,11 +5461,6 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                     hashentry = math_hashuint32(&pt, 3) % ecount;
                     link = vertexHashTable[hashentry];
 
-                    if ( pt.x*tree->ticksize == 812.5 && pt.y*tree->ticksize == 1062.5 && pt.z*tree->ticksize == 109.375 ) {
-                         fprintf(stdout, "vertex owner BEFORE=%d eindex=%d\n",
-                         		vertex->owner, eindex);
-                     }
-
                     while (link != NULL) {
                         vertex = (vertex_t *)link->record;
                         if ((vertex->x == pt.x) &&
@@ -5476,8 +5471,6 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch,
                             link = link->next;
                         }
                     }
-
-
 
                     if (link == NULL) {
                         /* A newly encounter vertex */
