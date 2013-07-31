@@ -331,10 +331,12 @@ static double  *theBuildingsVs_right_right;
 static double  *theBuildingsVp_right_right;
 static double  *theBuildingsRho_right_right;
 
-
 static double  *theBuildingsVs_up_down;
 static double  *theBuildingsVp_up_down;
 static double  *theBuildingsRho_up_down;
+
+static 	MPI_Datatype dis_sharer;
+
 /* -------------------------------------------------------------------------- */
 /*                         Private Method Prototypes                          */
 /* -------------------------------------------------------------------------- */
@@ -2438,6 +2440,9 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, double deltaT, int
 
 //	printf(" \n eccentricity = %f tot Vp = %f tot Vs = %f \n", eccentricity , totVpsq, totVssq);
 
+	MPI_Type_contiguous(3, MPI_DOUBLE, &dis_sharer);
+	MPI_Type_commit(&dis_sharer);
+
 	ticksize = myMesh->ticksize;
 
 	masterproc = calloc(theNumberOfBuildings,sizeof(int));
@@ -3137,18 +3142,11 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 
 	int32_t  iSharer, iMaster, i, j, l;
 
-
 	MPI_Request **masterrecvreqs  = NULL;
 	MPI_Status  **masterrecvstats = NULL;
 
 	MPI_Request *shaererrecvreqs  = NULL;
 	MPI_Status  *sharerrecvstats  = NULL;
-
-	MPI_Datatype dis_sharer;
-
-	MPI_Type_contiguous(3, MPI_DOUBLE, &dis_sharer);
-	MPI_Type_commit(&dis_sharer);
-
 
 	if (theNumberOfBuildingsSharer > 0 ) {
 		shaererrecvreqs = (MPI_Request *)malloc(theNumberOfBuildingsSharer * sizeof(MPI_Request));
