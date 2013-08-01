@@ -1139,13 +1139,16 @@ void topography_elements_count(int32_t myID, mesh_t *myMesh ) {
 		yo = (node0dat->y)*(myMesh->ticksize);
 		zo = (node0dat->z)*(myMesh->ticksize);
 
-
         /* get element size */
 		esize = edata->edgesize;
 		Vol   = esize * esize *esize;
 
 		if ( ( Vp != -1 ) ) {
-			if ( topo_crossings ( xo, yo, zo, esize ) == 1 ) {
+			if ( ( topo_crossings ( xo, yo, zo, esize ) == 1 ) && (
+				 ( xo != 0.0 ) &&
+			     ( xo + esize != theDomainLong_ns ) &&
+			     ( yo != 0.0 ) &&
+			     ( yo + esize != theDomainLong_ew ) ) ) {
 				count++;
 			}
 		}
@@ -1197,8 +1200,11 @@ void topography_elements_mapping(int32_t myID, mesh_t *myMesh) {
 		Vol   = esize * esize *esize;
 
 		if ( ( Vp != -1 ) ) {
-
-			if ( topo_crossings ( xo, yo, zo, esize ) == 1 ) {
+			if ( ( topo_crossings ( xo, yo, zo, esize ) == 1 ) &&
+			     ( ( xo != 0.0 ) &&
+			       ( xo + esize != theDomainLong_ns ) &&
+			       ( yo != 0.0 ) &&
+			       ( yo + esize != theDomainLong_ew ) ) ) {
 				myTopoElementsMapping[count] = eindex;
 				count++;
 			}
