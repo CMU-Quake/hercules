@@ -1029,24 +1029,24 @@ int bldgs_refine ( octant_t *leaf,
 		/* Element is in the foundation */
 		if ( theMinOctSizeMeters > ( theBuilding[bldg].fdtnprops.Vs / theFactor ) &&
 				theBuilding[bldg].depth !=0  ) {
-			fprintf(stderr, "Error: %s %d: theMinOctSizeMeters should be decreased "
-					"to %f to comply with the Vs rule for the %dth foundation \n",
-					__FILE__, __LINE__,theBuilding[bldg].fdtnprops.Vs / theFactor,
-					bldg+1);
-			MPI_Abort(MPI_COMM_WORLD,ERROR);
-			exit(1);
+//			fprintf(stderr, "Error: %s %d: theMinOctSizeMeters should be decreased "
+//					"to %f to comply with the Vs rule for the %dth foundation \n",
+//					__FILE__, __LINE__,theBuilding[bldg].fdtnprops.Vs / theFactor,
+//					bldg+1);
+//			MPI_Abort(MPI_COMM_WORLD,ERROR);
+//			exit(1);
 
 		}
 	} else {
 		/* Element is in the building */
 		if ( theMinOctSizeMeters > ( Vs_min / theFactor ) &&
 				theBuilding[bldg].height !=0) {
-			fprintf(stderr, "Error:%s %d: theMinOctSizeMeters should be decreased "
-					"to %f to comply with the Vs rule for the %dth buildings \n",
-					__FILE__, __LINE__,Vs_min / theFactor,
-					bldg+1 );
-			MPI_Abort(MPI_COMM_WORLD,ERROR);
-			exit(1);
+//			fprintf(stderr, "Error:%s %d: theMinOctSizeMeters should be decreased "
+//					"to %f to comply with the Vs rule for the %dth buildings \n",
+//					__FILE__, __LINE__,Vs_min / theFactor,
+//					bldg+1 );
+//			MPI_Abort(MPI_COMM_WORLD,ERROR);
+//			exit(1);
 
 		}
 	}
