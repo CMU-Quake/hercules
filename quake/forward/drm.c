@@ -326,7 +326,10 @@ int32_t drm_read_coords ( ) {
 	}
 
 	if ( theDrmPart == PART2 ) {
-		sprintf(filename, "%s%s", theDrmOutputDir, "/part1/drm_processor_info");
+
+		sprintf(filename, "%s", "/lustre/scratch/yigit/DRM_new/part1/drm_processor_info");
+
+		//sprintf(filename, "%s%s", theDrmOutputDir, "/part1/drm_processor_info");
 		//sprintf(filename, "%s", "/lustre/scratch/yigit/DRM_TEST/outputfiles/DRM/part1/drm_processor_info");
 
 	}
@@ -1761,7 +1764,9 @@ void rearrange_drm_files ( mesh_t  *myMesh, int32_t theGroupSize, int32_t myID )
 
 	/* Now we know which file to open to adjust displacements */
 
-	sprintf( filename, "%s%s_%d", theDrmOutputDir, "/part1/drm_coordinates", drmFileToOpen.id);
+	sprintf( filename, "%s_%d","/lustre/scratch/yigit/DRM_new/part1/drm_coordinates", drmFileToOpen.id);
+
+	//sprintf( filename, "%s%s_%d", theDrmOutputDir, "/part1/drm_coordinates", drmFileToOpen.id);
 	//sprintf( filename, "%s_%d","/lustre/scratch/yigit/DRM_TEST/outputfiles/DRM/part1/drm_coordinates", drmFileToOpen.id);
 
 	if ( (fp = fopen(filename, "r")) == NULL ) {
@@ -1977,7 +1982,9 @@ void rearrange_drm_files ( mesh_t  *myMesh, int32_t theGroupSize, int32_t myID )
 		MPI_File_seek(fp_write[pid],disp,MPI_SEEK_SET);
 	}
 
-	sprintf(filename, "%s%s_%d", theDrmOutputDir, "/part1/drm_disp",drmFileToOpen.id );
+	sprintf( filename, "%s_%d","/lustre/scratch/yigit/DRM_new/part1/drm_disp", drmFileToOpen.id);
+
+	//sprintf(filename, "%s%s_%d", theDrmOutputDir, "/part1/drm_disp",drmFileToOpen.id );
 	//sprintf( filename, "%s_%d","/lustre/scratch/yigit/DRM_TEST/outputfiles/DRM/part1/drm_disp", drmFileToOpen.id);
 
 	MPI_File_open(newcomm[drmFileToOpen.cid], filename, MPI_MODE_RDONLY , MPI_INFO_NULL, &fp_grp);
