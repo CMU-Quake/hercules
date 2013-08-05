@@ -3485,7 +3485,7 @@ static void solver_init()
         zeta = 10 / edata->Vs;
 
         /* If element is in a building, use 5% damping */
-        if (z_m < 0) {
+        if ( (z_m < 0) && ( Param.includeBuildings == YES  ) ) { /* Dorian says: This is only valid for buildings  */
         	zeta = 0.05;
         }
 
@@ -4102,7 +4102,10 @@ solver_compute_force_damping( mysolver_t *solver,
 
 	if(Param.theTypeOfDamping == RAYLEIGH  || Param.theTypeOfDamping == MASS)
 	{
-		damping_addforce(Global.myMesh, Global.mySolver, Global.theK1, Global.theK2);
+		/* Dorian says: The Mass and Rayleigh damping are implicitly considered in the nodal mass
+		 * and the stiffness computation module  */
+
+		//damping_addforce(Global.myMesh, Global.mySolver, Global.theK1, Global.theK2);
 	}
 	else if(Param.theTypeOfDamping == BKT)
 	{

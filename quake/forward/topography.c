@@ -1315,9 +1315,10 @@ void compute_addforce_topoEffective ( mesh_t     *myMesh,
 	for (topo_eindex = 0; topo_eindex < myTopoElementsCount; topo_eindex++) {
 
 
-			elem_t           *elemp;
-			edata_t          *edata;
-			node_t           *node0dat;
+			elem_t      *elemp;
+			edata_t     *edata;
+			node_t      *node0dat;
+			e_t         *ep;
 
 			eindex = myTopoElementsMapping[topo_eindex];
 
@@ -1327,6 +1328,7 @@ void compute_addforce_topoEffective ( mesh_t     *myMesh,
 			edata                   = (edata_t *)elemp->data;
 			topoconstants_t topo_ec = myTopoSolver->topoconstants[topo_eindex];
 			node0dat                = &myMesh->nodeTable[elemp->lnid[0]];
+			ep                      = &mySolver->eTable[eindex];
 
 	        /* get coordinates of element zero node */
 			double xo = (node0dat->x)*(myMesh->ticksize);
@@ -1335,14 +1337,21 @@ void compute_addforce_topoEffective ( mesh_t     *myMesh,
 
 			memset( localForce, 0, 8 * sizeof(fvector_t) );
 
+			double b_over_dt = ep->c3 / ep->c1;
 			/* get cube's displacements */
 	        for (i = 0; i < 8; i++) {
 	            int32_t    lnid = elemp->lnid[i];
 	            fvector_t* tm1Disp = mySolver->tm1 + lnid;
+	            fvector_t* tm2Disp = mySolver->tm2 + lnid;
 
-	            curDisp[i].f[0] = tm1Disp->f[0];
-	            curDisp[i].f[1] = tm1Disp->f[1];
-	            curDisp[i].f[2] = tm1Disp->f[2];
+//	            curDisp[i].f[0] = tm1Disp->f[0];
+//	            curDisp[i].f[1] = tm1Disp->f[1];
+//	            curDisp[i].f[2] = tm1Disp->f[2];
+
+	            /* Rayleigh damping is considered simultaneously   */
+	            curDisp[i].f[0] = tm1Disp->f[0] * ( 1.0 + b_over_dt ) - b_over_dt * tm2Disp->f[0];
+	            curDisp[i].f[1] = tm1Disp->f[1] * ( 1.0 + b_over_dt ) - b_over_dt * tm2Disp->f[1];
+	            curDisp[i].f[2] = tm1Disp->f[2] * ( 1.0 + b_over_dt ) - b_over_dt * tm2Disp->f[2];
 	        }
 
 

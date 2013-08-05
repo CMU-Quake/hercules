@@ -208,14 +208,22 @@ void compute_addforce_effective( mesh_t* myMesh, mysolver_t* mySolver )
 
         memset( localForce, 0, 8 * sizeof(fvector_t) );
 
+        double b_over_dt = ep->c3 / ep->c1;
+
         for (i = 0; i < 8; i++) {
             int32_t    lnid = elemp->lnid[i];
             fvector_t* tm1Disp = mySolver->tm1 + lnid;
-//	    fvector_t* tm2Disp = mySolver->tm2 + lnid;
+   	        fvector_t* tm2Disp = mySolver->tm2 + lnid;
 
-            curDisp[i].f[0] = tm1Disp->f[0];
-            curDisp[i].f[1] = tm1Disp->f[1];
-            curDisp[i].f[2] = tm1Disp->f[2];
+//            curDisp[i].f[0] = tm1Disp->f[0];
+//            curDisp[i].f[1] = tm1Disp->f[1];
+//            curDisp[i].f[2] = tm1Disp->f[2];
+
+   	        /* Dorian says: this is done to  consider Rayleigh damping simultaneously
+   	         * with the stiffness force computation */
+            curDisp[i].f[0] = tm1Disp->f[0] * ( 1.0 + b_over_dt ) - b_over_dt * tm2Disp->f[0];
+            curDisp[i].f[1] = tm1Disp->f[1] * ( 1.0 + b_over_dt ) - b_over_dt * tm2Disp->f[1];
+            curDisp[i].f[2] = tm1Disp->f[2] * ( 1.0 + b_over_dt ) - b_over_dt * tm2Disp->f[2];
 
         }
 
