@@ -182,6 +182,10 @@ int BelongstoTopography (mesh_t *myMesh, int32_t eindex) {
     elem_t  *elemp;
     edata_t *edata;
 
+    /* return NO if topography is not considered */
+    if ( thebase_zcoord == 0 )
+    		return NO;
+
     elemp = &myMesh->elemTable[eindex];
     edata = (edata_t *)elemp->data;
 
