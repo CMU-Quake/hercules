@@ -92,6 +92,7 @@
 #include "quakesource.h"
 #include "quake_util.h"
 #include "util.h"
+#include "topography.h"
 
 
 
@@ -2361,6 +2362,11 @@ read_srfh_source ( FILE *fp, FILE *fpcoords, FILE *fparea, FILE *fpstrike,
 
     theSourceDepthArray[iSrc] += surfaceShift;
     theSourceTinitArray[iSrc] += globalDelayT;
+
+    /* Dorian: Source location wrt the free surface, i.e. hypocentral distance */
+    if ( get_thebase_topo() != 0.0 ) {
+    	theSourceDepthArray[iSrc] += point_elevation ( theSourceLonArray[iSrc], theSourceLatArray[iSrc] );
+    }
 
     theSourceSlipFunArray[iSrc]=malloc(sizeof(double)*theSourceNt1Array[iSrc]);
 

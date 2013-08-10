@@ -6459,9 +6459,9 @@ source_init( const char* physicsin )
 		}
 
 		//TODO: check that this shifting only has effect here
-		if ( Param.includeTopography == YES ) {
-			surfaceShift = get_thebase_topo();
-		}
+	//	if ( Param.includeTopography == YES ) {
+	//		surfaceShift = get_thebase_topo();
+	//	}
 
 
 		/* it will create the files to be read each time step to
@@ -6678,10 +6678,12 @@ read_stations_info( const char* numericalin )
 	Param.theStationZ [ iStation ] = depth;
 
 	if ( Param.includeBuildings == YES ) {
-	    Param.theStationZ [ iStation ] += get_surface_shift();
+		Param.theStationZ [ iStation ] += get_surface_shift();
 	}
 	if ( Param.includeTopography == YES ) {
-	    Param.theStationZ [ iStation ] += get_thebase_topo();
+		//	    Param.theStationZ [ iStation ] += get_thebase_topo();
+		/* Dorian: place stations on surface */
+		Param.theStationZ [ iStation ] =  point_elevation ( coords.x[0], coords.x[1] );
 	}
 
     }
