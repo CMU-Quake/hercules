@@ -2425,11 +2425,12 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 	double eta, psi, gamma;
 	double xp1, yp1, zp1;
 
+
 	if ( ( ( xo <  theDomainLong_ns / 2.0  ) && ( yo <  theDomainLong_ew / 2.0 ) ) ||
 	     ( ( xo >= theDomainLong_ns / 2.0 ) && ( yo >= theDomainLong_ew / 2.0 ) ) )
 	{
 
-		for (i = 0 ;  i < 4; i++) {
+		for (i = 0 ;  i < 5; i++) {
 
 			switch ( i ) {
 
@@ -2569,7 +2570,7 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 
 	} else {
 
-		for (i = 0 ;  i < 4; i++) {
+		for (i = 0 ;  i < 5; i++) {
 
 			switch ( i ) {
 
@@ -2713,7 +2714,9 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 	fprintf(stderr,
 			"Topography station error: "
 			"Unable to locate tetrahedron for station: "
-			"x=%f, y=%f, z=%f\n", point.x[0], point.x[1], point.x[2]);
+			"x=%f, y=%f, z=%f\n"
+			"in octant xo=%f, yo=%f, zo=%f, esize=%f\n",
+			point.x[0], point.x[1], point.x[2], xo, yo, zo, h);
 	MPI_Abort(MPI_COMM_WORLD, ERROR);
 	exit(1);
 
