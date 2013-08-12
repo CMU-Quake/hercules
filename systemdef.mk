@@ -112,11 +112,25 @@ endif
 
 
 ifeq ($(SYSTEM), USCHPC)
-	MPI_DIR	 ?= /usr/usc/mpich/1.2.6..13b/gm-gnu32
-	CC	  = $(MPI_DIR)/bin/mpicxx
-	LD	  = $(MPI_DIR)/bin/mpicxx
+	MPI_DIR	 ?= /usr/usc/mpich/default/mx-gnu43
+	CC	  = $(MPI_DIR)/bin/mpicc
+	CXX	  = $(MPI_DIR)/bin/mpicc
+	LD	  = $(MPI_DIR)/bin/mpicc
 	CFLAGS   += -Wall
-	CPPFLAGS += -DPROCPERNODE=2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+#	CPPFLAGS += -DPROCPERNODE=2 -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+        CPPFLAGS    += -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64       
+endif
+
+ifeq ($(SYSTEM), USCHPCGPU)
+	CUDA_DIR	 ?= /usr/usc/cuda/5.0
+	MPI_DIR	 ?= /usr/usc/openmpi/1.6.4
+	CC	  = nvcc
+	CXX	  = nvcc
+	LD	  = mpicxx
+	NVCC	  = /usr/usc/cuda/5.0/bin/nvcc
+#	CFLAGS   += -Wall
+	NVFLAGS += -arch sm_35 -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64
+        CPPFLAGS    += -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64
 endif
 
 

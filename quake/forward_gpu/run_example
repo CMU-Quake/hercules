@@ -1,0 +1,2 @@
+ prun -N 2 -n 8  ./psolve labase.e  /usr/users/0/ramirezg/herculesv1.0CVS/examples/test1/physics.in /usr/users/0/ramirezg/herculesv1.0CVS/examples/test1/numerical.in  $SCRATCH/tests/sourceterashake/meshtera $SCRATCH/tests/sourceterashake/veltera /usr/users/0/ramirezg/herculesv1.0CVS/examples/test1/vis.cfg
+

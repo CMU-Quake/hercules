@@ -225,6 +225,11 @@ typedef struct etree_t {
 } etree_t;
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
+
 /*
  * Error reporting functions
  */
@@ -782,6 +787,11 @@ int etree_getkeysize(etree_t *ep);
  *
  */
 uint64_t etree_gettotalcount(etree_t *ep);
+
+
+#ifdef __cplusplus
+} /* extern "C" { */
+#endif /* __cplusplus */
 
 
 #endif /* ETREE_H */

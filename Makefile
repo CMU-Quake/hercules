@@ -22,11 +22,11 @@ endef
 
 make_target_in_viz_dir = $(if $(ENABLE_VIZ),$(call run_make_in_dir,$(VIS_DIR),${1}))
 
-.PHONY: all clean cleanall etree octor cvm forward
+.PHONY: all clean cleanall etree octor cvm forward forward_gpu
 
 #	$(MAKE) -C $(VIS_DIR)     SYSTEM=$(SYSTEM) WORKDIR=$(WORKDIR)
 
-all:	etree octor cvm forward
+all:	etree octor cvm forward forward_gpu
 	$(call make_target_in_viz_dir,all)
 
 
@@ -42,6 +42,9 @@ cvm:
 forward:
 	$(MAKE) -C $(FORWARD_DIR) SYSTEM=$(SYSTEM) WORKDIR=$(WORKDIR)
 
+forward_gpu:
+	$(MAKE) -C $(FORWARD_GPU_DIR) SYSTEM=$(SYSTEM) WORKDIR=$(WORKDIR)
+
 
 clean:
 	$(call make_target_in_viz_dir,clean)
@@ -49,9 +52,10 @@ clean:
 	$(MAKE) -C $(OCTOR_DIR)   WORKDIR=$(WORKDIR) clean
 	$(MAKE) -C $(CVM_DIR)     WORKDIR=$(WORKDIR) clean
 	$(MAKE) -C $(FORWARD_DIR) WORKDIR=$(WORKDIR) clean
+	$(MAKE) -C $(FORWARD_GPU_DIR) WORKDIR=$(WORKDIR) clean
 
 
-MY_DIRS := $(ETREE_DIR) $(OCTOR_DIR) $(CVM_DIR) $(FORWARD_DIR)
+MY_DIRS := $(ETREE_DIR) $(OCTOR_DIR) $(CVM_DIR) $(FORWARD_DIR) $(FORWARD_GPU_DIR)
 
 
 # Call run_make_in_dir for each directory in a directory list.
