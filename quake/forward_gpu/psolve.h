@@ -58,17 +58,17 @@ typedef struct {
   int32_t max_threads;
   int32_t max_block_dim[3];
   int32_t max_grid_dim[3];
+  int32_t regs_per_block;
 } gpu_spec_t;
 
-/* Reverse node->element table lookup entry */
-typedef struct rev_elem_t {
-  int32_t elemid;
-  int32_t offset;
-} rev_elem_t;
+/* Reverse node->element table lookup for local force */
+typedef struct rev_index_t {
+  int32_t index;
+} rev_index_t;
 
 typedef struct rev_entry_t {
   int32_t count;
-  rev_elem_t elements[8];
+  rev_index_t lf_indices[8];
 } rev_entry_t;
 
 

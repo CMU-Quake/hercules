@@ -26,13 +26,13 @@ typedef enum {
 
 void linear_elements_count   (int32_t myID, mesh_t *myMesh);
 void linear_elements_mapping (int32_t myID, mesh_t *myMesh);
-void stiffness_init          (int32_t myID, mesh_t *myMesh);
+void stiffness_init          (int32_t myID, mesh_t *myMesh, mysolver_t *mySolver);
 void stiffness_delete        (int32_t myID);
 
 void compute_addforce_conventional( mesh_t* myMesh, mysolver_t* mySolver, fmatrix_t (*theK1)[8],
 				    fmatrix_t (*theK2)[8] );
 void compute_addforce_effective_cpu( mesh_t* myMesh, mysolver_t* mySolver );
-void compute_addforce_effective_gpu( mesh_t* myMesh, mysolver_t* mySolver );
+void compute_addforce_effective_gpu( int32_t myID, mesh_t* myMesh, mysolver_t* mySolver );
 
 void firstVector_kappa( const double* atu, double* finalVector, double kappa);
 void firstVector_mu( const double* atu, double* finalVector, double b);

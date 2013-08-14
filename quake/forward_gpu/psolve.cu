@@ -331,6 +331,7 @@ void getGPUHardware(int device, gpu_spec_t *gpuSpecs, int dispFlag)
       gpuSpecs->max_block_dim[i] = props.maxThreadsDim[i];
       gpuSpecs->max_grid_dim[i] = props.maxGridSize[i];
     }
+    gpuSpecs->regs_per_block = props.regsPerBlock;
 
     if (dispFlag) {
       cout << "GPU Device " << device << ": " << props.name 
@@ -350,6 +351,7 @@ void getGPUHardware(int device, gpu_spec_t *gpuSpecs, int dispFlag)
       cout << "  Max grid dimensions:  [ " << props.maxGridSize[0] << ", " 
 	   << props.maxGridSize[1]  << ", " << props.maxGridSize[2] << " ]" 
 	   << endl;
+      cout << "  Registers per block: " << props.regsPerBlock << endl;
       cout << endl;
     }
 }
@@ -4073,7 +4075,8 @@ solver_compute_force_stiffness( mysolver_t *solver,
 	if(Param.theTypeOfDamping != BKT)
 	{
 		if (Param.theStiffness == EFFECTIVE) {
-			compute_addforce_effective_gpu( mesh, solver );
+		        //compute_addforce_effective_cpu( mesh, solver );
+			compute_addforce_effective_gpu( Global.myID, mesh, solver );
 		}
 		else if (Param.theStiffness == CONVENTIONAL) {
 			compute_addforce_conventional( mesh, solver, k1, k2 );
@@ -7648,7 +7651,7 @@ int main( int argc, char** argv )
      * This is for compatibility with nonlinear
      * \TODO a more clever way should be possible
      */
-    stiffness_init(Global.myID, Global.myMesh);
+    stiffness_init(Global.myID, Global.myMesh, Global.mySolver);
 
     /* this is a little too late to check for output parameters,
      * but let's do this in the mean time

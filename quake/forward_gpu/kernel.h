@@ -24,6 +24,16 @@
 
 #include <cuda_runtime.h>
 
+
+int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs, char* kernel);
+
+
+__global__  void kernelStiffnessInitLookup(int32_t nharbored,
+				int32_t    myLinearElementsCount,
+				int32_t*   myLinearElementsMapperDevice,
+				elem_t*    elemTableDevice,
+				rev_entry_t* reverseLookupDevice);
+
 __global__  void kernelStiffnessCalcLocal(int32_t    myLinearElementsCount,
 				int32_t*   myLinearElementsMapperDevice,
 				elem_t*    elemTableDevice,

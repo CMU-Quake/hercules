@@ -41,9 +41,12 @@
 static int32_t    myLinearElementsCount;
 static int32_t   *myLinearElementsMapper;
 static int32_t   *myLinearElementsMapperDevice;
-static rev_entry_t   *reverseLookup;
 static rev_entry_t   *reverseLookupDevice;
 static fvector_t *localForceDevice;
+
+static int initLookupBlockSize;
+static int calcForceBlockSize;
+static int addForceBlockSize;
 
 
 /* -------------------------------------------------------------------------- */
@@ -108,42 +111,11 @@ void linear_elements_mapping(int32_t myID, mesh_t *myMesh) {
 }
 
 
-void stiffness_init(int32_t myID, mesh_t *myMesh)
+void stiffness_init(int32_t myID, mesh_t *myMesh, mysolver_t* mySolver)
 {
-
-    int       i;
-    int32_t   eindex;
-    int32_t   lin_eindex;
-    elem_t*   elemp;
-
     linear_elements_count(myID, myMesh);
     linear_elements_mapping(myID, myMesh);
     
-    /* Create reverse node->element lookup table */
-    reverseLookup = (rev_entry_t *)calloc(myMesh->nharbored, 
-					  sizeof(rev_entry_t));
-    memset(reverseLookup, 0, myMesh->nharbored * sizeof(rev_entry_t));
-
-    /* loop on the number of elements */
-    for (lin_eindex = 0; lin_eindex < myLinearElementsCount; lin_eindex++) {
-
-        eindex = myLinearElementsMapper[lin_eindex];
-        elemp  = &myMesh->elemTable[eindex];
-
-        for (i = 0; i < 8; i++) {
-	  rev_entry_t *tableEntry = &(reverseLookup[elemp->lnid[i]]);
-
-	  if (tableEntry->count >= 8) {
-	    fprintf(stderr, "Thread %d: reverseLookup entry too large\n", myID);
-	    MPI_Abort(MPI_COMM_WORLD, ERROR);
-	    exit(1);
-	  }
-
-	  tableEntry->elements[tableEntry->count].elemid = lin_eindex;
-	  tableEntry->elements[(tableEntry->count)++].offset = i;
-	}
-    }
-
     /* Allocate device memory */
     if (cudaMalloc((void**)&myLinearElementsMapperDevice, 
 		   myLinearElementsCount * sizeof(int32_t)) != cudaSuccess) {
@@ -177,14 +149,41 @@ void stiffness_init(int32_t myID, mesh_t *myMesh)
         exit(1);
     }
 
-    /* Copy reverse table lookup to device */
-    if (cudaMemcpy(reverseLookupDevice, reverseLookup, 
-		   myMesh->nharbored * sizeof(rev_entry_t),  
-		   cudaMemcpyHostToDevice) != cudaSuccess) {
-        fprintf(stderr, "Thread %d: Failed to copy reverseLookup to device\n", 
-		myID);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
+    /* Dynamically calculate optimum block size for each kernel */
+    char *kernel;
+    void (*ptr1)(int32_t, int32_t, int32_t*, elem_t*, rev_entry_t*) = kernelStiffnessInitLookup;
+    kernel = (char *)ptr1;
+    initLookupBlockSize = gpu_get_blocksize(mySolver->gpu_spec, kernel);
+
+    void (*ptr2)(int32_t, int32_t*, elem_t*, e_t*, fvector_t*, fvector_t*) = kernelStiffnessCalcLocal;
+    kernel = (char *)ptr2;
+    calcForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec, kernel);
+
+    void (*ptr3)(int32_t, rev_entry_t*, fvector_t*, fvector_t*) = kernelStiffnessAddLocal;
+    kernel = (char *)ptr3;
+    addForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec, kernel);
+
+    if (myID == 0) {
+      fprintf(stderr, "!!!!!!!!!!!! computed = %d, %d, %d\n", 
+	      initLookupBlockSize, calcForceBlockSize, addForceBlockSize);
+    }
+
+    /* Create reverse lookup table */
+    int blocksize = initLookupBlockSize;
+    int gridsize = (myMesh->nharbored / blocksize) + 1;
+    cudaGetLastError();
+    kernelStiffnessInitLookup<<<gridsize, blocksize>>>(myMesh->nharbored,
+						       myLinearElementsCount,
+						       myLinearElementsMapperDevice,
+						       mySolver->elemTableDevice,
+						       reverseLookupDevice);
+
+    cudaError_t cerror = cudaGetLastError();
+    if (cerror != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Init lookup kernel - %s\n", myID, 
+	      cudaGetErrorString(cerror));
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
     }
 
     return;
@@ -194,7 +193,6 @@ void stiffness_init(int32_t myID, mesh_t *myMesh)
 void stiffness_delete(int32_t myID) {
     /* Free stiffness module memory */
     free(myLinearElementsMapper);
-    free(reverseLookup);
 
     /* Free device memory */
     cudaFree(myLinearElementsMapperDevice);
@@ -341,7 +339,9 @@ void compute_addforce_effective_cpu( mesh_t* myMesh, mysolver_t* mySolver )
  * Compute and add the force due to the element stiffness matrices with 
    the effective method.
  */
-void compute_addforce_effective_gpu( mesh_t* myMesh, mysolver_t* mySolver )
+void compute_addforce_effective_gpu( int32_t myID, 
+				     mesh_t* myMesh, 
+				     mysolver_t* mySolver )
 {
     /* Copy working data to device */
     cudaMemcpy(mySolver->tm1Device, mySolver->tm1, 
@@ -349,9 +349,9 @@ void compute_addforce_effective_gpu( mesh_t* myMesh, mysolver_t* mySolver )
     cudaMemcpy(mySolver->forceDevice, mySolver->force, 
 	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
 
-    int blocksize = mySolver->gpu_spec->max_threads/2;
+    int blocksize = calcForceBlockSize;
     int gridsize = (myLinearElementsCount / blocksize) + 1;
-
+    cudaGetLastError();
     kernelStiffnessCalcLocal<<<gridsize, blocksize>>>(myLinearElementsCount, 
 						      myLinearElementsMapperDevice, 
 						      mySolver->elemTableDevice, 
@@ -362,14 +362,31 @@ void compute_addforce_effective_gpu( mesh_t* myMesh, mysolver_t* mySolver )
 
     cudaDeviceSynchronize();
 
-    blocksize = mySolver->gpu_spec->max_threads/2;
+    cudaError_t cerror = cudaGetLastError();
+    if (cerror != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Calc local kernel - %s\n", myID, 
+	      cudaGetErrorString(cerror));
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+
+    blocksize = addForceBlockSize;
     gridsize = ((myMesh->nharbored) / blocksize) + 1;
+    cudaGetLastError();
     kernelStiffnessAddLocal<<<gridsize, blocksize>>>(myMesh->nharbored,
     						     reverseLookupDevice,
     						     localForceDevice,
     						     mySolver->forceDevice);
 
     cudaDeviceSynchronize();
+
+    cerror = cudaGetLastError();
+    if (cerror != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Add local kernel - %s\n", myID, 
+	      cudaGetErrorString(cerror));
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
 
     /* Copy working data back to host */
     cudaMemcpy(mySolver->force, mySolver->forceDevice,

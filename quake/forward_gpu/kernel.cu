@@ -24,6 +24,7 @@
 
 #include "psolve.h"
 #include "kernel.h"
+#include "quake_util.h"
 
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -42,6 +43,56 @@
 #define UNDERFLOW_CAP_STIFFNESS 1e-20
 
 
+int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs, char* kernel)
+{
+    cudaFuncAttributes attributes;
+    cudaFuncGetAttributes(&attributes, kernel);
+
+    int computed = gpuSpecs->regs_per_block / attributes.numRegs;
+    computed = 1 << (int)floor(log(computed)/log(2));
+
+    return(imin(computed, gpuSpecs->max_threads));
+}
+
+
+__global__  void kernelStiffnessInitLookup(int32_t nharbored,
+					   int32_t    myLinearElementsCount,
+				int32_t*   myLinearElementsMapperDevice,
+				elem_t*    elemTableDevice,
+				rev_entry_t* reverseLookupDevice)
+{
+    int       i;
+    int32_t   lnid = (blockIdx.x * blockDim.x) + threadIdx.x; 
+    int32_t   lin_eindex;
+    elem_t*   elemp;
+    int32_t   eindex;
+
+    /* Since number of nodes may not be exactly divisible by block size,
+       check that we are not off the end of the node array */
+    if (lnid >= nharbored) {
+      return;
+    }
+
+    rev_entry_t *tableEntry = &(reverseLookupDevice[lnid]);
+
+    memset(tableEntry, 0, sizeof(rev_entry_t));
+    
+    /* loop on the number of elements */
+    for (lin_eindex = 0; lin_eindex < myLinearElementsCount; lin_eindex++) {
+      
+      eindex = myLinearElementsMapperDevice[lin_eindex];
+      elemp  = &(elemTableDevice[eindex]);
+      
+      for (i = 0; i < 8; i++) {
+	if (lnid == elemp->lnid[i]) {
+	  tableEntry->lf_indices[tableEntry->count].index = lin_eindex*8 + i;
+	  (tableEntry->count)++;
+	}
+      }
+    }
+}
+
+
 /* Stiffness Calc-Force Kernel */
 __global__  void kernelStiffnessCalcLocal(int32_t   myLinearElementsCount,
 					 int32_t*  myLinearElementsMapperDevice,
@@ -50,14 +101,14 @@ __global__  void kernelStiffnessCalcLocal(int32_t   myLinearElementsCount,
 					 fvector_t* tm1Device,
 					 fvector_t* localForceDevice) 
 {
-    fvector_t *localForce;
-    fvector_t curDisp[8];
     int       i;
     int32_t   eindex;
     int32_t   lin_eindex = (blockIdx.x * blockDim.x) + threadIdx.x; 
+    fvector_t curDisp[8];
 
-    elem_t* elemp;
-    e_t*    ep;
+    register fvector_t localForceReg[8];
+    register int32_t   lnidReg[8];
+    register e_t       eTableReg;
 
     /* Since number of elements may not be exactly divisible by block size,
        check that we are not off the end of the element array */
@@ -65,39 +116,35 @@ __global__  void kernelStiffnessCalcLocal(int32_t   myLinearElementsCount,
       return;
     }
 
-    localForce = &(localForceDevice[lin_eindex*8]);
-
     eindex = myLinearElementsMapperDevice[lin_eindex];
-    elemp  = &(elemTableDevice[eindex]);
-    ep     = &(eTableDevice[eindex]);
   
-    memset( localForce, 0, 8 * sizeof(fvector_t) );
+    /* Copy node ids and constants from global mem to registers */
+    memcpy(lnidReg, elemTableDevice[eindex].lnid, 8*sizeof(int32_t));
+    memcpy(&eTableReg, &(eTableDevice[eindex]), sizeof(e_t));
   
+    /* Get current displacements */
     for (i = 0; i < 8; i++) {
-      int32_t    lnid = elemp->lnid[i];
-      fvector_t* tm1Disp = tm1Device + lnid;
-      //	    fvector_t* tm2Disp = tm2Device + lnid;
-      
-      curDisp[i].f[0] = tm1Disp->f[0];
-      curDisp[i].f[1] = tm1Disp->f[1];
-      curDisp[i].f[2] = tm1Disp->f[2];
-      
+      memcpy(&(curDisp[i]), tm1Device + lnidReg[i], sizeof(fvector_t));
     }
     
     /* Coefficients for new stiffness matrix calculation */
     if (vector_is_zero( curDisp ) != 0) {
       
-      double first_coeff  = -0.5625 * (ep->c2 + 2 * ep->c1);
-      double second_coeff = -0.5625 * (ep->c2);
-      double third_coeff  = -0.5625 * (ep->c1);
+      double first_coeff  = -0.5625 * (eTableReg.c2 + 2 * eTableReg.c1);
+      double second_coeff = -0.5625 * (eTableReg.c2);
+      double third_coeff  = -0.5625 * (eTableReg.c1);
       
       double atu[24];
       double firstVec[24];
       
       aTransposeU( curDisp, atu );
       firstVector( atu, firstVec, first_coeff, second_coeff, third_coeff );
-      au( localForce, firstVec );
+      au( localForceReg, firstVec );
     }
+
+    /* Copy local forces from registers to global mem */
+    memcpy(&(localForceDevice[lin_eindex*8]), localForceReg, 
+	     8*sizeof(fvector_t));
 }
 
 
@@ -107,13 +154,12 @@ __global__  void kernelStiffnessAddLocal(int32_t nharbored,
 					 fvector_t* localForceDevice,
 					 fvector_t* forceDevice)
 {
-    int i;
-    int32_t   noffset;
-    int32_t   lnid = (blockIdx.x * blockDim.x) + threadIdx.x; 
+    int          i;
+    int32_t      lnid = (blockIdx.x * blockDim.x) + threadIdx.x; 
 
-    rev_entry_t* revp;
-    fvector_t*   nodalForce;
-    fvector_t* localForce;
+    fvector_t*            localForce;
+    register rev_entry_t  revReg;
+    register fvector_t    nodalForceReg;
 
     /* Since number of nodes may not be exactly divisible by block size,
        check that we are not off the end of the node array */
@@ -121,17 +167,23 @@ __global__  void kernelStiffnessAddLocal(int32_t nharbored,
       return;
     }
 
-    revp       = reverseLookupDevice + lnid;
-    nodalForce = forceDevice + lnid;
+    /* Copy reverse lookup table from global to register */
+    memcpy(&revReg, reverseLookupDevice + lnid, sizeof(rev_entry_t));
 
-    for (i = 0; i < revp->count; i++) {
-      noffset = revp->elements[i].offset;
-      localForce = &(localForceDevice[(revp->elements[i].elemid)*8]);
+    /* Copy nodal force from global to register */
+    memcpy(&nodalForceReg, forceDevice + lnid, sizeof(fvector_t));
 
-      nodalForce->f[0] += localForce[noffset].f[0];
-      nodalForce->f[1] += localForce[noffset].f[1];
-      nodalForce->f[2] += localForce[noffset].f[2];
+    /* Update forces for this node */
+    for (i = 0; i < revReg.count; i++) {
+      localForce = &(localForceDevice[revReg.lf_indices[i].index]);
+
+      nodalForceReg.f[0] += localForce->f[0];
+      nodalForceReg.f[1] += localForce->f[1];
+      nodalForceReg.f[2] += localForce->f[2];
     }
+
+    /* Copy updated nodal force from register to global */
+    memcpy(forceDevice + lnid, &nodalForceReg, sizeof(fvector_t));
 }
 
 
