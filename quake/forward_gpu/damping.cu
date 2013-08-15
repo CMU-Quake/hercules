@@ -24,8 +24,9 @@
 #include "psolve.h"
 #include "quake_util.h"
 #include "damping.h"
-#include "stiffness.h"
+#include "util.h"
 #include "kernel.h"
+
 
 void damping_addforce(mesh_t *myMesh, mysolver_t *mySolver, fmatrix_t (*theK1)[8], fmatrix_t (*theK2)[8]){
 
@@ -108,7 +109,38 @@ void damping_addforce(mesh_t *myMesh, mysolver_t *mySolver, fmatrix_t (*theK1)[8
  *              damping.
  */
 
-void calc_conv(mesh_t *myMesh, mysolver_t *mySolver, double theFreq, double theDeltaT, double theDeltaTSquared){
+void calc_conv_gpu(int32_t myID, mesh_t *myMesh, mysolver_t *mySolver, double theFreq, double theDeltaT, double theDeltaTSquared)
+{
+    int i;
+    double rmax = 2. * M_PI * theFreq * theDeltaT;
+    
+    int blocksize = gpu_get_blocksize(mySolver->gpu_spec,
+					   (char *)kernelDampingCalcConv);
+    int gridsize = (myMesh->lenum / blocksize) + 1;
+    cudaGetLastError();
+    kernelDampingCalcConv<<<gridsize, blocksize>>>(mySolver->gpuDataDevice, 
+						   rmax);
+
+    cudaDeviceSynchronize();
+
+    cudaError_t cerror = cudaGetLastError();
+    if (cerror != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Calc damping conv kernel - %s\n", myID, 
+	      cudaGetErrorString(cerror));
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+
+    return;
+}
+
+
+/**
+ * Introduce BKT Model: Compute and add the force due to the element
+ *              damping.
+ */
+
+void calc_conv_cpu(mesh_t *myMesh, mysolver_t *mySolver, double theFreq, double theDeltaT, double theDeltaTSquared){
 
     int32_t eindex;
     int i;
@@ -226,7 +258,65 @@ void calc_conv(mesh_t *myMesh, mysolver_t *mySolver, double theFreq, double theD
  * new_damping: Compute and add the force due to the element
  *              damping.
  */
-void constant_Q_addforce(mesh_t *myMesh, mysolver_t *mySolver, double theFreq, double theDeltaT, double theDeltaTSquared)
+void constant_Q_addforce_gpu(int myID, mesh_t *myMesh, mysolver_t *mySolver, double theFreq, double theDeltaT, double theDeltaTSquared)
+{
+    /* \todo use mu_and_lamda to compute first,second and third coefficients */
+
+    double rmax = 2. * M_PI * theFreq * theDeltaT;
+
+	/* theAddForceETime -= MPI_Wtime(); */
+
+    /* Copy working data to device */
+    cudaMemcpy(mySolver->gpuData->forceDevice, mySolver->force, 
+    	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
+
+    int blocksize = gpu_get_blocksize(mySolver->gpu_spec,
+					   (char *)kernelDampingCalcLocal);
+    int gridsize = (myMesh->lenum / blocksize) + 1;
+    cudaGetLastError();
+    kernelDampingCalcLocal<<<gridsize, blocksize>>>(mySolver->gpuDataDevice,
+						    rmax);
+
+    cudaDeviceSynchronize();
+
+    cudaError_t cerror = cudaGetLastError();
+    if (cerror != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Calc damping local kernel - %s\n", myID, 
+	      cudaGetErrorString(cerror));
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+
+    blocksize = gpu_get_blocksize(mySolver->gpu_spec,
+				  (char *)kernelAddLocalForces);
+    gridsize = ((myMesh->nharbored) / blocksize) + 1;
+    cudaGetLastError();
+    kernelAddLocalForces<<<gridsize, blocksize>>>(mySolver->gpuDataDevice);
+
+    cudaDeviceSynchronize();
+
+    cerror = cudaGetLastError();
+    if (cerror != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Add damping local kernel - %s\n", myID, 
+	      cudaGetErrorString(cerror));
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+
+    /* Copy working data back to host */
+    cudaMemcpy(mySolver->force, mySolver->gpuData->forceDevice,
+	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
+
+    return;
+}
+
+
+
+/**
+ * new_damping: Compute and add the force due to the element
+ *              damping.
+ */
+void constant_Q_addforce_cpu(mesh_t *myMesh, mysolver_t *mySolver, double theFreq, double theDeltaT, double theDeltaTSquared)
 {
 	/* \todo use mu_and_lamda to compute first,second and third coefficients */
 
@@ -413,6 +503,5 @@ void constant_Q_addforce(mesh_t *myMesh, mysolver_t *mySolver, double theFreq, d
 	} /* for all the elements */
 
 	return;
-
 }
 

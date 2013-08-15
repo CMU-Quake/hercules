@@ -27,24 +27,25 @@
 
 int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs, char* kernel);
 
+__global__  void kernelInitReverseLookup(gpu_data_t* gpuDataDevice);
 
-__global__  void kernelStiffnessInitLookup(int32_t nharbored,
-				int32_t    myLinearElementsCount,
-				int32_t*   myLinearElementsMapperDevice,
-				elem_t*    elemTableDevice,
-				rev_entry_t* reverseLookupDevice);
+__global__  void kernelInitLinearLookup(gpu_data_t* gpuDataDevice,
+					int32_t     myLinearElementsCount,
+					int32_t*    myLinearElementsMapperDevice,
+					rev_entry_t* reverseLookupLinearDevice);
 
-__global__  void kernelStiffnessCalcLocal(int32_t    myLinearElementsCount,
-				int32_t*   myLinearElementsMapperDevice,
-				elem_t*    elemTableDevice,
-				e_t*       eTableDevice,
-				fvector_t* tm1Device,
-				fvector_t* localForceDevice);
+__global__  void kernelStiffnessCalcLocal(gpu_data_t* gpuDataDevice,
+					  int32_t     myLinearElementsCount,
+					  int32_t*    myLinearElementsMapperDevice);
 
-__global__  void kernelStiffnessAddLocal(int32_t nharbored,
-					 rev_entry_t* reverseLookupDevice,
-					 fvector_t* localForceDevice,
-					 fvector_t* forceDevice);
+__global__  void kernelAddLocalForces(gpu_data_t* gpuDataDevice);
+
+__global__  void kernelDampingCalcConv(gpu_data_t* gpuDataDevice,
+				       double rmax);
+
+__global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
+					double rmax);
+
 
 __host__ __device__ int vector_is_zero( const fvector_t* v );
 __host__ __device__ void aTransposeU( fvector_t* un, double* atu );
@@ -52,5 +53,7 @@ __host__ __device__ void firstVector( const double* atu, double* finalVector, do
 __host__ __device__ void au( fvector_t* resVec, const double* u );
 __host__ __device__ void reformF( const double* u, double* newU );
 __host__ __device__ void reformU( const double* u, double* newU );
+__host__ __device__ void firstVector_kappa( const double* atu, double* finalVector, double kappa);
+__host__ __device__ void firstVector_mu( const double* atu, double* finalVector, double b);
 
 #endif /* KERNEL_H_ */

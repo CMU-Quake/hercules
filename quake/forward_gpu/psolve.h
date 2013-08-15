@@ -67,7 +67,7 @@ typedef struct rev_index_t {
 } rev_index_t;
 
 typedef struct rev_entry_t {
-  int32_t count;
+  int32_t elemnum;
   rev_index_t lf_indices[8];
 } rev_entry_t;
 
@@ -293,6 +293,27 @@ struct schedule_t {
 typedef struct schedule_t schedule_t;
 
 
+/* GPU copy of application data */
+typedef struct gpu_data_t {
+    int32_t      nharbored; // Number of harbored nodes
+    int32_t      lenum; // Number of elements
+
+    elem_t*      elemTableDevice; // GPU copy of elemTable data structure
+    e_t*         eTableDevice; // GPU copy of eTable data structure
+    fvector_t*   tm1Device; // GPU nodal tm1 displacements
+    fvector_t*   tm2Device; // GPU nodal tm2 displacements
+    fvector_t*   forceDevice; // GPU nodal forces
+    fvector_t*   localForceDevice; // GPU local forces working buffer
+
+    fvector_t* conv_shear_1Device;  /* Approximate Convolution Calculation */
+    fvector_t* conv_shear_2Device;
+    fvector_t* conv_kappa_1Device;
+    fvector_t* conv_kappa_2Device;
+
+    rev_entry_t* reverseLookupDevice;
+} gpu_data_t;
+
+
 /**
  * Solver data structure.
  */
@@ -329,13 +350,11 @@ struct mysolver_t {
     fvector_t* conv_kappa_1;
     fvector_t* conv_kappa_2;
 
-    /* GPU device data structures */
-    gpu_spec_t* gpu_spec;
+    /* GPU device data structures - should be declared in a separate struct */
+    gpu_spec_t*  gpu_spec; // GPU specifications
+    gpu_data_t*  gpuData;
+    gpu_data_t*  gpuDataDevice;
 
-    elem_t*     elemTableDevice; // this should be declared in mesh_t struct
-    e_t*        eTableDevice;
-    fvector_t*  tm1Device;
-    fvector_t*  forceDevice;
 };
 
 typedef struct mysolver_t mysolver_t;

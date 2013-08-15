@@ -41,8 +41,7 @@
 static int32_t    myLinearElementsCount;
 static int32_t   *myLinearElementsMapper;
 static int32_t   *myLinearElementsMapperDevice;
-static rev_entry_t   *reverseLookupDevice;
-static fvector_t *localForceDevice;
+static rev_entry_t   *reverseLookupLinearDevice;
 
 static int initLookupBlockSize;
 static int calcForceBlockSize;
@@ -123,48 +122,34 @@ void stiffness_init(int32_t myID, mesh_t *myMesh, mysolver_t* mySolver)
         MPI_Abort(MPI_COMM_WORLD, ERROR);
         exit(1);
     }
-
-    if (cudaMalloc((void**)&(localForceDevice), 
-		   myLinearElementsCount * 8 * sizeof(fvector_t)) != cudaSuccess) {
-        fprintf(stderr, "Thread %d: Failed to allocate localForce memory\n", 
-		myID);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
+    if (cudaMalloc((void**)&(reverseLookupLinearDevice), 
+    		   myMesh->nharbored * sizeof(rev_entry_t)) != cudaSuccess) {
+            fprintf(stderr, "Thread %d: Failed to allocate reverseLookup memory\n", 
+    		myID);
+            MPI_Abort(MPI_COMM_WORLD, ERROR);
+            exit(1);
     }
 
-    if (cudaMalloc((void**)&(reverseLookupDevice), 
-		   myMesh->nharbored * sizeof(rev_entry_t)) != cudaSuccess) {
-        fprintf(stderr, "Thread %d: Failed to allocate reverseLookup memory\n", 
-		myID);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
-    }
-
-    /* Copy static element mapper to device */
+    /* Copy linear element mapper to device */
     if (cudaMemcpy(myLinearElementsMapperDevice, myLinearElementsMapper, 
 		   myLinearElementsCount * sizeof(int32_t),  
 		   cudaMemcpyHostToDevice) != cudaSuccess) {
-        fprintf(stderr, "Thread %d: Failed to copy mapper to device\n", myID);
+        fprintf(stderr, "Thread %d: Failed to copy mapper to device - %s\n", 
+		myID, cudaGetErrorString(cudaGetLastError()));
         MPI_Abort(MPI_COMM_WORLD, ERROR);
         exit(1);
     }
 
     /* Dynamically calculate optimum block size for each kernel */
-    char *kernel;
-    void (*ptr1)(int32_t, int32_t, int32_t*, elem_t*, rev_entry_t*) = kernelStiffnessInitLookup;
-    kernel = (char *)ptr1;
-    initLookupBlockSize = gpu_get_blocksize(mySolver->gpu_spec, kernel);
-
-    void (*ptr2)(int32_t, int32_t*, elem_t*, e_t*, fvector_t*, fvector_t*) = kernelStiffnessCalcLocal;
-    kernel = (char *)ptr2;
-    calcForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec, kernel);
-
-    void (*ptr3)(int32_t, rev_entry_t*, fvector_t*, fvector_t*) = kernelStiffnessAddLocal;
-    kernel = (char *)ptr3;
-    addForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec, kernel);
+    initLookupBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
+					    (char *)kernelInitLinearLookup);
+    calcForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
+					   (char *)kernelStiffnessCalcLocal);
+    addForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
+					  (char *)kernelAddLocalForces);
 
     if (myID == 0) {
-      fprintf(stderr, "!!!!!!!!!!!! computed = %d, %d, %d\n", 
+      fprintf(stderr, "!!!!! computed block sizes = %d, %d, %d\n", 
 	      initLookupBlockSize, calcForceBlockSize, addForceBlockSize);
     }
 
@@ -172,15 +157,16 @@ void stiffness_init(int32_t myID, mesh_t *myMesh, mysolver_t* mySolver)
     int blocksize = initLookupBlockSize;
     int gridsize = (myMesh->nharbored / blocksize) + 1;
     cudaGetLastError();
-    kernelStiffnessInitLookup<<<gridsize, blocksize>>>(myMesh->nharbored,
-						       myLinearElementsCount,
-						       myLinearElementsMapperDevice,
-						       mySolver->elemTableDevice,
-						       reverseLookupDevice);
+    kernelInitLinearLookup<<<gridsize, blocksize>>>(mySolver->gpuDataDevice,
+						    myLinearElementsCount,
+						    myLinearElementsMapperDevice,
+						    reverseLookupLinearDevice);
+
+    cudaDeviceSynchronize();
 
     cudaError_t cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {
-      fprintf(stderr, "Thread %d: Init lookup kernel - %s\n", myID, 
+      fprintf(stderr, "Thread %d: Init linear lookup kernel - %s\n", myID, 
 	      cudaGetErrorString(cerror));
       MPI_Abort(MPI_COMM_WORLD, ERROR);
       exit(1);
@@ -196,8 +182,7 @@ void stiffness_delete(int32_t myID) {
 
     /* Free device memory */
     cudaFree(myLinearElementsMapperDevice);
-    cudaFree(localForceDevice);
-    cudaFree(reverseLookupDevice);
+    cudaFree(reverseLookupLinearDevice);
 
     return;
 }
@@ -344,27 +329,21 @@ void compute_addforce_effective_gpu( int32_t myID,
 				     mysolver_t* mySolver )
 {
     /* Copy working data to device */
-    cudaMemcpy(mySolver->tm1Device, mySolver->tm1, 
-	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(mySolver->forceDevice, mySolver->force, 
+    cudaMemcpy(mySolver->gpuData->forceDevice, mySolver->force, 
 	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
 
     int blocksize = calcForceBlockSize;
     int gridsize = (myLinearElementsCount / blocksize) + 1;
     cudaGetLastError();
-    kernelStiffnessCalcLocal<<<gridsize, blocksize>>>(myLinearElementsCount, 
-						      myLinearElementsMapperDevice, 
-						      mySolver->elemTableDevice, 
-						      mySolver->eTableDevice, 
-						      mySolver->tm1Device, 
-						      localForceDevice);
-
+    kernelStiffnessCalcLocal<<<gridsize, blocksize>>>(mySolver->gpuDataDevice,
+						      myLinearElementsCount, 
+						      myLinearElementsMapperDevice);
 
     cudaDeviceSynchronize();
 
     cudaError_t cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {
-      fprintf(stderr, "Thread %d: Calc local kernel - %s\n", myID, 
+      fprintf(stderr, "Thread %d: Calc stiffness local kernel - %s\n", myID, 
 	      cudaGetErrorString(cerror));
       MPI_Abort(MPI_COMM_WORLD, ERROR);
       exit(1);
@@ -373,91 +352,21 @@ void compute_addforce_effective_gpu( int32_t myID,
     blocksize = addForceBlockSize;
     gridsize = ((myMesh->nharbored) / blocksize) + 1;
     cudaGetLastError();
-    kernelStiffnessAddLocal<<<gridsize, blocksize>>>(myMesh->nharbored,
-    						     reverseLookupDevice,
-    						     localForceDevice,
-    						     mySolver->forceDevice);
-
+    kernelAddLocalForces<<<gridsize, blocksize>>>(mySolver->gpuDataDevice);
     cudaDeviceSynchronize();
 
     cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {
-      fprintf(stderr, "Thread %d: Add local kernel - %s\n", myID, 
+      fprintf(stderr, "Thread %d: Add stiffness local kernel - %s\n", myID, 
 	      cudaGetErrorString(cerror));
       MPI_Abort(MPI_COMM_WORLD, ERROR);
       exit(1);
     }
 
     /* Copy working data back to host */
-    cudaMemcpy(mySolver->force, mySolver->forceDevice,
-	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
+    cudaMemcpy(mySolver->force, mySolver->gpuData->forceDevice,
+    	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
 
     return;
-}
-
-
-/* -------------------------------------------------------------------------- */
-/*                         Efficient Method Utilities                         */
-/* -------------------------------------------------------------------------- */
-
-
-void firstVector_kappa( const double* atu, double* finalVector, double kappa)
-{
-    finalVector[0] += 0.;
-    finalVector[1] += 0.;
-    finalVector[2] += 0.;
-    finalVector[3] += kappa * (atu[3] + atu[10] + atu[17]);
-    finalVector[4] += 0.;
-    finalVector[5] += kappa * ( atu[5] + atu[12] ) /3.;
-    finalVector[6] += kappa * ( atu[6] + atu[20] ) /3.;
-    finalVector[7] += kappa * atu[7] / 9.;
-
-    finalVector[8] += 0.;
-    finalVector[9] += 0.;
-    finalVector[10] += kappa * ( atu[10] + atu[3] + atu[17]);
-    finalVector[11] += 0.;
-    finalVector[12] += kappa * ( atu[12] + atu[5] ) / 3.;
-    finalVector[13] += 0.;
-    finalVector[14] += kappa * ( atu[14] + atu[21] ) /3.;
-    finalVector[15] += kappa * atu[15] / 9.;
-
-    finalVector[16] += 0.;
-    finalVector[17] += kappa * ( atu[17] + atu[3] + atu[10] );
-    finalVector[18] += 0.;
-    finalVector[19] += 0.;
-    finalVector[20] += kappa * ( atu[20] + atu[6] ) / 3.;
-    finalVector[21] += kappa * ( atu[21] + atu[14] ) / 3.;
-    finalVector[22] += 0.;
-    finalVector[23] += kappa * atu[23] / 9.;
-}
-
-void firstVector_mu( const double* atu, double* finalVector, double b )
-{
-    finalVector[0] += 0;
-    finalVector[1] += b * (atu[19] + atu[1]);
-    finalVector[2] += b * (atu[11] + atu[2]);
-    finalVector[3] += b * ( 4. * atu[3] - 2. * (atu[10] + atu[17]) ) / 3.;
-    finalVector[4] += b * (atu[13] + atu[22] + 2. * atu[4]) / 3.;
-    finalVector[5] += b * ( 7. * atu[5] - 2. * atu[12] ) / 9.;
-    finalVector[6] += b * ( 7. * atu[6] - 2. * atu[20] ) / 9.;
-    finalVector[7] += ( 10. * b * atu[7] ) / 27.;
-
-    finalVector[8]  += 0;
-    finalVector[9]  += b * (atu[18] + atu[9]);
-    finalVector[10] += b * ( 4. * atu[10] - 2. * (atu[3] + atu[17]) ) / 3.;
-    finalVector[11] += b * (atu[11] + atu[2]);
-    finalVector[12] += b * ( 7. * atu[12] - 2. * atu[5] ) / 9.;
-    finalVector[13] += b * (atu[4] + atu[22] + 2. * atu[13]) / 3.;
-    finalVector[14] += b * ( 7. * atu[14] - 2. * atu[21] ) / 9.;
-    finalVector[15] += (10. * b * atu[15] ) / 27.;
-
-    finalVector[16] += 0;
-    finalVector[17] += b * ( 4. * atu[17] - 2. * (atu[3] + atu[10]) ) / 3.;
-    finalVector[18] += b * (atu[18] + atu[9]);
-    finalVector[19] += b * (atu[19] + atu[1]);
-    finalVector[20] += b * ( 7. * atu[20] - 2. * atu[6] ) / 9.;
-    finalVector[21] += b * ( 7. * atu[21] - 2. * atu[14] ) / 9.;
-    finalVector[22] += b * ( atu[4] + atu[13] + 2. * atu[22]) / 3.;
-    finalVector[23] += (10. * b * atu[23] ) / 27.;
 }
 

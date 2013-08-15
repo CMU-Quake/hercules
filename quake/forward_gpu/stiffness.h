@@ -34,7 +34,4 @@ void compute_addforce_conventional( mesh_t* myMesh, mysolver_t* mySolver, fmatri
 void compute_addforce_effective_cpu( mesh_t* myMesh, mysolver_t* mySolver );
 void compute_addforce_effective_gpu( int32_t myID, mesh_t* myMesh, mysolver_t* mySolver );
 
-void firstVector_kappa( const double* atu, double* finalVector, double kappa);
-void firstVector_mu( const double* atu, double* finalVector, double b);
-
 #endif /* STIFFNESS_H_ */
