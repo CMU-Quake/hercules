@@ -70,8 +70,6 @@ __global__  void kernelInitReverseLookup(gpu_data_t *gpuDataDevice)
 
     rev_entry_t *tableEntry = &(gpuDataDevice->reverseLookupDevice[lnid]);
 
-    memset(tableEntry, 0, sizeof(rev_entry_t));
-    
     /* loop on the number of elements */
     for (eindex = 0; eindex < gpuDataDevice->lenum; eindex++) {      
       elemp  = &(gpuDataDevice->elemTableDevice[eindex]);
@@ -137,8 +135,7 @@ __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
     register int32_t   lnidReg[8];
     register e_t       eTableReg;
 
-    /* Since number of elements may not be exactly divisible by block size,
-       check that we are not off the end of the element array */
+    /* Extra threads and threads for non-linear elements exit here */
     if (lin_eindex >= myLinearElementsCount) {
       return;
     }
@@ -171,8 +168,8 @@ __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
       au( localForceReg, firstVec );
     }
 
-    /* Copy local forces from registers to global mem */
-    memcpy(&(gpuDataDevice->localForceDevice[lin_eindex*8]), localForceReg, 
+    /* Copy element local force from registers to global mem */
+    memcpy(&(gpuDataDevice->localForceDevice[eindex*8]), localForceReg, 
 	     8*sizeof(fvector_t));
 }
 
@@ -314,25 +311,23 @@ __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
       return;
     }
 
-    double a0_shear, a1_shear, b_shear, a0_kappa, a1_kappa, b_kappa, csum;
-    
+    double     csum_shear, csum_kappa;
+    fvector_t *tm1Disp, *tm2Disp, *f0_tm1, *f1_tm1;
+    int32_t    lnid, cindex;
+
     memcpy(lnidReg, gpuDataDevice->elemTableDevice[eindex].lnid, 
 	   8*sizeof(int32_t));
     memcpy(&eDataReg, gpuDataDevice->elemTableDevice[eindex].data, 
 	   sizeof(edata_t)); 
     memcpy(&eTableReg, &(gpuDataDevice->eTableDevice[eindex]), sizeof(e_t));
 
+    csum_shear = eDataReg.a0_shear + eDataReg.a1_shear + eDataReg.b_shear;
+    csum_kappa = eDataReg.a0_kappa + eDataReg.a1_kappa + eDataReg.b_kappa;
+
     // SHEAR CONTRIBUTION
-    a0_shear = eDataReg.a0_shear;
-    a1_shear = eDataReg.a1_shear;
-    b_shear  = eDataReg.b_shear;
-    csum = a0_shear + a1_shear + b_shear;
-    if ( csum != 0 ) {
-      double coef_shear = b_shear / rmax;
+    if ( csum_shear != 0 ) {
+      double coef_shear = eDataReg.b_shear / rmax;
       for (i = 0; i < 8; i++) {
-	fvector_t *tm1Disp, *tm2Disp, *f0_tm1, *f1_tm1;
-	int32_t    lnid, cindex;
-	
 	cindex = eindex * 8 + i;
 	lnid = lnidReg[i];
 	
@@ -343,25 +338,21 @@ __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
 	f1_tm1  = gpuDataDevice->conv_shear_2Device + cindex;
 	
 	damping_vector_shear[i].f[0] = coef_shear * (tm1Disp->f[0] - tm2Disp->f[0])
-	  - (a0_shear * f0_tm1->f[0] + a1_shear * f1_tm1->f[0])
+	  - (eDataReg.a0_shear * f0_tm1->f[0] + eDataReg.a1_shear * f1_tm1->f[0])
 	  + tm1Disp->f[0];
 	
 	damping_vector_shear[i].f[1] = coef_shear * (tm1Disp->f[1] - tm2Disp->f[1])
-	  - (a0_shear * f0_tm1->f[1] + a1_shear * f1_tm1->f[1])
+	  - (eDataReg.a0_shear * f0_tm1->f[1] + eDataReg.a1_shear * f1_tm1->f[1])
 	  + tm1Disp->f[1];
 	
 	damping_vector_shear[i].f[2] = coef_shear * (tm1Disp->f[2] - tm2Disp->f[2])
-	  - (a0_shear * f0_tm1->f[2] + a1_shear * f1_tm1->f[2])
+	  - (eDataReg.a0_shear * f0_tm1->f[2] + eDataReg.a1_shear * f1_tm1->f[2])
 	  + tm1Disp->f[2];
 	
       } // end for nodes in the element
       
     } else { 
       for (i = 0; i < 8; i++) {
-	fvector_t *tm1Disp;
-	//fvector_t *tm2Disp;
-	int32_t    lnid;
-	
 	lnid = lnidReg[i];
 	tm1Disp = gpuDataDevice->tm1Device + lnid;
 	//tm2Disp = gpuDataDevice->tm2Device + lnid;
@@ -375,17 +366,10 @@ __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
     } // end if for coefficients
     
     // DILATATION CONTRIBUTION
-    a0_kappa   = eDataReg.a0_kappa;
-    a1_kappa   = eDataReg.a1_kappa;
-    b_kappa    = eDataReg.b_kappa;
-    csum = a0_kappa + a1_kappa + b_kappa;
-    if ( csum != 0 ) {
-      double coef_kappa = b_kappa / rmax;
+    if ( csum_kappa != 0 ) {
+      double coef_kappa = eDataReg.b_kappa / rmax;
       
       for (i = 0; i < 8; i++) {
-	fvector_t *tm1Disp, *tm2Disp, *f0_tm1, *f1_tm1;
-	int32_t    lnid, cindex;
-	
 	cindex = eindex * 8 + i;
 	lnid = lnidReg[i];
 	
@@ -396,25 +380,21 @@ __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
 	f1_tm1  = gpuDataDevice->conv_kappa_2Device + cindex;
 
 	damping_vector_kappa[i].f[0] = coef_kappa * (tm1Disp->f[0] - tm2Disp->f[0])
-	  - (a0_kappa * f0_tm1->f[0] + a1_kappa * f1_tm1->f[0])
+	  - (eDataReg.a0_kappa * f0_tm1->f[0] + eDataReg.a1_kappa * f1_tm1->f[0])
 	  + tm1Disp->f[0];
 	
 	damping_vector_kappa[i].f[1] = coef_kappa * (tm1Disp->f[1] - tm2Disp->f[1])
-	  - (a0_kappa * f0_tm1->f[1] + a1_kappa * f1_tm1->f[1])
+	  - (eDataReg.a0_kappa * f0_tm1->f[1] + eDataReg.a1_kappa * f1_tm1->f[1])
 	  + tm1Disp->f[1];
 	
 	damping_vector_kappa[i].f[2] = coef_kappa * (tm1Disp->f[2] - tm2Disp->f[2])
-	  - (a0_kappa * f0_tm1->f[2] + a1_kappa * f1_tm1->f[2])
+	  - (eDataReg.a0_kappa * f0_tm1->f[2] + eDataReg.a1_kappa * f1_tm1->f[2])
 	  + tm1Disp->f[2];
 	
       } // end for nodes in the element
       
     } else {
       for (i = 0; i < 8; i++) {
-	fvector_t *tm1Disp;
-	//fvector_t *tm2Disp;
-	int32_t    lnid;
-	
 	lnid = lnidReg[i];
 	tm1Disp = gpuDataDevice->tm1Device + lnid;
 	//tm2Disp = gpuDataDevice->tm2Device + lnid;
@@ -426,7 +406,7 @@ __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
       } // end for nodes in the element
       
     } // end if for coefficients
-    
+
     double kappa = -0.5625 * (eTableReg.c2 + 2. / 3. * eTableReg.c1);
     double mu = -0.5625 * eTableReg.c1;
     
@@ -434,9 +414,6 @@ __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
     double firstVec[24];
     
     memset(firstVec, 0, 24*sizeof(double));
-
-    //fvector_t* localForce = gpuDataDevice->localForceDevice + (eindex*8);
-    //memset(localForce, 0, 8 * sizeof(fvector_t));
 
     if(vector_is_zero( damping_vector_shear ) != 0) {
       aTransposeU( damping_vector_shear, atu );

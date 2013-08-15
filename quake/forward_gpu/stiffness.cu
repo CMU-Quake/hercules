@@ -41,9 +41,7 @@
 static int32_t    myLinearElementsCount;
 static int32_t   *myLinearElementsMapper;
 static int32_t   *myLinearElementsMapperDevice;
-static rev_entry_t   *reverseLookupLinearDevice;
 
-static int initLookupBlockSize;
 static int calcForceBlockSize;
 static int addForceBlockSize;
 
@@ -122,13 +120,6 @@ void stiffness_init(int32_t myID, mesh_t *myMesh, mysolver_t* mySolver)
         MPI_Abort(MPI_COMM_WORLD, ERROR);
         exit(1);
     }
-    if (cudaMalloc((void**)&(reverseLookupLinearDevice), 
-    		   myMesh->nharbored * sizeof(rev_entry_t)) != cudaSuccess) {
-            fprintf(stderr, "Thread %d: Failed to allocate reverseLookup memory\n", 
-    		myID);
-            MPI_Abort(MPI_COMM_WORLD, ERROR);
-            exit(1);
-    }
 
     /* Copy linear element mapper to device */
     if (cudaMemcpy(myLinearElementsMapperDevice, myLinearElementsMapper, 
@@ -141,36 +132,10 @@ void stiffness_init(int32_t myID, mesh_t *myMesh, mysolver_t* mySolver)
     }
 
     /* Dynamically calculate optimum block size for each kernel */
-    initLookupBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
-					    (char *)kernelInitLinearLookup);
     calcForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
 					   (char *)kernelStiffnessCalcLocal);
     addForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
 					  (char *)kernelAddLocalForces);
-
-    if (myID == 0) {
-      fprintf(stderr, "!!!!! computed block sizes = %d, %d, %d\n", 
-	      initLookupBlockSize, calcForceBlockSize, addForceBlockSize);
-    }
-
-    /* Create reverse lookup table */
-    int blocksize = initLookupBlockSize;
-    int gridsize = (myMesh->nharbored / blocksize) + 1;
-    cudaGetLastError();
-    kernelInitLinearLookup<<<gridsize, blocksize>>>(mySolver->gpuDataDevice,
-						    myLinearElementsCount,
-						    myLinearElementsMapperDevice,
-						    reverseLookupLinearDevice);
-
-    cudaDeviceSynchronize();
-
-    cudaError_t cerror = cudaGetLastError();
-    if (cerror != cudaSuccess) {
-      fprintf(stderr, "Thread %d: Init linear lookup kernel - %s\n", myID, 
-	      cudaGetErrorString(cerror));
-      MPI_Abort(MPI_COMM_WORLD, ERROR);
-      exit(1);
-    }
 
     return;
 }
@@ -182,7 +147,6 @@ void stiffness_delete(int32_t myID) {
 
     /* Free device memory */
     cudaFree(myLinearElementsMapperDevice);
-    cudaFree(reverseLookupLinearDevice);
 
     return;
 }
@@ -332,8 +296,14 @@ void compute_addforce_effective_gpu( int32_t myID,
     cudaMemcpy(mySolver->gpuData->forceDevice, mySolver->force, 
 	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
 
+    /* Reset local forces */
+    cudaMemset(mySolver->gpuData->localForceDevice, 0, 
+	       myMesh->lenum * 8 * sizeof(fvector_t));
+
+    /* Note that this executes for all elements. Threads for non-linear
+       elements will exit immediately */
     int blocksize = calcForceBlockSize;
-    int gridsize = (myLinearElementsCount / blocksize) + 1;
+    int gridsize = (myMesh->lenum / blocksize) + 1;
     cudaGetLastError();
     kernelStiffnessCalcLocal<<<gridsize, blocksize>>>(mySolver->gpuDataDevice,
 						      myLinearElementsCount, 

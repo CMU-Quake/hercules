@@ -111,7 +111,6 @@ void damping_addforce(mesh_t *myMesh, mysolver_t *mySolver, fmatrix_t (*theK1)[8
 
 void calc_conv_gpu(int32_t myID, mesh_t *myMesh, mysolver_t *mySolver, double theFreq, double theDeltaT, double theDeltaTSquared)
 {
-    int i;
     double rmax = 2. * M_PI * theFreq * theDeltaT;
     
     int blocksize = gpu_get_blocksize(mySolver->gpu_spec,

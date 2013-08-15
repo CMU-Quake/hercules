@@ -3705,6 +3705,8 @@ static void solver_init()
     Global.mySolver->gpuData = &Global.gpuData;
 
     /* Create node->element reverse lookup table */
+    cudaMemset(Global.gpuData.reverseLookupDevice, 0,
+	       Global.myMesh->nharbored * sizeof(rev_entry_t));
     int blocksize = gpu_get_blocksize(Global.mySolver->gpu_spec, 
 				      (char *)kernelInitReverseLookup);
     int gridsize = (Global.myMesh->nharbored / blocksize) + 1;
