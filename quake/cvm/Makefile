@@ -5,7 +5,7 @@
 include $(WORKDIR)/systemdef.mk
 include $(WORKDIR)/common.mk
 
-CFLAGS += -I$(ETREE_DIR) 
+CFLAGS += -I$(ETREE_DIR)
 LOADLIBES += $(ETREE_DIR)/libetree.a
 
 #

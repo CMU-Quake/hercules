@@ -5,6 +5,8 @@
 include $(WORKDIR)/systemdef.mk
 include $(WORKDIR)/common.mk
 
+CPPFLAGS += -I. -I$(MPI_DIR)/include
+
 OBJECTS = octor.o
 
 TARGET = liboctor.a

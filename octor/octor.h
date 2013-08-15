@@ -234,6 +234,10 @@ do { \
     ((octree)->ticksize * OCTOR_GETOCTTICKS(octant))
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
 
 /**
  * octor_getchild: Return the specified child octant. If parentoctant is a 
@@ -299,6 +303,7 @@ octor_getmaxleavescount(const octree_t* octree, int where);
 /* Tree-level operations */
 /*************************/
 
+
 extern octree_t *
 octor_newtree(double x, double y, double z, int32_t recsize,
               int32_t myid, int32_t groupsize, MPI_Comm solver_comm,
@@ -341,6 +346,10 @@ octor_showstat(octree_t *octree, mesh_t *mesh);
 /*************************/
 extern int32_t octor_zcompare(const void *p1, const void *p2);
 extern const point_t * octor_getintervaltable(octree_t *octree);
-    
+
+#ifdef __cplusplus
+} /* extern "C" { */
+#endif /* __cplusplus */
+
 
 #endif /* OCTOR_H */

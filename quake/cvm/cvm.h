@@ -63,6 +63,10 @@ typedef struct dbctl_t {
 
 } dbctl_t;
 
+#ifdef __cplusplus
+extern "C" {
+#endif /* __cplusplus */
+
 dbctl_t *cvm_newdbctl();
 void cvm_freedbctl(dbctl_t *dbctlPtr);
 
@@ -71,5 +75,9 @@ dbctl_t *cvm_getdbctl(etree_t *cvmEp);
 
 int cvm_query(etree_t *cvmEp, double east_m, double north_m, double depth_m, 
               cvmpayload_t* payload);
+
+#ifdef __cplusplus
+} /* extern "C" { */
+#endif /* __cplusplus */
 
 #endif /* CVM_H */

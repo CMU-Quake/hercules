@@ -1,0 +1,50 @@
+psolve - FEM solver (_Navier Equation_)
+=======================================
+
+Implemented by Tiankai Tu and Leonardo Ramirez-Guzman
+Address questions related to 
+- Algorithms and implementation( Tiankai Tu tutk@cs.cmu.edu )
+- Numerical Method and Physics ( Leonardo Ramirez-Gzuman
+				 lramirez@andrew.cmu.edu )
+
+CAPABILITIES
+------------
+
+*Damping*:: The following damping types are supported:
+	- MASS proportional
+        - RAYLEIGH type
+        - NONE
+
+*Source*:: Hercules supports the following source types.
+	- point source
+	- plane source
+	- strike slip sources defined in term of planes
+
+
+
+Contents
+--------
+
+This directory should contain the following files:
+
+Makefile
+geometrics.c
+geometrics.h
+nrutila.c
+nrutila.h
+psolve.c
+psolve.h
+q4.c
+q4.h
+qmesh.c
+quakesource.c
+quakesource.h
+run_example
+single_query.c
+
+
+Building
+--------
+
+For installation instructions please refer to `$HERCULES_ROOT/doc/install.txt`,
+that is, `../../doc/install.txt`.

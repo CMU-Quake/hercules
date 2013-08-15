@@ -49,43 +49,22 @@ endif
 # Object modules 
 #
 PSOLVE_OBJECTS = psolve.o nrutila.o quakesource.o geometrics.o nonlinear.o \
-	commutil.o util.o output.o io_planes.o io_checkpoint.o stiffness.o damping.o quake_util.o timers.o buildings.o meshformatlab.o drm.o 
+	commutil.o util.o output.o io_planes.o io_checkpoint.o stiffness.o damping.o quake_util.o kernel.o timers.o buildings.o meshformatlab.o drm.o 
 
-OBJECTS = qmesh.o q4.o single_query.o ${PSOLVE_OBJECTS}
+OBJECTS = ${PSOLVE_OBJECTS}
 
 .PHONY: all tags clean cleanall move_cxx_repository
 
 all: move_cxx_repository $(TARGET)
 
-TARGET = qmesh psolve single_query q4showmeta
+TARGET = psolve
 
-
-qmesh: qmesh.o
-	$(LD) $^ \
-	$(LOADLIBES) \
-	$(LDFLAGS) \
-	-o $@
 
 psolve: ${PSOLVE_OBJECTS} ${OCTOR_LIB}
 	$(LD) $^ \
 	$(LOADLIBES) \
 	$(LDFLAGS) \
 	-o $@
-
-q4showmeta: q4showmeta.o util.o
-	$(LD) $^ \
-	$(LOADLIBES) \
-	$(LDFLAGS) \
-	-o $@
-
-psolve_output: psolve_output.o
-	$(LD) $^ \
-	$(LOADLIBES) \
-	$(LDFLAGS) \
-	-o $@
-
-psolve_output.o: psolve.o
-	cp -f psolve.o psolve_output.o
 
 psolve_debug: psolve_debug.o 
 	$(LD) $^ \
@@ -96,31 +75,13 @@ psolve_debug: psolve_debug.o
 psolve_debug.o: psolve.o nrutila.o quakesource.o geometrics.o io_planes.o io_checkpoint.o
 	cp -f psolve.o psolve_debug.o
 
-psolve_novis: psolve_novis.o
-	$(LD) $^ \
-	$(LOADLIBES) \
-	$(LDFLAGS) \
-	-o $@
-
-psolve_novis.o: psolve.o
-	cp -f psolve.o psolve_novis.o
-
-single_query: single_query.o q4.o
-	$(LD) $^ \
-	$(LOADLIBES) \
-	$(LDFLAGS) \
-	-o $@
-
-output.o: output.c output.h psolve.h
-psolve.o: psolve.c psolve.h output.h quakesource.h nonlinear.h io_planes.h \
-          io_checkpoint.h stiffness.h damping.h quake_util.h timers.h buildings.h meshformatlab.h drm.h        
-quakesource.o: quakesource.c quakesource.h psolve.h
-
+%.o: %.cu
+	$(NVCC) $(CPPFLAGS) $(NVFLAGS) -c $^ -o $@
 
 all: $(TARGET)
 
 clean:
-	rm -f $(OBJECTS)  core *.o *~ 
+	rm -f $(OBJECTS)  core *~ 
 
 cleanall:
 	rm -f $(OBJECTS)  $(TARGET) core *~
