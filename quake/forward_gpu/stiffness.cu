@@ -323,7 +323,6 @@ void compute_addforce_effective_gpu( int32_t myID,
     gridsize = ((myMesh->nharbored) / blocksize) + 1;
     cudaGetLastError();
     kernelAddLocalForces<<<gridsize, blocksize>>>(mySolver->gpuDataDevice);
-    cudaDeviceSynchronize();
 
     cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {

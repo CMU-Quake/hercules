@@ -120,7 +120,7 @@ void calc_conv_gpu(int32_t myID, mesh_t *myMesh, mysolver_t *mySolver, double th
     kernelDampingCalcConv<<<gridsize, blocksize>>>(mySolver->gpuDataDevice, 
 						   rmax);
 
-    cudaDeviceSynchronize();
+    //cudaDeviceSynchronize();
 
     cudaError_t cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {
@@ -291,8 +291,6 @@ void constant_Q_addforce_gpu(int myID, mesh_t *myMesh, mysolver_t *mySolver, dou
     gridsize = ((myMesh->nharbored) / blocksize) + 1;
     cudaGetLastError();
     kernelAddLocalForces<<<gridsize, blocksize>>>(mySolver->gpuDataDevice);
-
-    cudaDeviceSynchronize();
 
     cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {

@@ -3656,14 +3656,17 @@ static void solver_init()
 
     /* Copy mesh and solver elements to device */
     elem_t tmpelem;
+    if (cudaMalloc((void**)&(Global.gpuData.matPropsDevice), 
+		   Global.myMesh->lenum * sizeof(edata_t)) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to allocate material property memory\n", 
+	      Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
     for (int i = 0; i < Global.myMesh->lenum; i++) {
       memcpy(&tmpelem, &(Global.myMesh->elemTable[i]), sizeof(elem_t));
-      if (cudaMalloc((void**)&(tmpelem.data), sizeof(edata_t)) != cudaSuccess) {
-	fprintf(stderr, "Thread %d: Failed to allocate element data memory\n", 
-		Global.myID);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
-      }
+      tmpelem.data = Global.gpuData.matPropsDevice + i;
       cudaMemcpy(tmpelem.data, Global.myMesh->elemTable[i].data, 
 		 sizeof(edata_t), cudaMemcpyHostToDevice);    
       cudaMemcpy(Global.gpuData.elemTableDevice + i, &tmpelem, 
@@ -3857,7 +3860,9 @@ static void solver_delete()
     cudaFree(Global.gpuData.conv_shear_2Device);
     cudaFree(Global.gpuData.conv_kappa_1Device);
     cudaFree(Global.gpuData.conv_kappa_2Device);
+    cudaFree(Global.gpuData.matPropsDevice);
     cudaFree(Global.gpuData.reverseLookupDevice);
+    cudaFree(Global.mySolver->gpuDataDevice);
 
     free(Global.mySolver->eTable);
     free(Global.mySolver->nTable);

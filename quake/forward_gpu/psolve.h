@@ -310,6 +310,7 @@ typedef struct gpu_data_t {
     fvector_t* conv_kappa_1Device;
     fvector_t* conv_kappa_2Device;
 
+    edata_t*     matPropsDevice;
     rev_entry_t* reverseLookupDevice;
 } gpu_data_t;
 
