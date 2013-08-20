@@ -334,6 +334,7 @@ void getGPUHardware(int device, gpu_spec_t *gpuSpecs, int dispFlag)
       gpuSpecs->max_grid_dim[i] = props.maxGridSize[i];
     }
     gpuSpecs->regs_per_block = props.regsPerBlock;
+    gpuSpecs->shared_per_block = props.sharedMemPerBlock;
 
     if (dispFlag) {
       cout << "GPU Device " << device << ": " << props.name 
@@ -3711,7 +3712,7 @@ static void solver_init()
     cudaMemset(Global.gpuData.reverseLookupDevice, 0,
 	       Global.myMesh->nharbored * sizeof(rev_entry_t));
     int blocksize = gpu_get_blocksize(Global.mySolver->gpu_spec, 
-				      (char *)kernelInitReverseLookup);
+				      (char *)kernelInitReverseLookup, 0);
     int gridsize = (Global.myMesh->nharbored / blocksize) + 1;
     cudaGetLastError();
     kernelInitReverseLookup<<<gridsize, blocksize>>>(Global.mySolver->gpuDataDevice);

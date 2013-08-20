@@ -133,9 +133,9 @@ void stiffness_init(int32_t myID, mesh_t *myMesh, mysolver_t* mySolver)
 
     /* Dynamically calculate optimum block size for each kernel */
     calcForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
-					   (char *)kernelStiffnessCalcLocal);
+					   (char *)kernelStiffnessCalcLocal, 0);
     addForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
-					  (char *)kernelAddLocalForces);
+					  (char *)kernelAddLocalForces, 0);
 
     return;
 }

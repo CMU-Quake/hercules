@@ -59,6 +59,7 @@ typedef struct {
   int32_t max_block_dim[3];
   int32_t max_grid_dim[3];
   int32_t regs_per_block;
+  int32_t shared_per_block;
 } gpu_spec_t;
 
 /* Reverse node->element table lookup for local force */

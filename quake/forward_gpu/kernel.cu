@@ -43,15 +43,30 @@
 #define UNDERFLOW_CAP_STIFFNESS 1e-20
 
 
-int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs, char* kernel)
+int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs, 
+			  char* kernel, 
+			  int32_t memPerThread)
 {
+    int32_t max_threads;
+    int32_t computed;
+
+    /* Get kernel attributes */
     cudaFuncAttributes attributes;
     cudaFuncGetAttributes(&attributes, kernel);
 
-    int computed = gpuSpecs->regs_per_block / attributes.numRegs;
+    /* Maximum theads possible based on register use */
+    computed = gpuSpecs->regs_per_block / attributes.numRegs;
     computed = 1 << (int)floor(log(computed)/log(2));
+    max_threads = imin(computed, gpuSpecs->max_threads);
 
-    return(imin(computed, gpuSpecs->max_threads));
+    /* Maximum threads possible based on shared memory use */
+    if (memPerThread > 0) {
+      computed = gpuSpecs->shared_per_block / memPerThread;
+      computed = 1 << (int)floor(log(computed)/log(2));
+      max_threads = imin(computed, max_threads);
+    }
+
+    return(max_threads);
 }
 
 
@@ -131,7 +146,6 @@ __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
     int32_t   lin_eindex = (blockIdx.x * blockDim.x) + threadIdx.x; 
     fvector_t curDisp[8];
 
-    register fvector_t localForceReg[8];
     register int32_t   lnidReg[8];
     register e_t       eTableReg;
 
@@ -165,12 +179,11 @@ __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
       
       aTransposeU( curDisp, atu );
       firstVector( atu, firstVec, first_coeff, second_coeff, third_coeff );
-      au( localForceReg, firstVec );
+      au( &(gpuDataDevice->localForceDevice[eindex*8]), firstVec );
+
     }
 
-    /* Copy element local force from registers to global mem */
-    memcpy(&(gpuDataDevice->localForceDevice[eindex*8]), localForceReg, 
-	     8*sizeof(fvector_t));
+    return;
 }
 
 
@@ -179,8 +192,14 @@ __global__  void kernelDampingCalcConv(gpu_data_t* gpuDataDevice,
 				       double rmax) 
 {
   int i;
-  int32_t   eindex = (blockIdx.x * blockDim.x) + threadIdx.x;
+  int mode;
+  int32_t   index = (blockIdx.x * blockDim.x) + threadIdx.x;
+  int32_t   eindex;
   
+  eindex = index / 16;
+  mode = (index % 16) / 8; // 0 = shear, 1 = kappa
+  i = (index % 16) % 8;
+
   /* Since number of elements may not be exactly divisible by block size,
      check that we are not off the end of the element array */
   if (eindex >= gpuDataDevice->lenum) {
@@ -193,101 +212,100 @@ __global__  void kernelDampingCalcConv(gpu_data_t* gpuDataDevice,
   elemp = &gpuDataDevice->elemTableDevice[eindex];
   edata = (edata_t *)elemp->data;
   
-  // SHEAR RELATED CONVOLUTION
-  
-  if ( (edata->g0_shear != 0) && (edata->g1_shear != 0) ) {
-    
-    double c0_shear = edata->g0_shear;
-    double c1_shear = edata->g1_shear;
-    
-    double g0_shear = c0_shear * rmax;
-    double g1_shear = c1_shear * rmax;
-    
-    double coef_shear_1 = g0_shear / 2.;
-    double coef_shear_2 = coef_shear_1 * ( 1. - g0_shear );
-    
-    double coef_shear_3 = g1_shear / 2.;
-    double coef_shear_4 = coef_shear_3 * ( 1. - g1_shear );
-    
-    double exp_coef_shear_0 = exp( -g0_shear );
-    double exp_coef_shear_1 = exp( -g1_shear );
-    
-    for(i = 0; i < 8; i++)
-      {
-	int32_t     lnid, cindex;
-	fvector_t   *f0_tm1, *f1_tm1, *tm1Disp, *tm2Disp;
-	
-	lnid = elemp->lnid[i];
-	
-	/* cindex is the index of the node in the convolution vector */
-	cindex = eindex * 8 + i;
-	
-	tm1Disp = gpuDataDevice->tm1Device + lnid;
-	tm2Disp = gpuDataDevice->tm2Device + lnid;
-	
-	f0_tm1 = gpuDataDevice->conv_shear_1Device + cindex;
-	f1_tm1 = gpuDataDevice->conv_shear_2Device + cindex;
-	
-	f0_tm1->f[0] = coef_shear_2 * tm1Disp->f[0] + coef_shear_1 * tm2Disp->f[0] + exp_coef_shear_0 * f0_tm1->f[0];
-	f0_tm1->f[1] = coef_shear_2 * tm1Disp->f[1] + coef_shear_1 * tm2Disp->f[1] + exp_coef_shear_0 * f0_tm1->f[1];
-	f0_tm1->f[2] = coef_shear_2 * tm1Disp->f[2] + coef_shear_1 * tm2Disp->f[2] + exp_coef_shear_0 * f0_tm1->f[2];
-	
-	f1_tm1->f[0] = coef_shear_4 * tm1Disp->f[0] + coef_shear_3 * tm2Disp->f[0] + exp_coef_shear_1 * f1_tm1->f[0];
-	f1_tm1->f[1] = coef_shear_4 * tm1Disp->f[1] + coef_shear_3 * tm2Disp->f[1] + exp_coef_shear_1 * f1_tm1->f[1];
-	f1_tm1->f[2] = coef_shear_4 * tm1Disp->f[2] + coef_shear_3 * tm2Disp->f[2] + exp_coef_shear_1 * f1_tm1->f[2];
-	
-      } // For local nodes (0:7)
-    
-  } // end if null coefficients
-  
-  // DILATATION RELATED CONVOLUTION
-  
-  if ( (edata->g0_kappa != 0) && (edata->g1_kappa != 0) ) {
-    
-    double c0_kappa = edata->g0_kappa;
-    double c1_kappa = edata->g1_kappa;
-    
-    double g0_kappa = c0_kappa * rmax;
-    double g1_kappa = c1_kappa * rmax;
-    
-    double coef_kappa_1 = g0_kappa / 2.;
-    double coef_kappa_2 = coef_kappa_1 * ( 1. - g0_kappa );
-    
-    double coef_kappa_3 = g1_kappa / 2.;
-    double coef_kappa_4 = coef_kappa_3 * ( 1. - g1_kappa );
-    
-    double exp_coef_kappa_0 = exp( -g0_kappa );
-    double exp_coef_kappa_1 = exp( -g1_kappa );
-    
-    for(i = 0; i < 8; i++)
-      {
-	int32_t     lnid, cindex;
-	fvector_t   *f0_tm1, *f1_tm1, *tm1Disp, *tm2Disp;
-	
-	lnid = elemp->lnid[i];
-	
-	/* cindex is the index of the node in the convolution vector */
-	cindex = eindex * 8 + i;
-	
-	tm1Disp = gpuDataDevice->tm1Device + lnid;
-	tm2Disp = gpuDataDevice->tm2Device + lnid;
-	
-	f0_tm1 = gpuDataDevice->conv_kappa_1Device + cindex;
-	f1_tm1 = gpuDataDevice->conv_kappa_2Device + cindex;
-	
-	f0_tm1->f[0] = coef_kappa_2 * tm1Disp->f[0] + coef_kappa_1 * tm2Disp->f[0] + exp_coef_kappa_0 * f0_tm1->f[0];
-	f0_tm1->f[1] = coef_kappa_2 * tm1Disp->f[1] + coef_kappa_1 * tm2Disp->f[1] + exp_coef_kappa_0 * f0_tm1->f[1];
-	f0_tm1->f[2] = coef_kappa_2 * tm1Disp->f[2] + coef_kappa_1 * tm2Disp->f[2] + exp_coef_kappa_0 * f0_tm1->f[2];
-	
-	f1_tm1->f[0] = coef_kappa_4 * tm1Disp->f[0] + coef_kappa_3 * tm2Disp->f[0] + exp_coef_kappa_1 * f1_tm1->f[0];
-	f1_tm1->f[1] = coef_kappa_4 * tm1Disp->f[1] + coef_kappa_3 * tm2Disp->f[1] + exp_coef_kappa_1 * f1_tm1->f[1];
-	f1_tm1->f[2] = coef_kappa_4 * tm1Disp->f[2] + coef_kappa_3 * tm2Disp->f[2] + exp_coef_kappa_1 * f1_tm1->f[2];
-	
-      } // For local nodes (0:7)
-    
-  } // end if null coefficients
+  double c0;
+  double c1;
+  double g0;
+  double g1;
+  double coef_1;
+  double coef_2;
+  double coef_3;
+  double coef_4;
+  double exp_coef_0;
+  double exp_coef_1;
 
-  return;  
+  int32_t     lnid, cindex;
+  fvector_t   *f0_tm1, *f1_tm1, *tm1Disp, *tm2Disp;
+  
+  switch (mode) {
+  case 0:
+    // SHEAR RELATED CONVOLUTION
+    if ( (edata->g0_shear == 0) || (edata->g1_shear == 0) ) {
+      return;
+    }
+
+    c0 = edata->g0_shear;
+    c1 = edata->g1_shear;
+    
+    g0 = c0 * rmax;
+    g1 = c1 * rmax;
+    
+    coef_1 = g0 / 2.;
+    coef_2 = coef_1 * ( 1. - g0 );
+    
+    coef_3 = g1 / 2.;
+    coef_4 = coef_3 * ( 1. - g1 );
+    
+    exp_coef_0 = exp( -g0 );
+    exp_coef_1 = exp( -g1 );
+
+    lnid = elemp->lnid[i];
+  
+    /* cindex is the index of the node in the convolution vector */
+    cindex = eindex * 8 + i;
+    
+    tm1Disp = gpuDataDevice->tm1Device + lnid;
+    tm2Disp = gpuDataDevice->tm2Device + lnid;
+    
+    f0_tm1 = gpuDataDevice->conv_shear_1Device + cindex;
+    f1_tm1 = gpuDataDevice->conv_shear_2Device + cindex;
+
+    break;
+  case 1:
+    // DILATATION RELATED CONVOLUTION
+    if ( (edata->g0_kappa == 0) || (edata->g1_kappa == 0) ) {
+      return;
+    }
+    
+    c0 = edata->g0_kappa;
+    c1 = edata->g1_kappa;
+    
+    g0 = c0 * rmax;
+    g1 = c1 * rmax;
+   
+    coef_1 = g0 / 2.;
+    coef_2 = coef_1 * ( 1. - g0 );
+    
+    coef_3 = g1 / 2.;
+    coef_4 = coef_3 * ( 1. - g1 );
+    
+    exp_coef_0 = exp( -g0 );
+    exp_coef_1 = exp( -g1 );
+
+    lnid = elemp->lnid[i];
+    
+    /* cindex is the index of the node in the convolution vector */
+    cindex = eindex * 8 + i;
+    
+    tm1Disp = gpuDataDevice->tm1Device + lnid;
+    tm2Disp = gpuDataDevice->tm2Device + lnid;
+    
+    f0_tm1 = gpuDataDevice->conv_kappa_1Device + cindex;
+    f1_tm1 = gpuDataDevice->conv_kappa_2Device + cindex;
+
+    break;
+ default:
+   return;
+  }
+    
+  f0_tm1->f[0] = coef_2 * tm1Disp->f[0] + coef_1 * tm2Disp->f[0] + exp_coef_0 * f0_tm1->f[0];
+  f0_tm1->f[1] = coef_2 * tm1Disp->f[1] + coef_1 * tm2Disp->f[1] + exp_coef_0 * f0_tm1->f[1];
+  f0_tm1->f[2] = coef_2 * tm1Disp->f[2] + coef_1 * tm2Disp->f[2] + exp_coef_0 * f0_tm1->f[2];
+  
+  f1_tm1->f[0] = coef_4 * tm1Disp->f[0] + coef_3 * tm2Disp->f[0] + exp_coef_1 * f1_tm1->f[0];
+  f1_tm1->f[1] = coef_4 * tm1Disp->f[1] + coef_3 * tm2Disp->f[1] + exp_coef_1 * f1_tm1->f[1];
+  f1_tm1->f[2] = coef_4 * tm1Disp->f[2] + coef_3 * tm2Disp->f[2] + exp_coef_1 * f1_tm1->f[2];
+
+  return;
 }
 
 
@@ -295,142 +313,128 @@ __global__  void kernelDampingCalcConv(gpu_data_t* gpuDataDevice,
 __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
 					double rmax) 
 {
-    int       i;
-    int32_t   eindex = (blockIdx.x * blockDim.x) + threadIdx.x;
+  int i;
+  int mode;
+  int32_t   eindex;
+  int32_t   index = (blockIdx.x * blockDim.x) + threadIdx.x;
+  
+  eindex = index / 16;
+  mode = (index % 16) / 8; // 0 = shear, 1 = kappa
+  i = (index % 16) % 8;
 
-    fvector_t damping_vector_shear[8], damping_vector_kappa[8];
+  /* Shared memory for shear and kappa vectors */
+  int32_t           tindex = threadIdx.x;
+  extern __shared__ fvector_t damping_vector[];
 
-    register fvector_t localForceReg[8];
-    register edata_t   eDataReg;
-    register int32_t   lnidReg[8];
-    register e_t       eTableReg;
+  /* Since number of elements may not be exactly divisible by block size,
+     check that we are not off the end of the element array */
+  if (eindex >= gpuDataDevice->lenum) {
+    return;
+  }
+  
+  edata_t*   edatap;
+  e_t*       ep;
+  double     csum, coef;
+  fvector_t *tm1Disp, *tm2Disp, *f0_tm1, *f1_tm1;
+  int32_t    lnid, cindex;
+  
+  lnid = gpuDataDevice->elemTableDevice[eindex].lnid[i];
+  edatap = (edata_t *)gpuDataDevice->elemTableDevice[eindex].data;
+  ep =  &(gpuDataDevice->eTableDevice[eindex]);
 
-    /* Since number of elements may not be exactly divisible by block size,
-       check that we are not off the end of the element array */
-    if (eindex >= gpuDataDevice->lenum) {
-      return;
-    }
+  cindex = eindex * 8 + i;
+  tm1Disp = gpuDataDevice->tm1Device + lnid;
+  tm2Disp = gpuDataDevice->tm2Device + lnid;
 
-    double     csum_shear, csum_kappa;
-    fvector_t *tm1Disp, *tm2Disp, *f0_tm1, *f1_tm1;
-    int32_t    lnid, cindex;
-
-    memcpy(lnidReg, gpuDataDevice->elemTableDevice[eindex].lnid, 
-	   8*sizeof(int32_t));
-    memcpy(&eDataReg, gpuDataDevice->elemTableDevice[eindex].data, 
-	   sizeof(edata_t)); 
-    memcpy(&eTableReg, &(gpuDataDevice->eTableDevice[eindex]), sizeof(e_t));
-
-    csum_shear = eDataReg.a0_shear + eDataReg.a1_shear + eDataReg.b_shear;
-    csum_kappa = eDataReg.a0_kappa + eDataReg.a1_kappa + eDataReg.b_kappa;
-
+  switch (mode) {
+  case 0:
     // SHEAR CONTRIBUTION
-    if ( csum_shear != 0 ) {
-      double coef_shear = eDataReg.b_shear / rmax;
-      for (i = 0; i < 8; i++) {
-	cindex = eindex * 8 + i;
-	lnid = lnidReg[i];
-	
-	tm1Disp = gpuDataDevice->tm1Device + lnid;
-	tm2Disp = gpuDataDevice->tm2Device + lnid;
-
-	f0_tm1  = gpuDataDevice->conv_shear_1Device + cindex;
-	f1_tm1  = gpuDataDevice->conv_shear_2Device + cindex;
-	
-	damping_vector_shear[i].f[0] = coef_shear * (tm1Disp->f[0] - tm2Disp->f[0])
-	  - (eDataReg.a0_shear * f0_tm1->f[0] + eDataReg.a1_shear * f1_tm1->f[0])
-	  + tm1Disp->f[0];
-	
-	damping_vector_shear[i].f[1] = coef_shear * (tm1Disp->f[1] - tm2Disp->f[1])
-	  - (eDataReg.a0_shear * f0_tm1->f[1] + eDataReg.a1_shear * f1_tm1->f[1])
-	  + tm1Disp->f[1];
-	
-	damping_vector_shear[i].f[2] = coef_shear * (tm1Disp->f[2] - tm2Disp->f[2])
-	  - (eDataReg.a0_shear * f0_tm1->f[2] + eDataReg.a1_shear * f1_tm1->f[2])
-	  + tm1Disp->f[2];
-	
-      } // end for nodes in the element
+    csum = edatap->a0_shear + edatap->a1_shear + edatap->b_shear;
+    if ( csum != 0 ) {
+      coef = edatap->b_shear / rmax;
+      
+      f0_tm1  = gpuDataDevice->conv_shear_1Device + cindex;
+      f1_tm1  = gpuDataDevice->conv_shear_2Device + cindex;
+      
+      damping_vector[tindex].f[0] = coef * (tm1Disp->f[0] - tm2Disp->f[0])
+	- (edatap->a0_shear * f0_tm1->f[0] + edatap->a1_shear * f1_tm1->f[0])
+	+ tm1Disp->f[0];
+      
+      damping_vector[tindex].f[1] = coef * (tm1Disp->f[1] - tm2Disp->f[1])
+	- (edatap->a0_shear * f0_tm1->f[1] + edatap->a1_shear * f1_tm1->f[1])
+	+ tm1Disp->f[1];
+      
+      damping_vector[tindex].f[2] = coef * (tm1Disp->f[2] - tm2Disp->f[2])
+	- (edatap->a0_shear * f0_tm1->f[2] + edatap->a1_shear * f1_tm1->f[2])
+	+ tm1Disp->f[2];
       
     } else { 
-      for (i = 0; i < 8; i++) {
-	lnid = lnidReg[i];
-	tm1Disp = gpuDataDevice->tm1Device + lnid;
-	//tm2Disp = gpuDataDevice->tm2Device + lnid;
-	
-	damping_vector_shear[i].f[0] = tm1Disp->f[0];
-	damping_vector_shear[i].f[1] = tm1Disp->f[1];
-	damping_vector_shear[i].f[2] = tm1Disp->f[2];
-	
-      } // end for nodes in the element
-      
-    } // end if for coefficients
-    
-    // DILATATION CONTRIBUTION
-    if ( csum_kappa != 0 ) {
-      double coef_kappa = eDataReg.b_kappa / rmax;
-      
-      for (i = 0; i < 8; i++) {
-	cindex = eindex * 8 + i;
-	lnid = lnidReg[i];
-	
-	tm1Disp = gpuDataDevice->tm1Device + lnid;
-	tm2Disp = gpuDataDevice->tm2Device + lnid;
-	
-	f0_tm1  = gpuDataDevice->conv_kappa_1Device + cindex;
-	f1_tm1  = gpuDataDevice->conv_kappa_2Device + cindex;
 
-	damping_vector_kappa[i].f[0] = coef_kappa * (tm1Disp->f[0] - tm2Disp->f[0])
-	  - (eDataReg.a0_kappa * f0_tm1->f[0] + eDataReg.a1_kappa * f1_tm1->f[0])
-	  + tm1Disp->f[0];
-	
-	damping_vector_kappa[i].f[1] = coef_kappa * (tm1Disp->f[1] - tm2Disp->f[1])
-	  - (eDataReg.a0_kappa * f0_tm1->f[1] + eDataReg.a1_kappa * f1_tm1->f[1])
-	  + tm1Disp->f[1];
-	
-	damping_vector_kappa[i].f[2] = coef_kappa * (tm1Disp->f[2] - tm2Disp->f[2])
-	  - (eDataReg.a0_kappa * f0_tm1->f[2] + eDataReg.a1_kappa * f1_tm1->f[2])
-	  + tm1Disp->f[2];
-	
-      } // end for nodes in the element
-      
-    } else {
-      for (i = 0; i < 8; i++) {
-	lnid = lnidReg[i];
-	tm1Disp = gpuDataDevice->tm1Device + lnid;
-	//tm2Disp = gpuDataDevice->tm2Device + lnid;
-	
-	damping_vector_kappa[i].f[0] = tm1Disp->f[0];
-	damping_vector_kappa[i].f[1] = tm1Disp->f[1];
-	damping_vector_kappa[i].f[2] = tm1Disp->f[2];
-
-      } // end for nodes in the element
+      damping_vector[tindex].f[0] = tm1Disp->f[0];
+      damping_vector[tindex].f[1] = tm1Disp->f[1];
+      damping_vector[tindex].f[2] = tm1Disp->f[2];
       
     } // end if for coefficients
 
-    double kappa = -0.5625 * (eTableReg.c2 + 2. / 3. * eTableReg.c1);
-    double mu = -0.5625 * eTableReg.c1;
+    break;
+  case 1:
+    // DILATION CONTRIBUTION
+    csum = edatap->a0_kappa + edatap->a1_kappa + edatap->b_kappa;
+    if ( csum != 0 ) {
+      coef = edatap->b_kappa / rmax;
+      
+      f0_tm1  = gpuDataDevice->conv_kappa_1Device + cindex;
+      f1_tm1  = gpuDataDevice->conv_kappa_2Device + cindex;
+
+      damping_vector[tindex].f[0] = coef * (tm1Disp->f[0] - tm2Disp->f[0])
+	- (edatap->a0_kappa * f0_tm1->f[0] + edatap->a1_kappa * f1_tm1->f[0])
+	+ tm1Disp->f[0];
+      
+      damping_vector[tindex].f[1] = coef * (tm1Disp->f[1] - tm2Disp->f[1])
+	- (edatap->a0_kappa * f0_tm1->f[1] + edatap->a1_kappa * f1_tm1->f[1])
+	+ tm1Disp->f[1];
+      
+      damping_vector[tindex].f[2] = coef * (tm1Disp->f[2] - tm2Disp->f[2])
+	- (edatap->a0_kappa * f0_tm1->f[2] + edatap->a1_kappa * f1_tm1->f[2])
+	+ tm1Disp->f[2];
+
+    } else { 
+      damping_vector[tindex].f[0] = tm1Disp->f[0];
+      damping_vector[tindex].f[1] = tm1Disp->f[1];
+      damping_vector[tindex].f[2] = tm1Disp->f[2];
+      
+    } // end if for coefficients
+
+    break;
+  default:
+    return;
+  }
+
+  __syncthreads();
+
+  if (tindex % 16 == 0) {
+    double kappa = -0.5625 * (ep->c2 + 2. / 3. * ep->c1);
+    double mu = -0.5625 * ep->c1;
     
     double atu[24];
     double firstVec[24];
     
     memset(firstVec, 0, 24*sizeof(double));
 
-    if(vector_is_zero( damping_vector_shear ) != 0) {
-      aTransposeU( damping_vector_shear, atu );
+    if(vector_is_zero( &(damping_vector[tindex]) ) != 0) {
+      aTransposeU( &(damping_vector[tindex]), atu );
       firstVector_mu( atu, firstVec, mu);
     }
     
-    if(vector_is_zero( damping_vector_kappa ) != 0) {
-      aTransposeU( damping_vector_kappa, atu );
+    if(vector_is_zero( &(damping_vector[tindex + 8]) ) != 0) {
+      aTransposeU( &(damping_vector[tindex + 8]), atu );
       firstVector_kappa( atu, firstVec, kappa);
     }
-    
-    au( localForceReg, firstVec );
 
-    /* Copy local forces from registers to global mem */
-    memcpy(&(gpuDataDevice->localForceDevice[eindex*8]), localForceReg, 
-	     8*sizeof(fvector_t));
-    return;
+    au(&(gpuDataDevice->localForceDevice[eindex*8]), firstVec );
+  }
+
+  return;
 }
 
 
@@ -511,18 +515,9 @@ __host__ __device__ int vector_is_zero( const fvector_t* v )
 
 __host__ __device__ void aTransposeU( fvector_t* un, double* atu )
 {
-    double temp[24];
     double u[24];
-    int    i, j;
 
-    /* arrange displacement values in an array */
-    for (i=0; i<8; i++) {
-        for(j=0; j<3; j++) {
-            temp[i*3 + j] = un[i].f[j];     /* u1 u2 u3 .... v1 v2 v3 ... z1 z2 z3 */
-	}
-    }
-
-    reformU( temp, u );
+    reformU( (double *)un, u );
 
     /* atu[0] = u[0] + u[1] + u[2] + u[3] + u[4] + u[5] + u[6] + u[7]; */
     atu[0]  = 0;
@@ -592,10 +587,7 @@ __host__ __device__ void firstVector( const double* atu,
 
 __host__ __device__ void au( fvector_t* resVec, const double* u )
 {
-    int    i, j;
     double finVec[24];
-    double temp[24];
-
 
     finVec[0]  = u[0]  - u[1] - u[2] - u[3] + u[4] + u[5] + u[6] - u[7];
     finVec[1]  = u[0]  - u[1] - u[2] + u[3] + u[4] - u[5] - u[6] + u[7];
@@ -624,15 +616,7 @@ __host__ __device__ void au( fvector_t* resVec, const double* u )
     finVec[22] = u[16] + u[17] + u[18] - u[19] + u[20] - u[21] - u[22] - u[23];
     finVec[23] = u[16] + u[17] + u[18] + u[19] + u[20] + u[21] + u[22] + u[23];
 
-    reformF( finVec, temp );
-
-    for (j = 0; j<8; j++)
-    {
-        for (i = 0; i<3; i++)
-        {
-            resVec[j].f[i] += temp[j*3 + i];
-        }
-    }
+    reformF( finVec, (double *)resVec );
 }
 
 

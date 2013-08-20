@@ -25,7 +25,7 @@
 #include <cuda_runtime.h>
 
 
-int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs, char* kernel);
+int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs, char* kernel, int32_t memPerThread);
 
 __global__  void kernelInitReverseLookup(gpu_data_t* gpuDataDevice);
 
