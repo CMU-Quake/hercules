@@ -274,7 +274,7 @@ void constant_Q_addforce_gpu(int myID, mesh_t *myMesh, mysolver_t *mySolver, dou
     cudaMemcpy(mySolver->gpuData->forceDevice, mySolver->force, 
     	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
 
-    /* Each thread saves either a shear or kappa convolution in shared mem */
+    /* Each thread saves either a shear or kappa vector in shared mem */
     int blocksize = gpu_get_blocksize(mySolver->gpu_spec,
 				      (char *)kernelDampingCalcLocal, 
 				      sizeof(fvector_t));
@@ -284,7 +284,7 @@ void constant_Q_addforce_gpu(int myID, mesh_t *myMesh, mysolver_t *mySolver, dou
     cudaGetLastError();
     kernelDampingCalcLocal<<<gridsize, blocksize, sharedmem>>>(mySolver->gpuDataDevice, rmax);
 
-    cudaDeviceSynchronize();
+    //cudaDeviceSynchronize();
 
     cudaError_t cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {

@@ -309,7 +309,7 @@ void compute_addforce_effective_gpu( int32_t myID,
 						      myLinearElementsCount, 
 						      myLinearElementsMapperDevice);
 
-    cudaDeviceSynchronize();
+    //cudaDeviceSynchronize();
 
     cudaError_t cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {
