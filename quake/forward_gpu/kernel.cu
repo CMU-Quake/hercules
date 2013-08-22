@@ -146,8 +146,8 @@ __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
     int32_t   lin_eindex = (blockIdx.x * blockDim.x) + threadIdx.x; 
     fvector_t curDisp[8];
 
-    register int32_t   lnidReg[8];
-    register e_t       eTableReg;
+    int32_t*           lnid;
+    e_t*               ep;
 
     /* Extra threads and threads for non-linear elements exit here */
     if (lin_eindex >= myLinearElementsCount) {
@@ -155,32 +155,27 @@ __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
     }
 
     eindex = myLinearElementsMapperDevice[lin_eindex];
-  
-    /* Copy node ids and constants from global mem to registers */
-    memcpy(lnidReg, gpuDataDevice->elemTableDevice[eindex].lnid, 
-	   8*sizeof(int32_t));
-    memcpy(&eTableReg, &(gpuDataDevice->eTableDevice[eindex]), sizeof(e_t));
+    lnid = gpuDataDevice->elemTableDevice[eindex].lnid;
+    ep = &(gpuDataDevice->eTableDevice[eindex]);
   
     /* Get current displacements */
     for (i = 0; i < 8; i++) {
-      memcpy(&(curDisp[i]), gpuDataDevice->tm1Device + lnidReg[i], 
+      memcpy(&(curDisp[i]), gpuDataDevice->tm1Device + lnid[i], 
 	     sizeof(fvector_t));
     }
     
     /* Coefficients for new stiffness matrix calculation */
     if (vector_is_zero( curDisp ) != 0) {
-      
-      double first_coeff  = -0.5625 * (eTableReg.c2 + 2 * eTableReg.c1);
-      double second_coeff = -0.5625 * (eTableReg.c2);
-      double third_coeff  = -0.5625 * (eTableReg.c1);
-      
+      double first_coeff  = -0.5625 * (ep->c2 + 2 * ep->c1);
+      double second_coeff = -0.5625 * (ep->c2);
+      double third_coeff  = -0.5625 * (ep->c1);
+
       double atu[24];
       double firstVec[24];
       
       aTransposeU( curDisp, atu );
       firstVector( atu, firstVec, first_coeff, second_coeff, third_coeff );
       au( &(gpuDataDevice->localForceDevice[eindex*8]), firstVec );
-
     }
 
     return;
@@ -407,12 +402,13 @@ __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
 
     break;
   default:
-    return;
+    break;
   }
 
   __syncthreads();
 
   if (tindex % 16 == 0) {
+    /* Compute local force for this element */
     double kappa = -0.5625 * (ep->c2 + 2. / 3. * ep->c1);
     double mu = -0.5625 * ep->c1;
     
@@ -438,6 +434,7 @@ __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
 }
 
 
+
 /* Add forces Kernel */
 __global__  void kernelAddLocalForces(gpu_data_t *gpuDataDevice)
 {
@@ -445,7 +442,7 @@ __global__  void kernelAddLocalForces(gpu_data_t *gpuDataDevice)
     int32_t      lnid = (blockIdx.x * blockDim.x) + threadIdx.x; 
 
     fvector_t*            localForce;
-    register rev_entry_t  revReg;
+    rev_entry_t*          revp;
     register fvector_t    nodalForceReg;
 
     /* Since number of nodes may not be exactly divisible by block size,
@@ -454,18 +451,15 @@ __global__  void kernelAddLocalForces(gpu_data_t *gpuDataDevice)
       return;
     }
 
-    /* Copy reverse lookup table from global to register */
-    memcpy(&revReg, (gpuDataDevice->reverseLookupDevice) + lnid, 
-	   sizeof(rev_entry_t));
+    revp = gpuDataDevice->reverseLookupDevice + lnid;
 
     /* Copy nodal force from global to register */
     memcpy(&nodalForceReg, (gpuDataDevice->forceDevice) + lnid, 
-	   sizeof(fvector_t));
+    	   sizeof(fvector_t));
 
     /* Update forces for this node */
-    for (i = 0; i < revReg.elemnum; i++) {
-      localForce = &(gpuDataDevice->localForceDevice[revReg.lf_indices[i].index]);
-
+    for (i = 0; i < revp->elemnum; i++) {
+      localForce = &(gpuDataDevice->localForceDevice[revp->lf_indices[i].index]);
       nodalForceReg.f[0] += localForce->f[0];
       nodalForceReg.f[1] += localForce->f[1];
       nodalForceReg.f[2] += localForce->f[2];
@@ -473,7 +467,7 @@ __global__  void kernelAddLocalForces(gpu_data_t *gpuDataDevice)
 
     /* Copy updated nodal force from register to global */
     memcpy((gpuDataDevice->forceDevice) + lnid, &nodalForceReg, 
-	   sizeof(fvector_t));
+    	   sizeof(fvector_t));
 }
 
 
@@ -515,9 +509,25 @@ __host__ __device__ int vector_is_zero( const fvector_t* v )
 
 __host__ __device__ void aTransposeU( fvector_t* un, double* atu )
 {
+#ifdef  SINGLE_PRECISION_SOLVER
+    double temp[24];
     double u[24];
+    int    i, j;
 
-    reformU( (double *)un, u );
+    /* arrange displacement values in an array */
+    for (i=0; i<8; i++) {
+        for(j=0; j<3; j++) {
+            temp[i*3 + j] = un[i].f[j];     /* u1 u2 u3 .... v1 v2 v3 ... z1 z2 
+z3 */
+	}
+    }
+
+    reformU( temp, u );
+#else
+     double u[24];
+
+     reformU( (double *)un, u );
+#endif
 
     /* atu[0] = u[0] + u[1] + u[2] + u[3] + u[4] + u[5] + u[6] + u[7]; */
     atu[0]  = 0;
@@ -587,7 +597,13 @@ __host__ __device__ void firstVector( const double* atu,
 
 __host__ __device__ void au( fvector_t* resVec, const double* u )
 {
+#ifdef  SINGLE_PRECISION_SOLVER
+    int    i, j;
     double finVec[24];
+    double temp[24];
+#else
+    double finVec[24];
+#endif
 
     finVec[0]  = u[0]  - u[1] - u[2] - u[3] + u[4] + u[5] + u[6] - u[7];
     finVec[1]  = u[0]  - u[1] - u[2] + u[3] + u[4] - u[5] - u[6] + u[7];
@@ -616,7 +632,20 @@ __host__ __device__ void au( fvector_t* resVec, const double* u )
     finVec[22] = u[16] + u[17] + u[18] - u[19] + u[20] - u[21] - u[22] - u[23];
     finVec[23] = u[16] + u[17] + u[18] + u[19] + u[20] + u[21] + u[22] + u[23];
 
+#ifdef  SINGLE_PRECISION_SOLVER
+    reformF( finVec, temp );
+
+    for (j = 0; j<8; j++)
+    {
+        for (i = 0; i<3; i++)
+        {
+            resVec[j].f[i] += temp[j*3 + i];
+        }
+    }
+#else
     reformF( finVec, (double *)resVec );
+#endif
+
 }
 
 
