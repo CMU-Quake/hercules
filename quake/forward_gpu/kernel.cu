@@ -55,9 +55,13 @@ int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs,
     cudaFuncGetAttributes(&attributes, kernel);
 
     /* Maximum theads possible based on register use */
-    computed = gpuSpecs->regs_per_block / attributes.numRegs;
-    computed = 1 << (int)floor(log(computed)/log(2));
-    max_threads = imin(computed, gpuSpecs->max_threads);
+    if (attributes.numRegs > 0) {
+      computed = gpuSpecs->regs_per_block / attributes.numRegs;
+      computed = 1 << (int)floor(log(computed)/log(2));
+      max_threads = imin(computed, gpuSpecs->max_threads);
+    } else {
+      max_threads = gpuSpecs->max_threads;
+    }
 
     /* Maximum threads possible based on shared memory use */
     if (memPerThread > 0) {
@@ -67,72 +71,6 @@ int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs,
     }
 
     return(max_threads);
-}
-
-
-__global__  void kernelInitReverseLookup(gpu_data_t *gpuDataDevice)
-{
-    int       i;
-    int32_t   lnid = (blockIdx.x * blockDim.x) + threadIdx.x; 
-    elem_t*   elemp;
-    int32_t   eindex;
-
-    /* Since number of nodes may not be exactly divisible by block size,
-       check that we are not off the end of the node array */
-    if (lnid >= gpuDataDevice->nharbored) {
-      return;
-    }
-
-    rev_entry_t *tableEntry = &(gpuDataDevice->reverseLookupDevice[lnid]);
-
-    /* loop on the number of elements */
-    for (eindex = 0; eindex < gpuDataDevice->lenum; eindex++) {      
-      elemp  = &(gpuDataDevice->elemTableDevice[eindex]);
-      
-      for (i = 0; i < 8; i++) {
-	if (lnid == elemp->lnid[i]) {
-	  tableEntry->lf_indices[tableEntry->elemnum].index = eindex*8 + i;
-	  (tableEntry->elemnum)++;
-	}
-      }
-    }
-}
-
-
-__global__  void kernelInitLinearLookup(gpu_data_t *gpuDataDevice,
-					int32_t    myLinearElementsCount,
-					int32_t*   myLinearElementsMapperDevice,
-					rev_entry_t* reverseLookupLinearDevice)
-{
-    int       i;
-    int32_t   lnid = (blockIdx.x * blockDim.x) + threadIdx.x; 
-    int32_t   lin_eindex;
-    elem_t*   elemp;
-    int32_t   eindex;
-
-    /* Since number of nodes may not be exactly divisible by block size,
-       check that we are not off the end of the node array */
-    if (lnid >= gpuDataDevice->nharbored) {
-      return;
-    }
-
-    rev_entry_t *tableEntry = &(reverseLookupLinearDevice[lnid]);
-
-    memset(tableEntry, 0, sizeof(rev_entry_t));
-    
-    /* loop on the number of elements */
-    for (lin_eindex = 0; lin_eindex < myLinearElementsCount; lin_eindex++) {
-      
-      eindex = myLinearElementsMapperDevice[lin_eindex];
-      elemp  = &(gpuDataDevice->elemTableDevice[eindex]);
-      
-      for (i = 0; i < 8; i++) {
-	if (lnid == elemp->lnid[i]) {
-	  tableEntry->lf_indices[tableEntry->elemnum].index = lin_eindex*8 + i;
-	  (tableEntry->elemnum)++;
-	}
-      }
-    }
 }
 
 
@@ -148,6 +86,7 @@ __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
 
     int32_t*           lnid;
     e_t*               ep;
+    fvector_t          localForce[8];
 
     /* Extra threads and threads for non-linear elements exit here */
     if (lin_eindex >= myLinearElementsCount) {
@@ -157,6 +96,8 @@ __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
     eindex = myLinearElementsMapperDevice[lin_eindex];
     lnid = gpuDataDevice->elemTableDevice[eindex].lnid;
     ep = &(gpuDataDevice->eTableDevice[eindex]);
+
+    memset(localForce, 0, 8 * sizeof(fvector_t));
   
     /* Get current displacements */
     for (i = 0; i < 8; i++) {
@@ -175,7 +116,22 @@ __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
       
       aTransposeU( curDisp, atu );
       firstVector( atu, firstVec, first_coeff, second_coeff, third_coeff );
-      au( &(gpuDataDevice->localForceDevice[eindex*8]), firstVec );
+      //au( &(gpuDataDevice->localForceDevice[eindex*8]), firstVec );
+      au( localForce, firstVec );
+    }
+    /* Sum the nodal forces */
+    for (i = 0; i < 8; i++) {
+      fvector_t *nodalForce = (gpuDataDevice->forceDevice) + lnid[i];
+      
+#ifdef  SINGLE_PRECISION_SOLVER  
+      atomicAdd((float *)&(nodalForce->f[0]), (float)localForce[i].f[0]);
+      atomicAdd((float *)&(nodalForce->f[1]), (float)localForce[i].f[1]);
+      atomicAdd((float *)&(nodalForce->f[2]), (float)localForce[i].f[2]);
+#else
+      atomicAdd((double *)&(nodalForce->f[0]), (double)localForce[i].f[0]);
+      atomicAdd((double *)&(nodalForce->f[1]), (double)localForce[i].f[1]);
+      atomicAdd((double *)&(nodalForce->f[2]), (double)localForce[i].f[2]);
+#endif
     }
 
     return;
@@ -309,17 +265,17 @@ __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
 					double rmax) 
 {
   int i;
-  int mode;
   int32_t   eindex;
   int32_t   index = (blockIdx.x * blockDim.x) + threadIdx.x;
   
-  eindex = index / 16;
-  mode = (index % 16) / 8; // 0 = shear, 1 = kappa
-  i = (index % 16) % 8;
+  eindex = index / 8;
+  i = index % 8;
 
   /* Shared memory for shear and kappa vectors */
-  int32_t           tindex = threadIdx.x;
+  int32_t          tindex = threadIdx.x;
   extern __shared__ fvector_t damping_vector[];
+  fvector_t*      damping_vector_shear = &(damping_vector[tindex]);
+  fvector_t*      damping_vector_kappa = &(damping_vector[blockDim.x + tindex]);
 
   /* Since number of elements may not be exactly divisible by block size,
      check that we are not off the end of the element array */
@@ -341,73 +297,62 @@ __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
   tm1Disp = gpuDataDevice->tm1Device + lnid;
   tm2Disp = gpuDataDevice->tm2Device + lnid;
 
-  switch (mode) {
-  case 0:
-    // SHEAR CONTRIBUTION
-    csum = edatap->a0_shear + edatap->a1_shear + edatap->b_shear;
-    if ( csum != 0 ) {
-      coef = edatap->b_shear / rmax;
-      
-      f0_tm1  = gpuDataDevice->conv_shear_1Device + cindex;
-      f1_tm1  = gpuDataDevice->conv_shear_2Device + cindex;
-      
-      damping_vector[tindex].f[0] = coef * (tm1Disp->f[0] - tm2Disp->f[0])
-	- (edatap->a0_shear * f0_tm1->f[0] + edatap->a1_shear * f1_tm1->f[0])
-	+ tm1Disp->f[0];
-      
-      damping_vector[tindex].f[1] = coef * (tm1Disp->f[1] - tm2Disp->f[1])
-	- (edatap->a0_shear * f0_tm1->f[1] + edatap->a1_shear * f1_tm1->f[1])
-	+ tm1Disp->f[1];
-      
-      damping_vector[tindex].f[2] = coef * (tm1Disp->f[2] - tm2Disp->f[2])
-	- (edatap->a0_shear * f0_tm1->f[2] + edatap->a1_shear * f1_tm1->f[2])
-	+ tm1Disp->f[2];
-      
-    } else { 
+  // SHEAR CONTRIBUTION
+  csum = edatap->a0_shear + edatap->a1_shear + edatap->b_shear;
+  if ( csum != 0 ) {
+    coef = edatap->b_shear / rmax;
+    
+    f0_tm1  = gpuDataDevice->conv_shear_1Device + cindex;
+    f1_tm1  = gpuDataDevice->conv_shear_2Device + cindex;
+    
+    damping_vector_shear->f[0] = coef * (tm1Disp->f[0] - tm2Disp->f[0])
+      - (edatap->a0_shear * f0_tm1->f[0] + edatap->a1_shear * f1_tm1->f[0])
+      + tm1Disp->f[0];
+    
+    damping_vector_shear->f[1] = coef * (tm1Disp->f[1] - tm2Disp->f[1])
+      - (edatap->a0_shear * f0_tm1->f[1] + edatap->a1_shear * f1_tm1->f[1])
+      + tm1Disp->f[1];
+    
+    damping_vector_shear->f[2] = coef * (tm1Disp->f[2] - tm2Disp->f[2])
+      - (edatap->a0_shear * f0_tm1->f[2] + edatap->a1_shear * f1_tm1->f[2])
+      + tm1Disp->f[2];
+    
+  } else { 
+    
+    damping_vector_shear->f[0] = tm1Disp->f[0];
+    damping_vector_shear->f[1] = tm1Disp->f[1];
+    damping_vector_shear->f[2] = tm1Disp->f[2];
+    
+  } // end if for coefficients
 
-      damping_vector[tindex].f[0] = tm1Disp->f[0];
-      damping_vector[tindex].f[1] = tm1Disp->f[1];
-      damping_vector[tindex].f[2] = tm1Disp->f[2];
-      
-    } // end if for coefficients
-
-    break;
-  case 1:
-    // DILATION CONTRIBUTION
-    csum = edatap->a0_kappa + edatap->a1_kappa + edatap->b_kappa;
-    if ( csum != 0 ) {
-      coef = edatap->b_kappa / rmax;
-      
-      f0_tm1  = gpuDataDevice->conv_kappa_1Device + cindex;
-      f1_tm1  = gpuDataDevice->conv_kappa_2Device + cindex;
-
-      damping_vector[tindex].f[0] = coef * (tm1Disp->f[0] - tm2Disp->f[0])
-	- (edatap->a0_kappa * f0_tm1->f[0] + edatap->a1_kappa * f1_tm1->f[0])
-	+ tm1Disp->f[0];
-      
-      damping_vector[tindex].f[1] = coef * (tm1Disp->f[1] - tm2Disp->f[1])
-	- (edatap->a0_kappa * f0_tm1->f[1] + edatap->a1_kappa * f1_tm1->f[1])
-	+ tm1Disp->f[1];
-      
-      damping_vector[tindex].f[2] = coef * (tm1Disp->f[2] - tm2Disp->f[2])
-	- (edatap->a0_kappa * f0_tm1->f[2] + edatap->a1_kappa * f1_tm1->f[2])
-	+ tm1Disp->f[2];
-
-    } else { 
-      damping_vector[tindex].f[0] = tm1Disp->f[0];
-      damping_vector[tindex].f[1] = tm1Disp->f[1];
-      damping_vector[tindex].f[2] = tm1Disp->f[2];
-      
-    } // end if for coefficients
-
-    break;
-  default:
-    break;
-  }
-
-  __syncthreads();
-
-  if (tindex % 16 == 0) {
+  // DILATION CONTRIBUTION
+  csum = edatap->a0_kappa + edatap->a1_kappa + edatap->b_kappa;
+  if ( csum != 0 ) {
+    coef = edatap->b_kappa / rmax;
+    
+    f0_tm1  = gpuDataDevice->conv_kappa_1Device + cindex;
+    f1_tm1  = gpuDataDevice->conv_kappa_2Device + cindex;
+    
+    damping_vector_kappa->f[0] = coef * (tm1Disp->f[0] - tm2Disp->f[0])
+      - (edatap->a0_kappa * f0_tm1->f[0] + edatap->a1_kappa * f1_tm1->f[0])
+      + tm1Disp->f[0];
+    
+    damping_vector_kappa->f[1] = coef * (tm1Disp->f[1] - tm2Disp->f[1])
+      - (edatap->a0_kappa * f0_tm1->f[1] + edatap->a1_kappa * f1_tm1->f[1])
+      + tm1Disp->f[1];
+    
+    damping_vector_kappa->f[2] = coef * (tm1Disp->f[2] - tm2Disp->f[2])
+      - (edatap->a0_kappa * f0_tm1->f[2] + edatap->a1_kappa * f1_tm1->f[2])
+      + tm1Disp->f[2];
+    
+  } else { 
+    damping_vector_kappa->f[0] = tm1Disp->f[0];
+    damping_vector_kappa->f[1] = tm1Disp->f[1];
+    damping_vector_kappa->f[2] = tm1Disp->f[2];
+    
+  } // end if for coefficients
+  
+  if (tindex % 8 == 0) {
     /* Compute local force for this element */
     double kappa = -0.5625 * (ep->c2 + 2. / 3. * ep->c1);
     double mu = -0.5625 * ep->c1;
@@ -417,57 +362,78 @@ __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
     
     memset(firstVec, 0, 24*sizeof(double));
 
-    if(vector_is_zero( &(damping_vector[tindex]) ) != 0) {
-      aTransposeU( &(damping_vector[tindex]), atu );
+    if(vector_is_zero( damping_vector_shear ) != 0) {
+      aTransposeU( damping_vector_shear, atu );
       firstVector_mu( atu, firstVec, mu);
     }
     
-    if(vector_is_zero( &(damping_vector[tindex + 8]) ) != 0) {
-      aTransposeU( &(damping_vector[tindex + 8]), atu );
+    if(vector_is_zero( damping_vector_kappa ) != 0) {
+      aTransposeU( damping_vector_kappa, atu );
       firstVector_kappa( atu, firstVec, kappa);
     }
 
-    au(&(gpuDataDevice->localForceDevice[eindex*8]), firstVec );
+    /* Re-use the damping vector shared memory for the local force */
+    au(damping_vector_shear, firstVec );
   }
+
+  /* Sum the nodal forces */
+  fvector_t *nodalForce = gpuDataDevice->forceDevice + lnid;
+  fvector_t *localForce = damping_vector_shear;
+
+#ifdef  SINGLE_PRECISION_SOLVER  
+  atomicAdd((float *)&(nodalForce->f[0]), (float)localForce->f[0]);
+  atomicAdd((float *)&(nodalForce->f[1]), (float)localForce->f[1]);
+  atomicAdd((float *)&(nodalForce->f[2]), (float)localForce->f[2]);
+#else
+  atomicAdd((double *)&(nodalForce->f[0]), (double)localForce->f[0]);
+  atomicAdd((double *)&(nodalForce->f[1]), (double)localForce->f[1]);
+  atomicAdd((double *)&(nodalForce->f[2]), (double)localForce->f[2]);
+#endif
 
   return;
 }
 
 
-
-/* Add forces Kernel */
-__global__  void kernelAddLocalForces(gpu_data_t *gpuDataDevice)
+__global__  void kernelDispCalc(gpu_data_t* gpuDataDevice,
+                                noyesflag_t printAccel)
 {
-    int          i;
-    int32_t      lnid = (blockIdx.x * blockDim.x) + threadIdx.x; 
-
-    fvector_t*            localForce;
-    rev_entry_t*          revp;
-    register fvector_t    nodalForceReg;
+    lnid_t nindex = (blockIdx.x * blockDim.x) + threadIdx.x; 
 
     /* Since number of nodes may not be exactly divisible by block size,
        check that we are not off the end of the node array */
-    if (lnid >= gpuDataDevice->nharbored) {
+    if (nindex >= gpuDataDevice->nharbored) {
       return;
     }
 
-    revp = gpuDataDevice->reverseLookupDevice + lnid;
+    n_t*             np         = &(gpuDataDevice->nTableDevice[nindex]);
+    fvector_t*       nodalForce = &(gpuDataDevice->forceDevice[nindex]);
+    fvector_t*       tm1Disp    = gpuDataDevice->tm1Device + nindex;
+    fvector_t*       tm2Disp    = gpuDataDevice->tm2Device + nindex;
 
-    /* Copy nodal force from global to register */
-    memcpy(&nodalForceReg, (gpuDataDevice->forceDevice) + lnid, 
-    	   sizeof(fvector_t));
+    /* total nodal forces */
+    nodalForce->f[0] += np->mass2_minusaM[0] * tm1Disp->f[0]
+      - np->mass_minusaM[0]  * tm2Disp->f[0];
+    nodalForce->f[1] += np->mass2_minusaM[1] * tm1Disp->f[1]
+      - np->mass_minusaM[1]  * tm2Disp->f[1];
+    nodalForce->f[2] += np->mass2_minusaM[2] * tm1Disp->f[2]
+      - np->mass_minusaM[2]  * tm2Disp->f[2];
 
-    /* Update forces for this node */
-    for (i = 0; i < revp->elemnum; i++) {
-      localForce = &(gpuDataDevice->localForceDevice[revp->lf_indices[i].index]);
-      nodalForceReg.f[0] += localForce->f[0];
-      nodalForceReg.f[1] += localForce->f[1];
-      nodalForceReg.f[2] += localForce->f[2];
+    /* Save tm3 for accelerations */
+    if ( printAccel == YES ) {
+
+        fvector_t* tm3Disp = gpuDataDevice->tm3Device + nindex;
+
+	tm3Disp->f[0] = tm2Disp->f[0];
+	tm3Disp->f[1] = tm2Disp->f[1];
+	tm3Disp->f[2] = tm2Disp->f[2];
     }
 
-    /* Copy updated nodal force from register to global */
-    memcpy((gpuDataDevice->forceDevice) + lnid, &nodalForceReg, 
-    	   sizeof(fvector_t));
+    /* overwrite tm2 */
+    tm2Disp->f[0] = nodalForce->f[0] / np->mass_simple;
+    tm2Disp->f[1] = nodalForce->f[1] / np->mass_simple;
+    tm2Disp->f[2] = nodalForce->f[2] / np->mass_simple;
+   
+    return;
 }
 
 
@@ -677,6 +643,7 @@ __host__ __device__ void reformF( const double* u, double* newU )
     newU[23] = u[23];
 }
 
+
 __host__ __device__ void reformU( const double* u, double* newU )
 {
     newU[0]  = u[0];
@@ -766,3 +733,19 @@ __host__ __device__ void firstVector_mu( const double* atu, double* finalVector,
     finalVector[22] += b * ( atu[4] + atu[13] + 2. * atu[22]) / 3.;
     finalVector[23] += (10. * b * atu[23] ) / 27.;
 }
+
+
+__device__ double atomicAdd(double* address, double val)
+{
+    unsigned long long int* address_as_ull =
+                                          (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_ull, assumed, 
+                        __double_as_longlong(val + 
+                        __longlong_as_double(assumed)));
+    } while (assumed != old);
+    return __longlong_as_double(old);
+}
+

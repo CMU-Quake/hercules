@@ -822,7 +822,7 @@ buildings_initparameters ( const char *parametersin )
     double *auxiliar;
     char    consider_fixed_base[16];
 
-    // Assigning -1 to enum type is a bad idea
+    // Assigning -1 to enum type should be avoided
     //noyesflag_t fixedbase = -1;    
     noyesflag_t fixedbase;
 

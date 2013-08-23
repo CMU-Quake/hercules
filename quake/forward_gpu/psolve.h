@@ -301,10 +301,11 @@ typedef struct gpu_data_t {
 
     elem_t*      elemTableDevice; // GPU copy of elemTable data structure
     e_t*         eTableDevice; // GPU copy of eTable data structure
+    n_t*         nTableDevice; // GPU copy of nTable data structure
     fvector_t*   tm1Device; // GPU nodal tm1 displacements
     fvector_t*   tm2Device; // GPU nodal tm2 displacements
+    fvector_t*   tm3Device; // GPU nodal tm3 displacements
     fvector_t*   forceDevice; // GPU nodal forces
-    fvector_t*   localForceDevice; // GPU local forces working buffer
 
     fvector_t* conv_shear_1Device;  /* Approximate Convolution Calculation */
     fvector_t* conv_shear_2Device;
@@ -312,7 +313,6 @@ typedef struct gpu_data_t {
     fvector_t* conv_kappa_2Device;
 
     edata_t*     matPropsDevice;
-    rev_entry_t* reverseLookupDevice;
 } gpu_data_t;
 
 

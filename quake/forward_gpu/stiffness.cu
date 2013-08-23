@@ -43,7 +43,6 @@ static int32_t   *myLinearElementsMapper;
 static int32_t   *myLinearElementsMapperDevice;
 
 static int calcForceBlockSize;
-static int addForceBlockSize;
 
 
 /* -------------------------------------------------------------------------- */
@@ -133,9 +132,7 @@ void stiffness_init(int32_t myID, mesh_t *myMesh, mysolver_t* mySolver)
 
     /* Dynamically calculate optimum block size for each kernel */
     calcForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
-					   (char *)kernelStiffnessCalcLocal, 0);
-    addForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
-					  (char *)kernelAddLocalForces, 0);
+    					   (char *)kernelStiffnessCalcLocal, 0);
 
     return;
 }
@@ -296,37 +293,18 @@ void compute_addforce_effective_gpu( int32_t myID,
     cudaMemcpy(mySolver->gpuData->forceDevice, mySolver->force, 
 	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
 
-    /* Reset local forces */
-    cudaMemset(mySolver->gpuData->localForceDevice, 0, 
-	       myMesh->lenum * 8 * sizeof(fvector_t));
-
     /* Note that this executes for all elements. Threads for non-linear
        elements will exit immediately */
     int blocksize = calcForceBlockSize;
     int gridsize = (myMesh->lenum / blocksize) + 1;
     cudaGetLastError();
     kernelStiffnessCalcLocal<<<gridsize, blocksize>>>(mySolver->gpuDataDevice,
-						      myLinearElementsCount, 
-						      myLinearElementsMapperDevice);
-
-    //cudaDeviceSynchronize();
+    						      myLinearElementsCount, 
+    						      myLinearElementsMapperDevice);
 
     cudaError_t cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {
       fprintf(stderr, "Thread %d: Calc stiffness local kernel - %s\n", myID, 
-	      cudaGetErrorString(cerror));
-      MPI_Abort(MPI_COMM_WORLD, ERROR);
-      exit(1);
-    }
-
-    blocksize = addForceBlockSize;
-    gridsize = ((myMesh->nharbored) / blocksize) + 1;
-    cudaGetLastError();
-    kernelAddLocalForces<<<gridsize, blocksize>>>(mySolver->gpuDataDevice);
-
-    cerror = cudaGetLastError();
-    if (cerror != cudaSuccess) {
-      fprintf(stderr, "Thread %d: Add stiffness local kernel - %s\n", myID, 
 	      cudaGetErrorString(cerror));
       MPI_Abort(MPI_COMM_WORLD, ERROR);
       exit(1);

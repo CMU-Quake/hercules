@@ -121,8 +121,6 @@ void calc_conv_gpu(int32_t myID, mesh_t *myMesh, mysolver_t *mySolver, double th
     kernelDampingCalcConv<<<gridsize, blocksize>>>(mySolver->gpuDataDevice, 
 						   rmax);
 
-    //cudaDeviceSynchronize();
-
     cudaError_t cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {
       fprintf(stderr, "Thread %d: Calc damping conv kernel - %s\n", myID, 
@@ -254,6 +252,7 @@ void calc_conv_cpu(mesh_t *myMesh, mysolver_t *mySolver, double theFreq, double 
 
 }
 
+
 /**
  * new_damping: Compute and add the force due to the element
  *              damping.
@@ -266,43 +265,23 @@ void constant_Q_addforce_gpu(int myID, mesh_t *myMesh, mysolver_t *mySolver, dou
 
 	/* theAddForceETime -= MPI_Wtime(); */
 
-    /* Reset local forces */
-    cudaMemset(mySolver->gpuData->localForceDevice, 0, 
-	       myMesh->lenum * 8 * sizeof(fvector_t));
-
     /* Copy working data to device */
     cudaMemcpy(mySolver->gpuData->forceDevice, mySolver->force, 
     	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
 
-    /* Each thread saves either a shear or kappa vector in shared mem */
+    /* Each thread saves a shear or kappa vector in shared mem */
     int blocksize = gpu_get_blocksize(mySolver->gpu_spec,
-				      (char *)kernelDampingCalcLocal, 
-				      sizeof(fvector_t));
-    /* Number of threads is lenum * 2 convolutions/element * 8 values/conv */
-    int gridsize = (myMesh->lenum * 16 / blocksize) + 1;
-    int sharedmem = blocksize * sizeof(fvector_t);
+    				      (char *)kernelDampingCalcLocal, 
+    				      2 * sizeof(fvector_t));
+    /* Number of threads is lenum * 8 components/element */
+    int gridsize = (myMesh->lenum * 8 / blocksize) + 1;
+    int sharedmem = blocksize * 2 * sizeof(fvector_t);
     cudaGetLastError();
     kernelDampingCalcLocal<<<gridsize, blocksize, sharedmem>>>(mySolver->gpuDataDevice, rmax);
-
-    //cudaDeviceSynchronize();
 
     cudaError_t cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {
       fprintf(stderr, "Thread %d: Calc damping local kernel - %s\n", myID, 
-	      cudaGetErrorString(cerror));
-      MPI_Abort(MPI_COMM_WORLD, ERROR);
-      exit(1);
-    }
-
-    blocksize = gpu_get_blocksize(mySolver->gpu_spec,
-				  (char *)kernelAddLocalForces, 0);
-    gridsize = ((myMesh->nharbored) / blocksize) + 1;
-    cudaGetLastError();
-    kernelAddLocalForces<<<gridsize, blocksize>>>(mySolver->gpuDataDevice);
-
-    cerror = cudaGetLastError();
-    if (cerror != cudaSuccess) {
-      fprintf(stderr, "Thread %d: Add damping add forces kernel - %s\n", myID, 
 	      cudaGetErrorString(cerror));
       MPI_Abort(MPI_COMM_WORLD, ERROR);
       exit(1);

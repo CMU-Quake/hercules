@@ -146,7 +146,7 @@ static int32_t bulkload(etree_t *mep, mrecord_t *partTable, int32_t count);
 static void    mesh_output(void);
 static void    mesh_correct_properties( etree_t* cvm );
 
-static void    gpu_init(void);
+static void    gpu_init(int32_t myID);
 static void    solver_init(void);
 static void    solver_printstat(mysolver_t* solver);
 static void    solver_delete(void);
@@ -313,7 +313,7 @@ static struct Global_t {
 
 /* ------------------------------End of declarations------------------------------ */
 
-void getGPUHardware(int device, gpu_spec_t *gpuSpecs, int dispFlag)
+void getGPUHardware(int32_t myID, int device, gpu_spec_t *gpuSpecs)
 {
     int i;
     const int kb = 1024;
@@ -336,7 +336,7 @@ void getGPUHardware(int device, gpu_spec_t *gpuSpecs, int dispFlag)
     gpuSpecs->regs_per_block = props.regsPerBlock;
     gpuSpecs->shared_per_block = props.sharedMemPerBlock;
 
-    if (dispFlag) {
+    if (myID == 0) {
       cout << "GPU Device " << device << ": " << props.name 
 	   << ": " << props.major << "." << props.minor << endl;
       cout << "  Global memory:   " << props.totalGlobalMem / mb 
@@ -695,7 +695,7 @@ static int32_t parse_parameters( const char* numericalin )
     		  implement_drm[64],
     		  use_infinite_qk[64];
 
-    // Casting -1 to enum type is a bad idea
+    // Casting -1 to enum type should be avoided
     //damping_type_t   typeOfDamping     = -1;
     //stiffness_type_t stiffness_method  = -1;
     //noyesflag_t      have_buildings    = -1;
@@ -3314,26 +3314,38 @@ void mu_and_lambda(double *theMu, double *theLambda,
  *           specifications.
  *
  */
-static void gpu_init()
+static void gpu_init(int32_t myID)
 {
     int myDevID, devCount;
 
     /* Select a GPU device for this process */
     if (cudaGetDeviceCount(&devCount) != cudaSuccess) {
-      fprintf(stderr, "Failed to get GPU device count\n");
+      fprintf(stderr, "Thread %d: Failed to get GPU device count\n", myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+
+    if (devCount == 0) {
+      fprintf(stderr, "Thread %d: NO GPU devices found\n", myID);
       MPI_Abort(MPI_COMM_WORLD, ERROR);
       exit(1);
     }
 
     myDevID = (Global.myID % devCount);
-    
-    /* Retrieve device hardware details */
-    if (Global.myID == 0) {
-      /* Only Rank 0 dumps GPU information */
-      getGPUHardware(myDevID, &(Global.gpu_spec), 1);
-    } else {
-      getGPUHardware(myDevID, &(Global.gpu_spec), 0);
+    if (cudaSetDevice(myDevID) != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Failed to set device\n", myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
     }
+
+    if (cudaDeviceReset() != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Failed to reset device\n", myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+
+    /* Retrieve device hardware details */
+    getGPUHardware(myID, myDevID, &(Global.gpu_spec));
 }
 
 
@@ -3583,7 +3595,14 @@ static void solver_init()
     }
     if (cudaMalloc((void**)&(Global.gpuData.eTableDevice), 
 		   Global.myMesh->lenum * sizeof(e_t)) != cudaSuccess) {
-        fprintf(stderr, "Thread %d: Failed to allocate etable memory\n", 
+        fprintf(stderr, "Thread %d: Failed to allocate eTable memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    if (cudaMalloc((void**)&(Global.gpuData.nTableDevice), 
+		   Global.myMesh->nharbored * sizeof(n_t)) != cudaSuccess) {
+        fprintf(stderr, "Thread %d: Failed to allocate nTable memory\n", 
 		Global.myID);
         MPI_Abort(MPI_COMM_WORLD, ERROR);
         exit(1);
@@ -3597,10 +3616,19 @@ static void solver_init()
     }
     if (cudaMalloc((void**)&(Global.gpuData.tm2Device), 
 		   Global.myMesh->nharbored * sizeof(fvector_t)) != cudaSuccess) {
-        fprintf(stderr, "Thread %d: Failed to allocate tm1 memory\n", 
+        fprintf(stderr, "Thread %d: Failed to allocate tm2 memory\n", 
 		Global.myID);
         MPI_Abort(MPI_COMM_WORLD, ERROR);
         exit(1);
+    }
+    if ( Param.printStationAccelerations == YES ) {
+      if (cudaMalloc((void**)&(Global.gpuData.tm3Device), 
+		     Global.myMesh->nharbored * sizeof(fvector_t)) != cudaSuccess) {
+          fprintf(stderr, "Thread %d: Failed to allocate tm3 memory\n", 
+		  Global.myID);
+	  MPI_Abort(MPI_COMM_WORLD, ERROR);
+	  exit(1);
+      }
     }
     if (cudaMalloc((void**)&(Global.gpuData.forceDevice), 
 		   Global.myMesh->nharbored * sizeof(fvector_t)) != cudaSuccess) {
@@ -3637,20 +3665,6 @@ static void solver_init()
         MPI_Abort(MPI_COMM_WORLD, ERROR);
         exit(1);
     }
-    if (cudaMalloc((void**)&(Global.gpuData.reverseLookupDevice), 
-		   Global.myMesh->nharbored * sizeof(rev_entry_t)) != cudaSuccess) {
-        fprintf(stderr, "Thread %d: Failed to allocate reverseLookup memory\n", 
-		Global.myID);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
-    }
-    if (cudaMalloc((void**)&(Global.gpuData.localForceDevice), 
-		   Global.myMesh->lenum * 8 * sizeof(fvector_t)) != cudaSuccess) {
-        fprintf(stderr, "Thread %d: Failed to allocate localForce memory\n", 
-		Global.myID);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
-    }
 
     Global.gpuData.nharbored =  Global.myMesh->nharbored;
     Global.gpuData.lenum = Global.myMesh->lenum;
@@ -3675,6 +3689,8 @@ static void solver_init()
     }
     cudaMemcpy(Global.gpuData.eTableDevice, Global.mySolver->eTable, 
 	       Global.myMesh->lenum * sizeof(e_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(Global.gpuData.nTableDevice, Global.mySolver->nTable, 
+	       Global.myMesh->nharbored * sizeof(n_t), cudaMemcpyHostToDevice);
 
     /* Initialize device convolution */
     cudaMemcpy(Global.gpuData.conv_shear_1Device, 
@@ -3707,24 +3723,6 @@ static void solver_init()
 
     /* Save reference to device data in solver */
     Global.mySolver->gpuData = &Global.gpuData;
-
-    /* Create node->element reverse lookup table */
-    cudaMemset(Global.gpuData.reverseLookupDevice, 0,
-	       Global.myMesh->nharbored * sizeof(rev_entry_t));
-    int blocksize = gpu_get_blocksize(Global.mySolver->gpu_spec, 
-				      (char *)kernelInitReverseLookup, 0);
-    int gridsize = (Global.myMesh->nharbored / blocksize) + 1;
-    cudaGetLastError();
-    kernelInitReverseLookup<<<gridsize, blocksize>>>(Global.mySolver->gpuDataDevice);
-    cudaDeviceSynchronize();
-
-    cudaError_t cerror = cudaGetLastError();
-    if (cerror != cudaSuccess) {
-      fprintf(stderr, "Thread %d: Init reverse lookup kernel - %s\n", 
-	      Global.myID, cudaGetErrorString(cerror));
-      MPI_Abort(MPI_COMM_WORLD, ERROR);
-      exit(1);
-    }
 
     return;
 }
@@ -3853,16 +3851,18 @@ static void solver_delete()
     /* Free device memory */
     cudaFree(Global.gpuData.elemTableDevice);
     cudaFree(Global.gpuData.eTableDevice);
+    cudaFree(Global.gpuData.nTableDevice);
     cudaFree(Global.gpuData.tm1Device);
     cudaFree(Global.gpuData.tm2Device);
+    if ( Param.printStationAccelerations == YES ) {
+      cudaFree(Global.gpuData.tm3Device);
+    }
     cudaFree(Global.gpuData.forceDevice);
-    cudaFree(Global.gpuData.localForceDevice);
     cudaFree(Global.gpuData.conv_shear_1Device);
     cudaFree(Global.gpuData.conv_shear_2Device);
     cudaFree(Global.gpuData.conv_kappa_1Device);
     cudaFree(Global.gpuData.conv_kappa_2Device);
     cudaFree(Global.gpuData.matPropsDevice);
-    cudaFree(Global.gpuData.reverseLookupDevice);
     cudaFree(Global.mySolver->gpuDataDevice);
 
     free(Global.mySolver->eTable);
@@ -4136,6 +4136,11 @@ static void solver_load_gpu(mysolver_t *solver)
   cudaMemcpy(solver->gpuData->tm2Device, solver->tm2, 
   	     solver->gpuData->nharbored * sizeof(fvector_t), 
   	     cudaMemcpyHostToDevice);
+  if ( Param.printStationAccelerations == YES ) {
+    cudaMemcpy(solver->gpuData->tm3Device, solver->tm3, 
+	       solver->gpuData->nharbored * sizeof(fvector_t), 
+	       cudaMemcpyHostToDevice);
+  }  
 
   return;
 }
@@ -4322,7 +4327,7 @@ static void solver_send_force_anchored( mysolver_t* solver )
 
 /** Compute new displacements of my harbored nodes */
 static void
-solver_compute_displacement( mysolver_t* solver, mesh_t* mesh )
+solver_compute_displacement_cpu( mysolver_t* solver, mesh_t* mesh )
 {
     lnid_t nindex;
 
@@ -4364,6 +4369,49 @@ solver_compute_displacement( mysolver_t* solver, mesh_t* mesh )
 
     Timer_Stop( "Compute new displacement" );
 }
+
+
+/** Compute new displacements of my harbored nodes */
+static void
+solver_compute_displacement_gpu( int32_t myID, mysolver_t* solver, mesh_t* mesh )
+{
+    Timer_Start( "Compute new displacement" );
+
+    /* Copy working data to device */
+    cudaMemcpy(solver->gpuData->forceDevice, solver->force, 
+	       mesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
+
+    int blocksize = gpu_get_blocksize(solver->gpu_spec,
+				      (char *)kernelDispCalc, 0);
+    int gridsize = (mesh->nharbored / blocksize) + 1;
+    cudaGetLastError();
+    kernelDispCalc<<<gridsize, blocksize>>>(solver->gpuDataDevice, 
+					    Param.printStationAccelerations);
+
+    cudaError_t cerror = cudaGetLastError();
+    if (cerror != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Calc damping conv kernel - %s\n", myID, 
+	      cudaGetErrorString(cerror));
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+
+    /* Copy working data from device */
+    cudaMemcpy(solver->tm2, solver->gpuData->tm2Device, 
+	       mesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
+    if ( Param.printStationAccelerations == YES ) {
+      cudaMemcpy(solver->tm3, solver->gpuData->tm3Device, 
+		 mesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
+    }
+
+    /* zero out the force vector for all nodes */
+    memset( solver->force, 0, sizeof(fvector_t) * mesh->nharbored );
+    cudaMemset(solver->gpuData->forceDevice, 0, 
+    	       mesh->nharbored * sizeof(fvector_t));
+
+    Timer_Stop( "Compute new displacement" );
+}
+
 
 static void
 solver_geostatic_fix(int step)
@@ -4555,7 +4603,8 @@ static void solver_run()
         Timer_Stop( "Communication" );
 
         Timer_Start( "Compute Physics" );
-        solver_compute_displacement( Global.mySolver, Global.myMesh );
+        solver_compute_displacement_cpu( Global.mySolver, Global.myMesh );
+        //solver_compute_displacement_gpu( Global.myID, Global.mySolver, Global.myMesh );
         solver_geostatic_fix( step );
         solver_load_fixedbase_displacements( Global.mySolver, step );
         Timer_Stop( "Compute Physics" );
@@ -7770,7 +7819,7 @@ int main( int argc, char** argv )
     }
 
     /* Initialize the GPU */
-    gpu_init();
+    gpu_init(Global.myID);
 
     /* Initialize the solver, source and output structures */
     solver_init();

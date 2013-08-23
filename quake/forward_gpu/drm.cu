@@ -229,7 +229,7 @@ int32_t drm_initparameters (const char *parametersin) {
 	char   which_drm_part[64],
        	   drm_output_directory[64];
 
-	// Assigning -1 to enum type is a bad idea
+	// Assigning -1 to enum type should be avoided
 	//drm_part_t drmPart = -1;
 	drm_part_t drmPart;
 
