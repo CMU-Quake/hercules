@@ -2346,6 +2346,23 @@ read_srfh_source ( FILE *fp, FILE *fpcoords, FILE *fparea, FILE *fpstrike,
     ABORT_PROGRAM ("Error source srfh matrices: read_srfh_source");
   }
 
+  /* Dorian: Moved for compability with the topography module  */
+  /* corners of the surface */
+  auxiliar = (double *)malloc(sizeof(double)*8);
+  if ( auxiliar == NULL ) {
+    perror(" Alloc auxiliar: read_srfh_source");
+    MPI_Abort(MPI_COMM_WORLD, ERROR );
+    return -1;
+  }
+  parsedarray( fp, "domain_surface_corners", 8 ,auxiliar);
+  for ( iCorner = 0; iCorner < 4; iCorner++){
+    theSurfaceCornersLong[ iCorner ] = auxiliar [ iCorner * 2 ];
+    theSurfaceCornersLat [ iCorner ] = auxiliar [ iCorner * 2 +1 ];
+  }
+
+  free(auxiliar);
+  /* end corners of surface */
+
   /* read fault points description */
   for ( iSrc = 0; iSrc < theNumberOfPointSources; iSrc++ ){
     fscanf(fpcoords," %lf %lf %lf ", &(theSourceLonArray[iSrc]),
@@ -2365,7 +2382,15 @@ read_srfh_source ( FILE *fp, FILE *fpcoords, FILE *fparea, FILE *fpstrike,
 
     /* Dorian: Source location wrt the free surface, i.e. hypocentral distance */
     if ( get_thebase_topo() != 0.0 ) {
-    	theSourceDepthArray[iSrc] += point_elevation ( theSourceLonArray[iSrc], theSourceLatArray[iSrc] );
+
+    	vector3D_t coords_aux = compute_domain_coords_linearinterp(theSourceLonArray[iSrc],
+    								     theSourceLatArray[iSrc],
+    								     theSurfaceCornersLong ,
+    								     theSurfaceCornersLat,
+    								     theRegionLengthEastM,
+    								     theRegionLengthNorthM );
+
+    	theSourceDepthArray[iSrc] += point_elevation ( coords_aux.x[0], coords_aux.x[1] );
     }
 
     theSourceSlipFunArray[iSrc]=malloc(sizeof(double)*theSourceNt1Array[iSrc]);
@@ -2374,20 +2399,7 @@ read_srfh_source ( FILE *fp, FILE *fpcoords, FILE *fparea, FILE *fpstrike,
       fscanf(fpslipfun," %lf ", &(theSourceSlipFunArray[iSrc][iTime]));
   }
 
-  /* corners of the surface */
-  auxiliar = (double *)malloc(sizeof(double)*8);
-  if ( auxiliar == NULL ) {
-    perror(" Alloc auxiliar: read_srfh_source");
-    MPI_Abort(MPI_COMM_WORLD, ERROR );
-    return -1;
-  }
-  parsedarray( fp, "domain_surface_corners", 8 ,auxiliar);
-  for ( iCorner = 0; iCorner < 4; iCorner++){
-    theSurfaceCornersLong[ iCorner ] = auxiliar [ iCorner * 2 ];
-    theSurfaceCornersLat [ iCorner ] = auxiliar [ iCorner * 2 +1 ];
-  }
 
-  free(auxiliar);
 
   return 1;
 
