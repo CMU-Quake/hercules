@@ -6683,7 +6683,7 @@ read_stations_info( const char* numericalin )
 	if ( Param.includeTopography == YES ) {
 		//	    Param.theStationZ [ iStation ] += get_thebase_topo();
 		/* Dorian: place stations on surface */
-		Param.theStationZ [ iStation ] =  point_elevation ( coords.x[0], coords.x[1] );
+		Param.theStationZ [ iStation ] +=  point_elevation ( coords.x[0], coords.x[1] );
 	}
 
     }
