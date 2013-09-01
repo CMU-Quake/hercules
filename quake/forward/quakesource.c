@@ -2381,17 +2381,17 @@ read_srfh_source ( FILE *fp, FILE *fpcoords, FILE *fparea, FILE *fpstrike,
     theSourceTinitArray[iSrc] += globalDelayT;
 
     /* Dorian: Source location wrt the free surface, i.e. hypocentral distance */
-    if ( get_thebase_topo() != 0.0 ) {
-
-    	vector3D_t coords_aux = compute_domain_coords_linearinterp(theSourceLonArray[iSrc],
-    								     theSourceLatArray[iSrc],
-    								     theSurfaceCornersLong ,
-    								     theSurfaceCornersLat,
-    								     theRegionLengthEastM,
-    								     theRegionLengthNorthM );
-
-    	theSourceDepthArray[iSrc] += point_elevation ( coords_aux.x[0], coords_aux.x[1] );
-    }
+//    if ( get_thebase_topo() != 0.0 ) {
+//
+//    	vector3D_t coords_aux = compute_domain_coords_linearinterp(theSourceLonArray[iSrc],
+//    								     theSourceLatArray[iSrc],
+//    								     theSurfaceCornersLong ,
+//    								     theSurfaceCornersLat,
+//    								     theRegionLengthEastM,
+//    								     theRegionLengthNorthM );
+//
+//    	theSourceDepthArray[iSrc] += point_elevation ( coords_aux.x[0], coords_aux.x[1] );
+//    }
 
     theSourceSlipFunArray[iSrc]=malloc(sizeof(double)*theSourceNt1Array[iSrc]);
 

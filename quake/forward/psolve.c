@@ -1386,7 +1386,22 @@ setrec( octant_t* leaf, double ticksize, void* data )
                     z_m -= get_surface_shift();
 		}
 
+		/* Dorian: to squeeze the domain */
+		z_m += point_elevation ( (x_m - Global.theXForMeshOrigin), (y_m - Global.theYForMeshOrigin) );
+
+		if (z_m > 25000) {
+			continue;
+		}
+
 		res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
+
+		/* Dorian: just to be sure that I do not end up with air */
+		if ( ( g_props.Vs == 0 || g_props.Vp ==0 || g_props.rho == 0 ) && res == 0 ) {
+			g_props.Vs  = 400;
+			g_props.Vp  = 800;
+			g_props.rho = 1000;
+		}
+
 
 		if (res != 0) {
 		    continue;
@@ -7398,6 +7413,12 @@ mesh_correct_properties( etree_t* cvm )
                                 	depth_m = 0;
             		}
 
+            		/* Dorian: to squeeze the domain */
+            		depth_m += point_elevation ( (north_m - Global.theXForMeshOrigin), (east_m - Global.theYForMeshOrigin) );
+
+            		if (depth_m > 25000) {
+            			continue;
+            		}
 
                     res = cvm_query( Global.theCVMEp, east_m, north_m,
                                      depth_m, &g_props );
@@ -7409,7 +7430,7 @@ mesh_correct_properties( etree_t* cvm )
 //                    }
                     // Dorian: I had to do this because of anomalies found in the AburraValley_Etree.
                     // Remove this line and uncomment the previous statement to return to the original version
-                    if (res != 0) {
+                    if ( (res != 0) || ( g_props.Vp == 0 ) || ( g_props.Vs == 0 )  )  {
                     	continue;
                     }
 
@@ -7663,9 +7684,9 @@ int main( int argc, char** argv )
     	Timer_Reduce("Init Drm Parameters", MAX | MIN | AVERAGE , comm_solver);
     }
 
-    if ( Param.includeTopography == YES ){
+   // if ( Param.includeTopography == YES ){
         topo_init( Global.myID, Param.parameters_input_file );
-    }
+   // }
 
     // INTRODUCE BKT MODEL
     /* Init Quality Factor Table */
