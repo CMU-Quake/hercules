@@ -141,6 +141,7 @@ typedef struct master_constrained_slab_bldg {
 	/* general building information */
 
 	int l; /* # of plan-levels in each building + foundation */
+	int l_bldg_base; /* level id of the base of the building. Used in the shear buildings*/
 	int n; /* # of nodes in each level node_x*node_y */
 	int node_x; /* # of nodes in x direction for each building */
 	int node_y; /* # of nodes in y direction for each building */
@@ -2549,6 +2550,9 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, double deltaT, int
 				/* These are general building + foundation information */
 				theMasterConstrainedSlab[iMaster].l = ( theBuilding[iBldg].height + theBuilding[iBldg].depth) /
 						theMinOctSizeMeters + 1;
+
+				theMasterConstrainedSlab[iMaster].l_bldg_base = theBuilding[iBldg].depth/theMinOctSizeMeters;
+
 				nodes_x = (theBuilding[iBldg].bounds.xmax -
 						theBuilding[iBldg].bounds.xmin)/theMinOctSizeMeters + 1;
 				nodes_y = (theBuilding[iBldg].bounds.ymax -
@@ -3148,6 +3152,12 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 	MPI_Request *shaererrecvreqs  = NULL;
 	MPI_Status  *sharerrecvstats  = NULL;
 
+	double time = simDT * step;
+	double base_rocking_x;
+	double base_rocking_y;
+	double constrained_z;
+
+
 	if (theNumberOfBuildingsSharer > 0 ) {
 		shaererrecvreqs = (MPI_Request *)malloc(theNumberOfBuildingsSharer * sizeof(MPI_Request));
 		sharerrecvstats = (MPI_Status  *)malloc(theNumberOfBuildingsSharer * sizeof(MPI_Status));
@@ -3227,21 +3237,11 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 		}
 	}
 
-
 	/* Calculate average values if I am the master */
 
 	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
 
 		/* Calculate for each level */
-
-		double time = simDT * step;
-		double base_rocking_x;
-		double base_rocking_y;
-
-		/* Fill in the constrained building disp file */
-		if (step % theConstrainedDispPrintRate == 0) {
-			hu_fwrite( &time,  sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp );
-		}
 
 		for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
 
@@ -3407,15 +3407,35 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 			theMasterConstrainedSlab[iMaster].average_values[6*l + 3] = average_values[3];
 			theMasterConstrainedSlab[iMaster].average_values[6*l + 4] = average_values[4];
 			theMasterConstrainedSlab[iMaster].average_values[6*l + 5] = average_values[5];
+		}
+	}
+
+	/* Print displacements in the constrained_disp file also take care of shear buildings */
+
+
+	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
+
+		/* Calculate for each level */
+
+
+		/* Fill in the constrained building disp file */
+		if (step % theConstrainedDispPrintRate == 0) {
+			hu_fwrite( &time,  sizeof(double), 1, theMasterConstrainedSlab[iMaster].bldgDisp );
+		}
+
+
+		/* In case of shear buildings -- Set rotations equal to base rocking everywhere (Base of the building not foundation). */
+
+		int base_level = theMasterConstrainedSlab[iMaster].l_bldg_base;
+
+		base_rocking_x = theMasterConstrainedSlab[iMaster].average_values[6*base_level + 4];
+		base_rocking_y = theMasterConstrainedSlab[iMaster].average_values[6*base_level + 5];
+		constrained_z  = theMasterConstrainedSlab[iMaster].average_values[6*base_level + 2];
+
+		for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
 
 			if (shearBuildings == YES) {
 				/* Pure shear buildings */
-
-				/* Set rotations equal to base rocking everywhere (Base of the foundation). */
-				if ( l == 0 ) {
-					base_rocking_x = theMasterConstrainedSlab[iMaster].average_values[6*l + 4];
-					base_rocking_y = theMasterConstrainedSlab[iMaster].average_values[6*l + 5];
-				}
 
 				/* Fixed base response assumes zero rocking rotations*/
 				if (areBaseFixed == YES) {
@@ -3423,6 +3443,7 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 					base_rocking_y = 0;
 				}
 
+				theMasterConstrainedSlab[iMaster].average_values[6*l + 2] = constrained_z;
 				theMasterConstrainedSlab[iMaster].average_values[6*l + 4] = base_rocking_x;
 				theMasterConstrainedSlab[iMaster].average_values[6*l + 5] = base_rocking_y;
 				//	theMasterConstrainedSlab[iMaster].average_values[6*l + 4] = 0;
@@ -3447,6 +3468,9 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 
 		}
 	}
+
+
+
 
 	/* Now sharers post receives */
 
