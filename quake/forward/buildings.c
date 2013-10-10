@@ -3235,6 +3235,8 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 		/* Calculate for each level */
 
 		double time = simDT * step;
+		double base_rocking_x;
+		double base_rocking_y;
 
 		/* Fill in the constrained building disp file */
 		if (step % theConstrainedDispPrintRate == 0) {
@@ -3408,8 +3410,23 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 
 			if (shearBuildings == YES) {
 				/* Pure shear buildings */
-				theMasterConstrainedSlab[iMaster].average_values[6*l + 4] = 0;
-				theMasterConstrainedSlab[iMaster].average_values[6*l + 5] = 0;
+
+				/* Set rotations equal to base rocking everywhere (Base of the foundation). */
+				if ( l == 0 ) {
+					base_rocking_x = theMasterConstrainedSlab[iMaster].average_values[6*l + 4];
+					base_rocking_y = theMasterConstrainedSlab[iMaster].average_values[6*l + 5];
+				}
+
+				/* Fixed base response assumes zero rocking rotations*/
+				if (areBaseFixed == YES) {
+					base_rocking_x = 0;
+					base_rocking_y = 0;
+				}
+
+				theMasterConstrainedSlab[iMaster].average_values[6*l + 4] = base_rocking_x;
+				theMasterConstrainedSlab[iMaster].average_values[6*l + 5] = base_rocking_y;
+				//	theMasterConstrainedSlab[iMaster].average_values[6*l + 4] = 0;
+				//	theMasterConstrainedSlab[iMaster].average_values[6*l + 5] = 0;
 			}
 
 			/* Fill in the constrained building disp file */
