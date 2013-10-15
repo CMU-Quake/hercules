@@ -20,15 +20,18 @@ ifndef SYSTEM
 endif
 
 ifeq ($(SYSTEM), XT5)
-        CC      = cc
-        CXX     = CC
+        MPI_DIR ?= /opt/cray/mpt/6.0.1/gni/mpich2-cray/81
+        CC      = nvcc
+        CXX     = nvcc
         LD      = CC
+        NVCC	= /opt/nvidia/cudatoolkit/5.0.35/bin/nvcc
         CFLAGS  += -DBIGBEN 
         LDFLAGS += 
         ifdef IOBUF_INC
             CPPFLAGS += -I${IOBUF_INC}
-        endif        
-        CPPFLAGS    += -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64       
+        endif
+        NVFLAGS     += -arch sm_35 -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64
+        CPPFLAGS    += -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64 -I$(MPI_DIR)/include
         
 endif
 
@@ -122,15 +125,16 @@ ifeq ($(SYSTEM), USCHPC)
 endif
 
 ifeq ($(SYSTEM), USCHPCGPU)
-	CUDA_DIR	 ?= /usr/usc/cuda/5.0
+	CUDA_DIR ?= /usr/usc/cuda/5.0
 	MPI_DIR	 ?= /usr/usc/openmpi/1.6.4
 	CC	  = nvcc
 	CXX	  = nvcc
 	LD	  = mpicxx
 	NVCC	  = /usr/usc/cuda/5.0/bin/nvcc
+	LDFLAGS += -L$(CUDA_DIR)/lib64 -lcuda -lcudart
 #	CFLAGS   += -Wall
 	NVFLAGS += -arch sm_35 -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64
-        CPPFLAGS    += -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64
+        CPPFLAGS    += -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64 -I$(MPI_DIR)/include
 endif
 
 

@@ -39,7 +39,7 @@ IO_CPPFLAGS ?= -DUSECVMDB
 CPPFLAGS += -I$(ETREE_DIR) -I$(CVM_DIR) -I$(OCTOR_DIR) -I. -I$(MPI_DIR)/include
 CPPFLAGS += $(SOLVE_CPPFLAGS) $(IO_CPPFLAGS) $(VIS_CPPFLAGS)
 
-LDFLAGS += -lm -L$(CUDA_DIR)/lib64 -lcuda -lcudart
+LDFLAGS += -lm 
 
 ifeq ($(SYSTEM), BGW)
   LOADLIBES += /bgl/local/lib/libmpihpm_c.a /bgl/BlueLight/ppcfloor/bglsys/lib/libbgl_perfctr.rts.a

@@ -3346,6 +3346,11 @@ static void gpu_init(int32_t myID)
 
     /* Retrieve device hardware details */
     getGPUHardware(myID, myDevID, &(Global.gpu_spec));
+
+    /* Dump register count for each kernel */
+    if (Global.myID == 0) {
+      dumpRegisterCounts();
+    }
 }
 
 
@@ -4530,6 +4535,7 @@ static void solver_run_collect_timers( void )
     Timer_Reduce("4th schadule send data (sharing)",      (TimerKind)(MAX | MIN | AVERAGE), comm_solver);
 
     Timer_Reduce("Solver I/O",      (TimerKind)(MAX | MIN | AVERAGE), comm_solver);
+    Timer_Reduce("GPU Memory Copy", (TimerKind)(MAX | MIN | AVERAGE), comm_solver);
     Timer_Reduce("Compute Physics", (TimerKind)(MAX | MIN | AVERAGE), comm_solver);
     Timer_Reduce("Communication",   (TimerKind)(MAX | MIN | AVERAGE), comm_solver);
 }
@@ -4583,8 +4589,11 @@ static void solver_run()
         solver_read_drm_displacements( step , Param.theDeltaT ,Param.theTotalSteps );
         Timer_Stop( "Solver I/O" );
 
-        Timer_Start( "Compute Physics" );
+        Timer_Start( "GPU Memory Copy" );
 	solver_load_gpu(Global.mySolver);
+        Timer_Stop( "GPU Memory Copy" );
+
+        Timer_Start( "Compute Physics" );
         solver_nonlinear_state( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2, step );
         solver_compute_force_source( step );
         solver_compute_effective_drm_force( Global.mySolver, Global.myMesh,Global.theK1, Global.theK2, step, Param.theDeltaT );
@@ -6555,6 +6564,8 @@ static void print_timing_stat()
     printf("\n____________Analysis_____________\n");
     printf("Solver I/O                 : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
 	   Timer_Value("Solver I/O",      AVERAGE),Timer_Value("Solver I/O",      MAX), Timer_Value("Solver I/O",      MIN));
+    printf("Solver GPU Memory Copy     : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
+	   Timer_Value("GPU Memory Copy", AVERAGE),Timer_Value("GPU Memory Copy", MAX), Timer_Value("GPU Memory Copy", MIN));
     printf("Solver Compute             : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",
 	   Timer_Value("Compute Physics", AVERAGE),Timer_Value("Compute Physics", MAX), Timer_Value("Compute Physics", MIN));
     printf("Solver Communicate         : %.2f (Average)   %.2f (Max) %.2f (Min) seconds\n",

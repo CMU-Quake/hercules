@@ -42,6 +42,33 @@
  */
 #define UNDERFLOW_CAP_STIFFNESS 1e-20
 
+int32_t get_reg_count(char* kernel)
+{
+    /* Get kernel attributes */
+    cudaFuncAttributes attributes;
+    cudaFuncGetAttributes(&attributes, kernel);
+
+    return(attributes.numRegs);
+}
+
+
+int dumpRegisterCounts()
+{
+    int count;
+
+    printf("Kernel Register Counts:\n");
+    count =  get_reg_count((char *)kernelStiffnessCalcLocal);
+    printf("\tkernelStiffnessCalcLocal  : %d\n", count);
+
+    count =  get_reg_count((char *)kernelDampingCalcConv);
+    printf("\tkernelDampingCalcConv     : %d\n", count);
+
+    count =  get_reg_count((char*)kernelDampingCalcLocal);
+    printf("\tkernelDampingCalcLocal    : %d\n", count);
+
+  return(0);
+}
+
 
 int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs, 
 			  char* kernel, 

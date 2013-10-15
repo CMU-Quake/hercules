@@ -5,7 +5,7 @@
 include $(WORKDIR)/systemdef.mk
 include $(WORKDIR)/common.mk
 
-CPPFLAGS += -I. -I$(MPI_DIR)/include
+CPPFLAGS += -I.
 
 OBJECTS = octor.o
 
