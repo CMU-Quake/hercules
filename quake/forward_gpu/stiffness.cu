@@ -129,6 +129,7 @@ void stiffness_init(int32_t myID, mesh_t *myMesh, mysolver_t* mySolver)
         MPI_Abort(MPI_COMM_WORLD, ERROR);
         exit(1);
     }
+    mySolver->gpu_spec->numbytes += myLinearElementsCount * sizeof(int32_t);
 
     /* Dynamically calculate optimum block size for each kernel */
     calcForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
@@ -292,6 +293,7 @@ void compute_addforce_effective_gpu( int32_t myID,
     /* Copy working data to device */
     cudaMemcpy(mySolver->gpuData->forceDevice, mySolver->force, 
 	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
+    mySolver->gpu_spec->numbytes += myMesh->nharbored * sizeof(fvector_t);
 
     /* Note that this executes for all elements. Threads for non-linear
        elements will exit immediately */
@@ -310,9 +312,12 @@ void compute_addforce_effective_gpu( int32_t myID,
       exit(1);
     }
 
+    mySolver->gpu_spec->numflops += kernel_flops_per_thread(FLOP_STIFFNESS_KERNEL) * myMesh->lenum;
+
     /* Copy working data back to host */
     cudaMemcpy(mySolver->force, mySolver->gpuData->forceDevice,
     	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
+    mySolver->gpu_spec->numbytes += myMesh->nharbored * sizeof(fvector_t);
 
     return;
 }

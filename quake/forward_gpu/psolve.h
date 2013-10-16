@@ -52,7 +52,7 @@
 # endif /* DEBUG */
 #endif /* DO_DEBUG */
 
-/* GPU specification */
+/* GPU specifications */
 typedef struct {
   int32_t device;
   int32_t max_threads;
@@ -60,17 +60,12 @@ typedef struct {
   int32_t max_grid_dim[3];
   int32_t regs_per_block;
   int32_t shared_per_block;
+
+  /* Variables for tracking performance metrics */
+  int32_t numdevices;
+  int64_t numbytes;
+  int64_t numflops;
 } gpu_spec_t;
-
-/* Reverse node->element table lookup for local force */
-typedef struct rev_index_t {
-  int32_t index;
-} rev_index_t;
-
-typedef struct rev_entry_t {
-  int32_t elemnum;
-  rev_index_t lf_indices[8];
-} rev_entry_t;
 
 
 extern MPI_Comm comm_solver;

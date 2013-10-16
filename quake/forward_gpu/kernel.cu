@@ -42,6 +42,52 @@
  */
 #define UNDERFLOW_CAP_STIFFNESS 1e-20
 
+/* Flag denoting if kernel FLOP count cahce initialized */
+int kernel_cached_flag = 0;
+
+/* Operation type array indices */
+#define FLOP_MULT_INDEX  0
+#define FLOP_ADD_INDEX   1
+#define FLOP_TRANS_INDEX 2
+
+/* Operations counts for each kernel by thread (MULT/DIV, ADD/SUB, TRANS). 
+   These values were manually tabulated by code review. */
+int64_t kernel_ops[3][3] = {52, 373, 0,
+			      30, 16, 4,
+			      31, 81, 0};
+
+/* Operation coefficents (MULT/DIV, ADD/SUB, TRANS). */
+int64_t kernel_coef[3] = {1, 1, 1};
+
+/* Cached FLOP storage */
+int64_t kernel_ops_cached[3];
+
+
+/* Return FLOP count for the specified kernel */
+int64_t kernel_flops_per_thread(int kid)
+{
+  int i, j;
+
+  if ((kid < 0) || (kid >= FLOP_MAX_KERNEL)) {
+    return (0);
+  }
+
+  /* Initialize the kernel FLOP count cache */
+  if (kernel_cached_flag == 0) {
+    for (i = 0; i < FLOP_MAX_KERNEL; i++) {
+      kernel_ops_cached[i] = 0;
+      for (j = 0; j < 3; j++) {
+	kernel_ops_cached[i] += kernel_coef[j] * kernel_ops[kid][j];
+      }
+    }
+    kernel_cached_flag = 1;
+  }
+
+  return(kernel_ops_cached[kid]);
+}
+
+
+/* Get the register count for the specified kernel function handle */
 int32_t get_reg_count(char* kernel)
 {
     /* Get kernel attributes */
@@ -52,6 +98,7 @@ int32_t get_reg_count(char* kernel)
 }
 
 
+/* Dump register counts for all kernels to stdout */
 int dumpRegisterCounts()
 {
     int count;
@@ -70,6 +117,8 @@ int dumpRegisterCounts()
 }
 
 
+/* Get the recommended block size for a kernel given the GPU specifications
+   and shared memory per thread */
 int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs, 
 			  char* kernel, 
 			  int32_t memPerThread)
@@ -82,6 +131,9 @@ int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs,
     cudaFuncGetAttributes(&attributes, kernel);
 
     /* Maximum theads possible based on register use */
+    /* TODO: Chance this to use the formula used by Nvidia 
+      since registers are allocated by warp, not by thread.
+    */
     if (attributes.numRegs > 0) {
       computed = gpuSpecs->regs_per_block / attributes.numRegs;
       computed = 1 << (int)floor(log(computed)/log(2));
@@ -101,7 +153,9 @@ int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs,
 }
 
 
-/* Stiffness Calc-Force Kernel */
+/* Stiffness Calc-Force Kernel 
+   FLOPs: 4M + 25A + ((147A) + (48M + 33A) + (168A)) = 52M + 373A
+*/
 __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
 					 int32_t   myLinearElementsCount,
 					 int32_t*  myLinearElementsMapperDevice)
@@ -143,7 +197,6 @@ __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
       
       aTransposeU( curDisp, atu );
       firstVector( atu, firstVec, first_coeff, second_coeff, third_coeff );
-      //au( &(gpuDataDevice->localForceDevice[eindex*8]), firstVec );
       au( localForce, firstVec );
     }
     /* Sum the nodal forces */
@@ -165,7 +218,9 @@ __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
 }
 
 
-/* Damping Calc-Conv Kernel */
+/* Damping Calc-Conv Kernel 
+   FLOPs: 30M + 16A + 4T 
+*/
 __global__  void kernelDampingCalcConv(gpu_data_t* gpuDataDevice,
 				       double rmax) 
 {
@@ -287,7 +342,10 @@ __global__  void kernelDampingCalcConv(gpu_data_t* gpuDataDevice,
 }
 
 
-/* Damping Calc-force Kernel */
+/* Damping Calc-force Kernel
+   FLOPs: 20M + 31A + ((4M + 1A) + 147A + (60M + 48A) + (21M + 36A) + 168A)/8=
+          31M + 81A
+*/
 __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
 					double rmax) 
 {
@@ -500,6 +558,7 @@ __host__ __device__ int vector_is_zero( const fvector_t* v )
 }
 
 
+/* FLOPs: 147A */
 __host__ __device__ void aTransposeU( fvector_t* un, double* atu )
 {
 #ifdef  SINGLE_PRECISION_SOLVER
@@ -553,6 +612,8 @@ z3 */
     atu[23] = -u[16] + u[17] + u[18] - u[19] + u[20] - u[21] - u[22] + u[23];
 }
 
+
+/* FLOPs: 48M + 33A */
 __host__ __device__ void firstVector( const double* atu, 
 				      double* finalVector, 
 				      double a, 
@@ -588,6 +649,7 @@ __host__ __device__ void firstVector( const double* atu,
 }
 
 
+/* FLOPs: 168A */
 __host__ __device__ void au( fvector_t* resVec, const double* u )
 {
 #ifdef  SINGLE_PRECISION_SOLVER
@@ -700,6 +762,7 @@ __host__ __device__ void reformU( const double* u, double* newU )
 }
 
 
+/* FLOPs: 21M + 36A */
 __host__ __device__ void firstVector_kappa( const double* atu, double* finalVector, double kappa)
 {
     finalVector[0] += 0.;
@@ -731,6 +794,7 @@ __host__ __device__ void firstVector_kappa( const double* atu, double* finalVect
 }
 
 
+/* FLOPs: 60M + 48A */
 __host__ __device__ void firstVector_mu( const double* atu, double* finalVector, double b )
 {
     finalVector[0] += 0;

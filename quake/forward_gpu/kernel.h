@@ -25,6 +25,16 @@
 
 #include <cuda_runtime.h>
 
+
+/* Kernel identifiers for FLOP counts */
+#define FLOP_MAX_KERNEL        3
+#define FLOP_STIFFNESS_KERNEL  0
+#define FLOP_CALCCONV_KERNEL   1
+#define FLOP_DAMPING_KERNEL    2
+
+
+int64_t kernel_flops_per_thread(int kid);
+
 int dumpRegisterCounts();
 
 int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs, char* kernel, int32_t memPerThread);

@@ -129,6 +129,8 @@ void calc_conv_gpu(int32_t myID, mesh_t *myMesh, mysolver_t *mySolver, double th
       exit(1);
     }
 
+    mySolver->gpu_spec->numflops += kernel_flops_per_thread(FLOP_CALCCONV_KERNEL) * myMesh->lenum * 16;
+
     return;
 }
 
@@ -268,6 +270,7 @@ void constant_Q_addforce_gpu(int myID, mesh_t *myMesh, mysolver_t *mySolver, dou
     /* Copy working data to device */
     cudaMemcpy(mySolver->gpuData->forceDevice, mySolver->force, 
     	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
+    mySolver->gpu_spec->numbytes += myMesh->nharbored * sizeof(fvector_t);
 
     /* Each thread saves a shear or kappa vector in shared mem */
     int blocksize = gpu_get_blocksize(mySolver->gpu_spec,
@@ -287,9 +290,12 @@ void constant_Q_addforce_gpu(int myID, mesh_t *myMesh, mysolver_t *mySolver, dou
       exit(1);
     }
 
+    mySolver->gpu_spec->numflops += kernel_flops_per_thread(FLOP_DAMPING_KERNEL) * myMesh->lenum * 8;
+
     /* Copy working data back to host */
     cudaMemcpy(mySolver->force, mySolver->gpuData->forceDevice,
 	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
+    mySolver->gpu_spec->numbytes += myMesh->nharbored * sizeof(fvector_t);
 
     return;
 }
