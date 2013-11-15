@@ -34,6 +34,7 @@
 
 
 int64_t kernel_flops_per_thread(int kid);
+int64_t kernel_mem_per_thread(int kid);
 
 int dumpRegisterCounts();
 

@@ -335,6 +335,11 @@ void getGPUHardware(int32_t myID, int device, gpu_spec_t *gpuSpecs)
     }
     gpuSpecs->regs_per_block = props.regsPerBlock;
     gpuSpecs->shared_per_block = props.sharedMemPerBlock;
+    gpuSpecs->warp_size = props.warpSize;
+
+    /* TODO: Customize these parameters for compute capability */
+    gpuSpecs->warp_allocation_size = 4;
+    gpuSpecs->register_allocation_size = 256;
 
     if (myID == 0) {
       cout << "GPU Device " << device << ": " << props.name 
@@ -3349,8 +3354,9 @@ static void gpu_init(int32_t myID)
 
     /* Initialize GPU metrics */
     Global.gpu_spec.numdevices = devCount;
-    Global.gpu_spec.numbytes = 0;
+    Global.gpu_spec.numbytespci = 0;
     Global.gpu_spec.numflops = 0;
+    Global.gpu_spec.numbytes = 0;
 
     /* Dump register count for each kernel */
     if (Global.myID == 0) {
@@ -3592,6 +3598,10 @@ static void solver_init()
     schedule_senddata(Global.mySolver->an_sched, Global.mySolver->nTable,
 	      sizeof(n_t) / sizeof(solver_float), CONTRIBUTION, AN_MASS_MSG);
 
+    if (Global.myID == 0) {
+      fprintf(stdout,"GPU Device memory allocation: start\n");
+    } 
+
     /* Save device configuration */
     Global.mySolver->gpu_spec = &(Global.gpu_spec);
 
@@ -3679,6 +3689,10 @@ static void solver_init()
     Global.gpuData.nharbored =  Global.myMesh->nharbored;
     Global.gpuData.lenum = Global.myMesh->lenum;
 
+    if (Global.myID == 0) {
+      fprintf(stdout,"GPU Device memory allocation: copy mesh and elements\n");
+    } 
+
     /* Copy mesh and solver elements to device */
     elem_t tmpelem;
     if (cudaMalloc((void**)&(Global.gpuData.matPropsDevice), 
@@ -3692,18 +3706,39 @@ static void solver_init()
     for (int i = 0; i < Global.myMesh->lenum; i++) {
       memcpy(&tmpelem, &(Global.myMesh->elemTable[i]), sizeof(elem_t));
       tmpelem.data = Global.gpuData.matPropsDevice + i;
-      cudaMemcpy(tmpelem.data, Global.myMesh->elemTable[i].data, 
-		 sizeof(edata_t), cudaMemcpyHostToDevice);    
-      cudaMemcpy(Global.gpuData.elemTableDevice + i, &tmpelem, 
-		 sizeof(elem_t), cudaMemcpyHostToDevice);
-      Global.gpu_spec.numbytes += (sizeof(edata_t) + sizeof(elem_t));
+      if (cudaMemcpy(tmpelem.data, Global.myMesh->elemTable[i].data, 
+		     sizeof(edata_t), cudaMemcpyHostToDevice) != cudaSuccess) {
+	fprintf(stderr, 
+		"Thread %d: Failed to copy data for element %d\n", 
+		Global.myID, i);
+	MPI_Abort(MPI_COMM_WORLD, ERROR);
+	exit(1);
+      }    
+      if (cudaMemcpy(Global.gpuData.elemTableDevice + i, &tmpelem, 
+		     sizeof(elem_t), cudaMemcpyHostToDevice) != cudaSuccess) {
+	fprintf(stderr, 
+		"Thread %d: Failed to copy element %d\n", 
+		Global.myID, i);
+	MPI_Abort(MPI_COMM_WORLD, ERROR);
+	exit(1);
+      }
+      Global.gpu_spec.numbytespci += (sizeof(edata_t) + sizeof(elem_t));
     }
+
+    if (Global.myID == 0) {
+      fprintf(stdout,"GPU Device memory allocation: copy eTable, nTable\n");
+    } 
+
     cudaMemcpy(Global.gpuData.eTableDevice, Global.mySolver->eTable, 
 	       Global.myMesh->lenum * sizeof(e_t), cudaMemcpyHostToDevice);
-    Global.gpu_spec.numbytes += Global.myMesh->lenum * sizeof(e_t);
+    Global.gpu_spec.numbytespci += Global.myMesh->lenum * sizeof(e_t);
     cudaMemcpy(Global.gpuData.nTableDevice, Global.mySolver->nTable, 
 	       Global.myMesh->nharbored * sizeof(n_t), cudaMemcpyHostToDevice);
-    Global.gpu_spec.numbytes += Global.myMesh->nharbored * sizeof(n_t);
+    Global.gpu_spec.numbytespci += Global.myMesh->nharbored * sizeof(n_t);
+
+    if (Global.myID == 0) {
+      fprintf(stdout,"GPU Device memory allocation: initialize convolution\n");
+    } 
 
     /* Initialize device convolution */
     cudaMemcpy(Global.gpuData.conv_shear_1Device, 
@@ -3722,7 +3757,7 @@ static void solver_init()
 	       Global.mySolver->conv_kappa_2, 
 	       8 * Global.myMesh->lenum * sizeof(fvector_t), 
 	       cudaMemcpyHostToDevice);
-    Global.gpu_spec.numbytes += 4 * 8 * Global.myMesh->lenum * 
+    Global.gpu_spec.numbytespci += 4 * 8 * Global.myMesh->lenum * 
       sizeof(fvector_t);
 
     /* Copy GPU data to device */
@@ -3735,10 +3770,14 @@ static void solver_init()
     }    
     cudaMemcpy(Global.mySolver->gpuDataDevice, &Global.gpuData, 
 	       sizeof(gpu_data_t), cudaMemcpyHostToDevice);
-    Global.gpu_spec.numbytes += sizeof(gpu_data_t);
+    Global.gpu_spec.numbytespci += sizeof(gpu_data_t);
 
     /* Save reference to device data in solver */
     Global.mySolver->gpuData = &Global.gpuData;
+
+    if (Global.myID == 0) {
+      fprintf(stdout,"GPU Device memory allocation: end\n");
+    }
 
     return;
 }
@@ -4152,13 +4191,13 @@ static void solver_load_gpu(mysolver_t *solver)
   cudaMemcpy(solver->gpuData->tm2Device, solver->tm2, 
   	     solver->gpuData->nharbored * sizeof(fvector_t), 
   	     cudaMemcpyHostToDevice);
-  solver->gpu_spec->numbytes += 2 * solver->gpuData->nharbored * 
+  solver->gpu_spec->numbytespci += 2 * solver->gpuData->nharbored * 
     sizeof(fvector_t);
   if ( Param.printStationAccelerations == YES ) {
     cudaMemcpy(solver->gpuData->tm3Device, solver->tm3, 
 	       solver->gpuData->nharbored * sizeof(fvector_t), 
 	       cudaMemcpyHostToDevice);
-    solver->gpu_spec->numbytes += solver->gpuData->nharbored * 
+    solver->gpu_spec->numbytespci += solver->gpuData->nharbored * 
       sizeof(fvector_t);
   }  
 
@@ -4400,7 +4439,7 @@ solver_compute_displacement_gpu( int32_t myID, mysolver_t* solver, mesh_t* mesh 
     /* Copy working data to device */
     cudaMemcpy(solver->gpuData->forceDevice, solver->force, 
 	       mesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
-    solver->gpu_spec->numbytes += mesh->nharbored * sizeof(fvector_t);
+    solver->gpu_spec->numbytespci += mesh->nharbored * sizeof(fvector_t);
 
     int blocksize = gpu_get_blocksize(solver->gpu_spec,
 				      (char *)kernelDispCalc, 0);
@@ -4420,11 +4459,11 @@ solver_compute_displacement_gpu( int32_t myID, mysolver_t* solver, mesh_t* mesh 
     /* Copy working data from device */
     cudaMemcpy(solver->tm2, solver->gpuData->tm2Device, 
 	       mesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
-    solver->gpu_spec->numbytes += mesh->nharbored * sizeof(fvector_t);
+    solver->gpu_spec->numbytespci += mesh->nharbored * sizeof(fvector_t);
     if ( Param.printStationAccelerations == YES ) {
       cudaMemcpy(solver->tm3, solver->gpuData->tm3Device, 
 		 mesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
-      solver->gpu_spec->numbytes += mesh->nharbored * sizeof(fvector_t);
+      solver->gpu_spec->numbytespci += mesh->nharbored * sizeof(fvector_t);
     }
 
     /* zero out the force vector for all nodes */
@@ -6580,13 +6619,17 @@ static void print_timing_stat()
     printf("\n");
     printf("GPU METRICS                         :\n");
     printf("    Memory Copied Per MPI Rank      : %lld bytes\n",
-	   Global.gpu_spec.numbytes);
+	   Global.gpu_spec.numbytespci);
     printf("    Floating-Point Ops Per MPI Rank : %lld ops\n",
 	   Global.gpu_spec.numflops);
+    printf("    GDDR Accesses Per MPI Rank      : %lld bytes\n",
+	   Global.gpu_spec.numbytes);
     printf("    Memory Bandwidth Per MPI Rank   : %.2f GB/second\n",
-	   (Global.gpu_spec.numbytes / (double)(1 << 30)) /  Timer_Value("Solver", (TimerKind)0));
+	   (Global.gpu_spec.numbytespci / (double)(1 << 30)) /  Timer_Value("Solver", (TimerKind)0));
     printf("    FLOPs Per MPI Rank              : %.2f GFLOP/second\n",
 	   (Global.gpu_spec.numflops / (double)(1 << 30)) /  Timer_Value("Solver", (TimerKind)0));
+    printf("    GDDR Bandwidth Per MPI Rank     : %.2f GB/second\n",
+	   (Global.gpu_spec.numbytes / (double)(1 << 30)) /  Timer_Value("Solver", (TimerKind)0));
 
     printf("\n");
     printf("TOTAL WALL CLOCK                    : %.2f seconds\n", Timer_Value("Total Wall Clock",(TimerKind)0));

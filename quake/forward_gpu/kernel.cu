@@ -42,49 +42,80 @@
  */
 #define UNDERFLOW_CAP_STIFFNESS 1e-20
 
-/* Flag denoting if kernel FLOP count cahce initialized */
-int kernel_cached_flag = 0;
+
+/* Flag denoting if kernel FLOP count cache initialized */
+static int kernel_cached_flag = 0;
 
 /* Operation type array indices */
 #define FLOP_MULT_INDEX  0
 #define FLOP_ADD_INDEX   1
 #define FLOP_TRANS_INDEX 2
+#define FLOP_MEM_INDEX   3
 
-/* Operations counts for each kernel by thread (MULT/DIV, ADD/SUB, TRANS). 
+/* Operations counts for each kernel by thread (MULT/DIV, ADD/SUB, TRANS, MEM). 
    These values were manually tabulated by code review. */
-int64_t kernel_ops[3][3] = {52, 373, 0,
-			      30, 16, 4,
-			      31, 81, 0};
+static int64_t kernel_ops[3][4] = {52, 373, 0, 520,
+				   30, 16, 4, 216,
+				   31, 100, 0, 374};
 
-/* Operation coefficents (MULT/DIV, ADD/SUB, TRANS). */
-int64_t kernel_coef[3] = {1, 1, 1};
+/* Operation coefficents (MULT/DIV, ADD/SUB, TRANS, MEM). */
+static int64_t kernel_coef[4] = {1, 1, 1, 1};
 
-/* Cached FLOP storage */
-int64_t kernel_ops_cached[3];
+/* Cached FLOP/memory storage */
+static int64_t kernel_ops_cached[3];
+static int64_t kernel_mem_cached[3];
+
+
+/* Initialize the kernel FLOP count cache */
+int kernel_init_cache()
+{
+  int i, j;
+
+  for (i = 0; i < FLOP_MAX_KERNEL; i++) {
+    kernel_ops_cached[i] = 0;
+    for (j = 0; j < 3; j++) {
+      kernel_ops_cached[i] += kernel_coef[j] * kernel_ops[i][j];
+    }
+    kernel_mem_cached[i] = kernel_ops[i][3];
+  }
+
+  return (0);
+}
 
 
 /* Return FLOP count for the specified kernel */
 int64_t kernel_flops_per_thread(int kid)
 {
-  int i, j;
-
   if ((kid < 0) || (kid >= FLOP_MAX_KERNEL)) {
     return (0);
   }
 
   /* Initialize the kernel FLOP count cache */
   if (kernel_cached_flag == 0) {
-    for (i = 0; i < FLOP_MAX_KERNEL; i++) {
-      kernel_ops_cached[i] = 0;
-      for (j = 0; j < 3; j++) {
-	kernel_ops_cached[i] += kernel_coef[j] * kernel_ops[kid][j];
-      }
-    }
+    kernel_init_cache();
     kernel_cached_flag = 1;
   }
 
   return(kernel_ops_cached[kid]);
 }
+
+
+/* Return memory count for the specified kernel */
+int64_t kernel_mem_per_thread(int kid)
+{
+  if ((kid < 0) || (kid >= FLOP_MAX_KERNEL)) {
+    return (0);
+  }
+
+  /* Initialize the kernel FLOP count cache */
+  if (kernel_cached_flag == 0) {
+    kernel_init_cache();
+    kernel_cached_flag = 1;
+  }
+
+  return(kernel_mem_cached[kid]);
+}
+
 
 
 /* Get the register count for the specified kernel function handle */
@@ -123,6 +154,7 @@ int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs,
 			  char* kernel, 
 			  int32_t memPerThread)
 {
+    int32_t regs_per_warp;
     int32_t max_threads;
     int32_t computed;
 
@@ -131,12 +163,11 @@ int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs,
     cudaFuncGetAttributes(&attributes, kernel);
 
     /* Maximum theads possible based on register use */
-    /* TODO: Chance this to use the formula used by Nvidia 
-      since registers are allocated by warp, not by thread.
-    */
     if (attributes.numRegs > 0) {
-      computed = gpuSpecs->regs_per_block / attributes.numRegs;
-      computed = 1 << (int)floor(log(computed)/log(2));
+      //computed = gpuSpecs->regs_per_block / attributes.numRegs;
+      //computed = 1 << (int)floor(log(computed)/log(2));
+      regs_per_warp = (int)ceil((attributes.numRegs * gpuSpecs->warp_size) / (float)gpuSpecs->register_allocation_size) * gpuSpecs->register_allocation_size;
+      computed = (int)floor(gpuSpecs->regs_per_block / (float)(regs_per_warp * gpuSpecs->warp_allocation_size)) * gpuSpecs->warp_allocation_size * gpuSpecs->warp_size;
       max_threads = imin(computed, gpuSpecs->max_threads);
     } else {
       max_threads = gpuSpecs->max_threads;
@@ -155,6 +186,7 @@ int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs,
 
 /* Stiffness Calc-Force Kernel 
    FLOPs: 4M + 25A + ((147A) + (48M + 33A) + (168A)) = 52M + 373A
+   MEM  : 4 + 8 + 8 + 8*(24 + 4) + 16 + 8*(8 + 24) = 516
 */
 __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
 					 int32_t   myLinearElementsCount,
@@ -220,6 +252,7 @@ __global__ void kernelStiffnessCalcLocal(gpu_data_t *gpuDataDevice,
 
 /* Damping Calc-Conv Kernel 
    FLOPs: 30M + 16A + 4T 
+   MEM  : 4 + 8 + 8 + 2*8 + 4 + 4*8 + 3*(4*8) + 3*(2*8) = 216
 */
 __global__  void kernelDampingCalcConv(gpu_data_t* gpuDataDevice,
 				       double rmax) 
@@ -343,8 +376,10 @@ __global__  void kernelDampingCalcConv(gpu_data_t* gpuDataDevice,
 
 
 /* Damping Calc-force Kernel
-   FLOPs: 20M + 31A + ((4M + 1A) + 147A + (60M + 48A) + (21M + 36A) + 168A)/8=
-          31M + 81A
+   FLOPs: 20M + 31A + ((4M + 1A) + 2*147A + (60M + 48A) + (21M + 36A) + 168A)/8=
+          31M + 100A
+   MEM  : 4 + 8+4 + 2*8 + 2*8 + (3*8 + 2*8 + 3*6*8) + (3*8 + 2*8 + 3*3*8) +
+          2*8/8 + 8 + 24 = 374
 */
 __global__  void kernelDampingCalcLocal(gpu_data_t* gpuDataDevice,
 					double rmax) 

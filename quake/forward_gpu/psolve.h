@@ -60,11 +60,15 @@ typedef struct {
   int32_t max_grid_dim[3];
   int32_t regs_per_block;
   int32_t shared_per_block;
+  int32_t warp_size;
+  int32_t warp_allocation_size;
+  int32_t register_allocation_size;
 
   /* Variables for tracking performance metrics */
   int32_t numdevices;
-  int64_t numbytes;
+  int64_t numbytespci;
   int64_t numflops;
+  int64_t numbytes;
 } gpu_spec_t;
 
 
