@@ -1387,6 +1387,7 @@ setrec( octant_t* leaf, double ticksize, void* data )
 		}
 
 		res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
+        //res = layer_prop( y_m, x_m, z_m, &g_props );
 
 		if (res != 0) {
 		    continue;
@@ -7329,11 +7330,6 @@ mesh_correct_properties( etree_t* cvm )
     points[1] = 0.5;
     points[2] = 0.995;
 
-//    if (Global.myID == 0) {
-//        fprintf( stdout,"mesh_correct_properties  ... " );
-//        fflush( stdout );
-//    }
-
     /* iterate over mesh elements */
     for (eindex = 0; eindex < Global.myMesh->lenum; eindex++) {
 
@@ -7399,18 +7395,14 @@ mesh_correct_properties( etree_t* cvm )
             		}
 
 
-                    res = cvm_query( Global.theCVMEp, east_m, north_m,
-                                     depth_m, &g_props );
+                    res = cvm_query( Global.theCVMEp, east_m, north_m,depth_m, &g_props );
 
-//                    if (res != 0) {
-//                        fprintf(stderr, "Cannot find the query point: east = %lf, north = %lf, depth = %lf \n",
-//                        		east_m, north_m, depth_m);
-//                        exit(1);
-//                    }
-                    // Dorian: I had to do this because of anomalies found in the AburraValley_Etree.
-                    // Remove this line and uncomment the previous statement to return to the original version
+                    //res = layer_prop( east_m, north_m,depth_m, &g_props );
+
                     if (res != 0) {
-                    	continue;
+                        fprintf(stderr, "Cannot find the query point: east = %lf, north = %lf, depth = %lf \n",
+                        		east_m, north_m, depth_m);
+                        exit(1);
                     }
 
         			vp  += g_props.Vp;

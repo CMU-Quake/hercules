@@ -45,6 +45,8 @@ static int                ntp, np_ew, np_ns;
 static int8_t             theMaxoctlevel;
 static double             thebase_zcoord = 0.0, So, theDomainLong_ew, theDomainLong_ns;
 static double             *theTopoInfo;
+static double             theLy,theBR, theHR, theFLR, theSLR, theRR,
+                          theVs1R, theVs2R, theVsHS, theVpHS, therhoHS;
 static etreetype_t        theEtreeType;
 static int32_t            myTopoElementsCount = 0;
 static int32_t            *myTopoElementsMapping;
@@ -327,30 +329,64 @@ double interp_z( double xp, double yp, double xo, double yo, double h, double zc
  * Elevation is measured with respect to Hercules' Z global axis  */
 double point_elevation ( double xo, double yo ) {
 
-	int i, j;
-	double xp, yp, x_o, y_o, remi, remj, mesh_cz[4], zp;
 
-	xp = xo;
-	yp = yo;
+	double R, r_ell, C_teta, S_teta, Lx, psi, zp, delH;
 
-	remi = modf (xp  / So, &x_o );
-	remj = modf (yp  / So, &y_o );
+	xo = xo - theDomainLong_ns / 2;
+	yo = yo - theDomainLong_ew / 2;
 
-	i = x_o;
-	j = y_o;
+	Lx = theBR * theLy;
+	delH = theHR * theLy;
 
-	if ( ( remi == 0 ) && ( remj == 0) )
-		zp = ( thebase_zcoord - theTopoInfo [ np_ew * i + j ] );
-	else {
-		mesh_cz[0] =  theTopoInfo [ np_ew * i + j ];
-		mesh_cz[1] =  theTopoInfo [ np_ew * i + j + 1 ];
-		mesh_cz[2] =  theTopoInfo [ np_ew * ( i + 1 ) + j + 1 ];
-		mesh_cz[3] =  theTopoInfo [ np_ew * ( i + 1 ) + j ];
+	R = sqrt ( xo * xo + yo * yo );
 
-		zp = thebase_zcoord - interp_z( xp, yp, x_o*So, y_o*So, So, mesh_cz );
+	if ( R != 0 ) {
+
+		C_teta = yo / R;
+		S_teta = xo / R;
+
+		double den = S_teta / theBR * S_teta / theBR + C_teta * C_teta ;
+
+		r_ell = theLy * sqrt ( 1.0 / den  );
+
+		if ( R > r_ell )
+			zp = thebase_zcoord;
+		else {
+			psi = R / r_ell;
+			zp  =  thebase_zcoord - delH * ( 1.0 - 3.0 * psi * psi + 2.0 * psi * psi * psi );
+		}
+
+	} else {
+		zp = thebase_zcoord - delH;
 	}
 
+
 	return zp;
+
+//	int i, j;
+//	double xp, yp, x_o, y_o, remi, remj, mesh_cz[4], zp;
+//
+//	xp = xo;
+//	yp = yo;
+//
+//	remi = modf (xp  / So, &x_o );
+//	remj = modf (yp  / So, &y_o );
+//
+//	i = x_o;
+//	j = y_o;
+//
+//	if ( ( remi == 0 ) && ( remj == 0) )
+//		zp = ( thebase_zcoord - theTopoInfo [ np_ew * i + j ] );
+//	else {
+//		mesh_cz[0] =  theTopoInfo [ np_ew * i + j ];
+//		mesh_cz[1] =  theTopoInfo [ np_ew * i + j + 1 ];
+//		mesh_cz[2] =  theTopoInfo [ np_ew * ( i + 1 ) + j + 1 ];
+//		mesh_cz[3] =  theTopoInfo [ np_ew * ( i + 1 ) + j ];
+//
+//		zp = thebase_zcoord - interp_z( xp, yp, x_o*So, y_o*So, So, mesh_cz );
+//	}
+//
+//	return zp;
 
 }
 
@@ -362,23 +398,60 @@ double point_elevation ( double xo, double yo ) {
 
 double point_PlaneDist ( double xp, double yp, double zp ) {
 
-	int i, j;
-	double x_o, y_o, remi, remj, mesh_cz[4];
+
+	double mesh_cz[4], sep=20, x_o, y_o, remi, remj;
 
 	zp = thebase_zcoord - zp; /* sea level elevation  */
 
-	remi = modf (xp  / So, &x_o );
-	remj = modf (yp  / So, &y_o );
+	remi = modf (xp  / sep, &x_o );
+	remj = modf (yp  / sep, &y_o );
 
-	i = x_o;
-	j = y_o;
+//	crn1x =  xp - sep;
+//	crn2x =  xp + sep;
+//
+//	crn1y =  yp - sep;
+//	crn2y =  yp + sep;
+//
+//	if ( crn1x < 0 )
+//		crn1x = 0;
+//
+//	if ( crn1x > theDomainLong_ns )
+//		crn1x = theDomainLong_ns;
+//
+//	if ( crn1y < 0 )
+//		crn1y = 0;
+//
+//	if ( crn1y > theDomainLong_ew )
+//		crn1y = theDomainLong_ew ;
 
-	mesh_cz[0] =  theTopoInfo [ np_ew * i + j ];
-	mesh_cz[1] =  theTopoInfo [ np_ew * i + j + 1 ];
-	mesh_cz[2] =  theTopoInfo [ np_ew * ( i + 1 ) + j + 1 ];
-	mesh_cz[3] =  theTopoInfo [ np_ew * ( i + 1 ) + j ];
 
-	return	point_to_plane( xp, yp, zp, x_o*So, y_o*So, So, mesh_cz );
+	mesh_cz[0] =  thebase_zcoord - point_elevation (   x_o * sep      ,   y_o * sep );
+	mesh_cz[1] =  thebase_zcoord - point_elevation (   x_o * sep      , ( y_o + 1 ) * sep );
+	mesh_cz[2] =  thebase_zcoord - point_elevation ( ( x_o +1 ) * sep , ( y_o + 1 ) * sep );
+	mesh_cz[3] =  thebase_zcoord - point_elevation ( ( x_o +1 ) * sep ,   y_o * sep );
+
+	return	point_to_plane( xp, yp, zp, x_o * sep, y_o * sep, sep, mesh_cz );
+
+
+
+//	return point_elevation(xp,yp) - zp;
+//	int i, j;
+//	double x_o, y_o, remi, remj, mesh_cz[4];
+//
+//	zp = thebase_zcoord - zp; /* sea level elevation  */
+//
+//	remi = modf (xp  / So, &x_o );
+//	remj = modf (yp  / So, &y_o );
+//
+//	i = x_o;
+//	j = y_o;
+//
+//	mesh_cz[0] =  theTopoInfo [ np_ew * i + j ];
+//	mesh_cz[1] =  theTopoInfo [ np_ew * i + j + 1 ];
+//	mesh_cz[2] =  theTopoInfo [ np_ew * ( i + 1 ) + j + 1 ];
+//	mesh_cz[3] =  theTopoInfo [ np_ew * ( i + 1 ) + j ];
+//
+//	return	point_to_plane( xp, yp, zp, x_o*So, y_o*So, So, mesh_cz );
 
 }
 
@@ -840,6 +913,74 @@ int topo_toexpand (  octant_t *leaf,
 
 }
 
+
+/**
+ * layer_prop: Returns the layer properties
+ *
+ * \return 0 if OK, -1 on error
+ */
+int
+layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload )
+{
+
+	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3;
+
+	Pelev = point_elevation( north_m, east_m );
+	H     = theHR * theLy;
+	Del1  = theFLR * H;
+	Del2  = theSLR * H;
+	Del3  = theRR  * H;
+
+
+	/* compute limits to layers   */
+	/* first layer  */
+	z0 = Pelev;
+
+	/* second layer  */
+	ratio = ( Del1 + H + Del3 ) / H ;
+	z1 = thebase_zcoord * ( 1 - ratio ) + ratio * Pelev + Del1;
+
+	/* third layer  */
+	ratio = ( Del2 + H + Del3 ) / H ;
+	z2 = thebase_zcoord * ( 1 - ratio ) + ratio * Pelev + Del2;
+
+
+	/* Point in first layer */
+	if ( ( depth_m >= z0  ) && ( depth_m < z1 ) ) {
+
+		payload->Vp = theVpHS * theVs1R;
+		payload->Vs = theVsHS * theVs1R;
+		payload->rho = therhoHS;
+
+		return 0;
+	}
+
+	/* Point in second layer */
+	if ( ( ( depth_m >= z0  ) && ( depth_m > z1 ) && ( depth_m < z2 ) ) ||
+		 ( ( depth_m >= z0  ) && ( z0 > z1 ) && ( depth_m < z2 ) )	) {
+
+		payload->Vp = theVpHS * theVs2R;
+		payload->Vs = theVsHS * theVs2R;
+		payload->rho = therhoHS;
+
+		return 0;
+	}
+
+	/* Point in Half-space */
+//	if ( ( depth_m >= z0  ) && ( depth_m > z2 ) && ( depth_m < z2 ) ){
+
+		payload->Vp = theVpHS;
+		payload->Vs = theVsHS;
+		payload->rho = therhoHS;
+
+		return 0;
+//	}
+
+
+//	return -1;
+
+}
+
 int32_t
 topography_initparameters ( const char *parametersin )
 {
@@ -850,6 +991,8 @@ topography_initparameters ( const char *parametersin )
     char                topo_dir[256];
     char                topo_file[256];
     double              L_ew, L_ns, int_np_ew, int_np_ns, fract_np_ew, fract_np_ns;
+
+
     char                etree_model[64], fem_meth[64];
     etreetype_t         etreetype;
     topometh_t          topo_method;
@@ -871,6 +1014,17 @@ topography_initparameters ( const char *parametersin )
          ( parsetext(fp, "topoprahy_directory",     's', &topo_dir              ) != 0) ||
          ( parsetext(fp, "region_length_east_m",    'd', &L_ew                  ) != 0) ||
          ( parsetext(fp, "type_of_etree",           's', &etree_model           ) != 0) ||
+         ( parsetext(fp, "Mnt_YLong",               'd', &theLy                 ) != 0) ||
+         ( parsetext(fp, "Base_ratio",              'd', &theBR                 ) != 0) ||
+         ( parsetext(fp, "Height_ratio",            'd', &theHR                 ) != 0) ||
+         ( parsetext(fp, "Fst_lay_ratio",           'd', &theFLR                ) != 0) ||
+         ( parsetext(fp, "Snd_lay_ratio",           'd', &theSLR                ) != 0) ||
+         ( parsetext(fp, "Raising_ratio",           'd', &theRR                 ) != 0) ||
+         ( parsetext(fp, "Vs1_ratio",               'd', &theVs1R               ) != 0) ||
+         ( parsetext(fp, "Vs2_ratio",               'd', &theVs2R               ) != 0) ||
+         ( parsetext(fp, "VsHs",                    'd', &theVsHS               ) != 0) ||
+         ( parsetext(fp, "VpHs",                    'd', &theVpHS               ) != 0) ||
+         ( parsetext(fp, "rhoHs",                   'd', &therhoHS              ) != 0) ||
          ( parsetext(fp, "region_length_north_m",   'd', &L_ns                  ) != 0) )
     {
         fprintf( stderr,
@@ -978,7 +1132,7 @@ topography_initparameters ( const char *parametersin )
 void topo_init ( int32_t myID, const char *parametersin ) {
 
     int     int_message[6];
-    double  double_message[4];
+    double  double_message[15];
 
     /* Capturing data from file --- only done by PE0 */
     if (myID == 0) {
@@ -997,6 +1151,18 @@ void topo_init ( int32_t myID, const char *parametersin ) {
     double_message[1]    = So;
     double_message[2]    = theDomainLong_ew;
     double_message[3]    = theDomainLong_ns;
+    double_message[4]    = theLy;
+    double_message[5]    = theBR;
+    double_message[6]    = theHR;
+    double_message[7]    = theFLR;
+    double_message[8]    = theSLR;
+    double_message[9]    = theRR;
+
+    double_message[10]    = theVs1R;
+    double_message[11]    = theVs2R;
+    double_message[12]    = theVsHS;
+    double_message[13]    = theVpHS;
+    double_message[14]    = therhoHS;
 
     int_message   [0]    = theMaxoctlevel;
     int_message   [1]    = ntp;
@@ -1006,13 +1172,25 @@ void topo_init ( int32_t myID, const char *parametersin ) {
     int_message   [5]    = (int)theTopoMethod;
 
 
-    MPI_Bcast(double_message, 4, MPI_DOUBLE, 0, comm_solver);
+    MPI_Bcast(double_message, 10, MPI_DOUBLE, 0, comm_solver);
     MPI_Bcast(int_message,    6, MPI_INT,    0, comm_solver);
 
     thebase_zcoord       = double_message[0];
     So				     = double_message[1];
     theDomainLong_ew     = double_message[2];
     theDomainLong_ns     = double_message[3];
+    theLy  =  double_message[4];
+    theBR  =  double_message[5];
+    theHR  =  double_message[6];
+    theFLR =  double_message[7];
+    theSLR =  double_message[8];
+    theRR  =  double_message[9];
+
+    theVs1R  = double_message[10];
+    theVs2R  = double_message[11];
+    theVsHS  = double_message[12];
+    theVpHS  = double_message[13];
+    therhoHS = double_message[14];
 
     theMaxoctlevel       = int_message[0];
     ntp					 = int_message[1];
@@ -1023,12 +1201,12 @@ void topo_init ( int32_t myID, const char *parametersin ) {
 
 //    /* allocate table of properties for all other PEs */
 
-    if (myID != 0) {
-        theTopoInfo        = (double*)malloc( sizeof(double) * ntp );
-    }
+//    if (myID != 0) {
+//        theTopoInfo        = (double*)malloc( sizeof(double) * ntp );
+//    }
 
     /* Broadcast table of properties */
-    MPI_Bcast(theTopoInfo,   ntp, MPI_DOUBLE, 0, comm_solver);
+//    MPI_Bcast(theTopoInfo,   ntp, MPI_DOUBLE, 0, comm_solver);
 
     return;
 
