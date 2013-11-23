@@ -1386,8 +1386,8 @@ setrec( octant_t* leaf, double ticksize, void* data )
                     z_m -= get_surface_shift();
 		}
 
-		res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
-        //res = layer_prop( y_m, x_m, z_m, &g_props );
+		//res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
+        res = layer_prop( y_m, x_m, z_m, &g_props, ticksize, Param.theFactor );
 
 		if (res != 0) {
 		    continue;
@@ -7337,6 +7337,19 @@ mesh_correct_properties( etree_t* cvm )
         edata = (edata_t*)elemp->data;
         lnid0 = Global.myMesh->elemTable[eindex].lnid[0];
 
+
+//		double po=90, xoo, yoo, zoo;
+
+//		xoo=(Global.myMesh->ticksize) * (double)Global.myMesh->nodeTable[lnid0].x;
+//		yoo=(Global.myMesh->ticksize) * (double)Global.myMesh->nodeTable[lnid0].y;
+//		zoo=(Global.myMesh->ticksize) * (double)Global.myMesh->nodeTable[lnid0].z;
+
+
+//		if (yoo == 1218.75 && xoo == 1000 && zoo == 156.25 ) {
+//			po=9090;
+//		}
+
+
         if ( Param.includeTopography == YES ) {
             if( topo_correctproperties( edata ) ) {
                 continue;
@@ -7376,15 +7389,7 @@ mesh_correct_properties( etree_t* cvm )
         			/* NOTE: If you want to see the carving process,
         			 *       activate this and comment the query below */
         			if ( Param.includeBuildings == YES ) {
-        				//                        if ( depth_m < get_surface_shift() ) {
-        				//                            g_props.Vp  = NAN;
-        				//                            g_props.Vs  = NAN;
-        				//                            g_props.rho = NAN;
-        				//                        } else {
         				depth_m -= get_surface_shift();
-        				//                            res = cvm_query( Global.theCVMEp, east_m, north_m,
-        				//                                             depth_m, &g_props );
-        				//                        }
         			}
 
 
@@ -7395,27 +7400,19 @@ mesh_correct_properties( etree_t* cvm )
             		}
 
 
-                    res = cvm_query( Global.theCVMEp, east_m, north_m,depth_m, &g_props );
+                    //res = cvm_query( Global.theCVMEp, east_m, north_m,depth_m, &g_props );
 
-                    //res = layer_prop( east_m, north_m,depth_m, &g_props );
+                    res = layer_Correctprop( east_m, north_m,depth_m, &g_props );
 
-                    if (res != 0) {
-                        fprintf(stderr, "Cannot find the query point: east = %lf, north = %lf, depth = %lf \n",
-                        		east_m, north_m, depth_m);
-                        exit(1);
+                    if ( res == 0 ) {
+                    	vp  += g_props.Vp;
+                    	vs  += g_props.Vs;
+        				rho += g_props.rho;
+        				++cnt;
                     }
-
-        			vp  += g_props.Vp;
-        			vs  += g_props.Vs;
-        			rho += g_props.rho;
-        			++cnt;
                 }
             }
         }
-
-        edata->Vp  =  vp;
-        edata->Vs  =  vs;
-        edata->rho = rho;
 
 //        fprintf(stderr, "Queried  points: %ld \n",cnt);
 //        fprintf(stdout, "Element: %d, out of: %d, Processor: %d \n",eindex, Global.myMesh->lenum, Global.myID );
@@ -7423,18 +7420,12 @@ mesh_correct_properties( etree_t* cvm )
         	edata->Vp  =  vp / cnt;
         	edata->Vs  =  vs / cnt;
         	edata->rho = rho / cnt;
-        }
-
-        /* Auxiliary ratios for adjustments */
-        // Dorian: Needed to handle possible air elements inside topography.
-        // This situation could emerge by different readings of the topography surface
-        // between Hercules and the algorithm used for creating the Etree.
-        if ( (edata->Vp==0)||(edata->Vs==0)||(edata->rho==0) ) {
-        	VpVsRatio  = 2.0;  /* values artificially imposed by me */
-        	edata->rho = 2000;
         } else {
-            VpVsRatio  = edata->Vp  / edata->Vs;
-            RhoVpRatio = edata->rho / edata->Vp;
+
+        	edata->Vp  =  -1.0;
+        	edata->Vs  = 1.0e10;
+        	edata->rho = 0.0;
+
         }
 
 
@@ -7461,19 +7452,9 @@ mesh_correct_properties( etree_t* cvm )
             }
         }
 
-        /* Readjust Vs, Vp and Density according to VsCut */
-        if ( edata->Vs < Param.theVsCut ) {
-            edata->Vs  = Param.theVsCut;
-            edata->Vp  = Param.theVsCut  * VpVsRatio;
-            /* edata->rho = edata->Vp * RhoVpRatio; */ /* Discuss with Jacobo */
-        }
-
-
         // IMPLEMENT BKT MODEL
-
         /* CALCULATE QUALITY FACTOR VALUES AND READ CORRESPONDING VISCOELASTICITY COEFFICIENTS FROM THE TABLE */
-
-        	/* L IS THE COEFFICIENT DEFINED BY "SHEARER-2009" TO RELATE QK, QS AND QP */
+        /* L IS THE COEFFICIENT DEFINED BY "SHEARER-2009" TO RELATE QK, QS AND QP */
 
         if(Param.theTypeOfDamping == BKT)
         {

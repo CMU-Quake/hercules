@@ -920,7 +920,7 @@ int topo_toexpand (  octant_t *leaf,
  * \return 0 if OK, -1 on error
  */
 int
-layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload )
+layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload, double ticksize, double theFact )
 {
 
 	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3;
@@ -944,6 +944,89 @@ layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload
 	ratio = ( Del2 + H + Del3 ) / H ;
 	z2 = thebase_zcoord * ( 1 - ratio ) + ratio * Pelev + Del2;
 
+
+	double emin = ( (tick_t)1 << (PIXELLEVEL - theMaxoctlevel) ) * ticksize;
+
+
+	/* Point in first layer */
+	if ( ( depth_m >= z0  ) && ( depth_m < z1 ) ) {
+
+		payload->Vp = emin * theFact * theVpHS / theVsHS;
+		payload->Vs = emin * theFact;
+		payload->rho = therhoHS;
+
+		return 0;
+	}
+
+	/* Point in second layer */
+	if ( ( ( depth_m >= z0  ) && ( depth_m > z1 ) && ( depth_m < z2 ) ) ||
+		 ( ( depth_m >= z0  ) && ( z0 > z1 ) && ( depth_m < z2 ) )	) {
+
+		payload->Vp = emin * theFact * theVpHS / theVsHS;
+		payload->Vs = emin * theFact;
+		payload->rho = therhoHS;
+
+		return 0;
+	}
+
+	/* Point in Half-space */
+//	if ( ( depth_m >= z0  ) && ( depth_m > z2 ) && ( depth_m < z2 ) ){
+
+		payload->Vp = theVpHS;
+		payload->Vs = theVsHS;
+		payload->rho = therhoHS;
+
+		return 0;
+//	}
+
+
+//	return -1;
+
+}
+
+
+/**
+ * layer_Correctprop: Returns the layer properties
+ *
+ * \return 0 if OK, -1 on error
+ */
+int
+layer_Correctprop( double east_m, double north_m, double depth_m, cvmpayload_t* payload )
+{
+
+	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3;
+
+	Pelev = point_elevation( north_m, east_m );
+	H     = theHR * theLy;
+	Del1  = theFLR * H;
+	Del2  = theSLR * H;
+	Del3  = theRR  * H;
+
+
+	/* compute limits to layers   */
+	/* first layer  */
+	z0 = Pelev;
+
+	/* second layer  */
+	ratio = ( Del1 + H + Del3 ) / H ;
+	z1 = thebase_zcoord * ( 1 - ratio ) + ratio * Pelev + Del1;
+
+	/* third layer  */
+	ratio = ( Del2 + H + Del3 ) / H ;
+	z2 = thebase_zcoord * ( 1 - ratio ) + ratio * Pelev + Del2;
+
+
+	/* air */
+	if ( ( depth_m < z0  ) ) {
+
+
+//		payload->Vp = -1.0 ;
+//		payload->Vs =  0;
+//		payload->rho = 0;
+		return -1;
+
+
+	}
 
 	/* Point in first layer */
 	if ( ( depth_m >= z0  ) && ( depth_m < z1 ) ) {
@@ -980,6 +1063,7 @@ layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload
 //	return -1;
 
 }
+
 
 int32_t
 topography_initparameters ( const char *parametersin )
@@ -1172,7 +1256,7 @@ void topo_init ( int32_t myID, const char *parametersin ) {
     int_message   [5]    = (int)theTopoMethod;
 
 
-    MPI_Bcast(double_message, 10, MPI_DOUBLE, 0, comm_solver);
+    MPI_Bcast(double_message, 15, MPI_DOUBLE, 0, comm_solver);
     MPI_Bcast(int_message,    6, MPI_INT,    0, comm_solver);
 
     thebase_zcoord       = double_message[0];
@@ -1301,6 +1385,13 @@ void topography_elements_count(int32_t myID, mesh_t *myMesh ) {
     int32_t count         = 0;
 
     for (eindex = 0; eindex < myMesh->lenum; eindex++) {
+
+
+//    	double po=90;
+//
+//    	if ( eindex == 557168 )
+//    			po=9090;
+
 
         elem_t     *elemp;
         edata_t    *edata;
