@@ -45,7 +45,7 @@ static int                ntp, np_ew, np_ns;
 static int8_t             theMaxoctlevel;
 static double             thebase_zcoord = 0.0, So, theDomainLong_ew, theDomainLong_ns;
 static double             *theTopoInfo;
-static double             theLy,theBR, theHR, theFLR, theSLR, theRR,
+static double             theLy,theBR, theHR, theFLR, theSLR, theRR,theFLRaiR,theSLRaiR,
                           theVs1R, theVs2R, theVsHS, theVpHS, therhoHS;
 static etreetype_t        theEtreeType;
 static int32_t            myTopoElementsCount = 0;
@@ -923,7 +923,7 @@ int
 layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload, double ticksize, double theFact )
 {
 
-	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3;
+	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3, Del3_FL, Del3_SL;
 
 	Pelev = point_elevation( north_m, east_m );
 	H     = theHR * theLy;
@@ -931,17 +931,19 @@ layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload
 	Del2  = theSLR * H;
 	Del3  = theRR  * H;
 
+	Del3_FL  = theFLRaiR  * H;
+	Del3_SL  = theSLRaiR  * H;
 
 	/* compute limits to layers   */
-	/* first layer  */
+	/* external relief  */
 	z0 = Pelev;
 
-	/* second layer  */
-	ratio = ( Del1 + H + Del3 ) / H ;
+	/* first layer  */
+	ratio = ( Del1 + H + Del3_FL ) / H ;
 	z1 = thebase_zcoord * ( 1 - ratio ) + ratio * Pelev + Del1;
 
-	/* third layer  */
-	ratio = ( Del2 + H + Del3 ) / H ;
+	/* second layer  */
+	ratio = ( Del2 + H + Del3_SL ) / H ;
 	z2 = thebase_zcoord * ( 1 - ratio ) + ratio * Pelev + Del2;
 
 
@@ -994,7 +996,7 @@ int
 layer_Correctprop( double east_m, double north_m, double depth_m, cvmpayload_t* payload )
 {
 
-	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3;
+	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3, Del3_FL, Del3_SL;
 
 	Pelev = point_elevation( north_m, east_m );
 	H     = theHR * theLy;
@@ -1002,17 +1004,19 @@ layer_Correctprop( double east_m, double north_m, double depth_m, cvmpayload_t* 
 	Del2  = theSLR * H;
 	Del3  = theRR  * H;
 
+	Del3_FL  = theFLRaiR  * H;
+	Del3_SL  = theSLRaiR  * H;
 
 	/* compute limits to layers   */
-	/* first layer  */
+	/* external relief  */
 	z0 = Pelev;
 
-	/* second layer  */
-	ratio = ( Del1 + H + Del3 ) / H ;
+	/* first layer  */
+	ratio = ( Del1 + H + Del3_FL ) / H ;
 	z1 = thebase_zcoord * ( 1 - ratio ) + ratio * Pelev + Del1;
 
-	/* third layer  */
-	ratio = ( Del2 + H + Del3 ) / H ;
+	/* second layer  */
+	ratio = ( Del2 + H + Del3_SL ) / H ;
 	z2 = thebase_zcoord * ( 1 - ratio ) + ratio * Pelev + Del2;
 
 
@@ -1075,8 +1079,6 @@ topography_initparameters ( const char *parametersin )
     char                topo_dir[256];
     char                topo_file[256];
     double              L_ew, L_ns, int_np_ew, int_np_ns, fract_np_ew, fract_np_ns;
-
-
     char                etree_model[64], fem_meth[64];
     etreetype_t         etreetype;
     topometh_t          topo_method;
@@ -1103,6 +1105,8 @@ topography_initparameters ( const char *parametersin )
          ( parsetext(fp, "Height_ratio",            'd', &theHR                 ) != 0) ||
          ( parsetext(fp, "Fst_lay_ratio",           'd', &theFLR                ) != 0) ||
          ( parsetext(fp, "Snd_lay_ratio",           'd', &theSLR                ) != 0) ||
+         ( parsetext(fp, "Fst_lay_Raising_ratio",   'd', &theFLRaiR             ) != 0) ||
+         ( parsetext(fp, "Snd_lay_Raising_ratio",   'd', &theSLRaiR             ) != 0) ||
          ( parsetext(fp, "Raising_ratio",           'd', &theRR                 ) != 0) ||
          ( parsetext(fp, "Vs1_ratio",               'd', &theVs1R               ) != 0) ||
          ( parsetext(fp, "Vs2_ratio",               'd', &theVs2R               ) != 0) ||
@@ -1216,7 +1220,7 @@ topography_initparameters ( const char *parametersin )
 void topo_init ( int32_t myID, const char *parametersin ) {
 
     int     int_message[6];
-    double  double_message[15];
+    double  double_message[17];
 
     /* Capturing data from file --- only done by PE0 */
     if (myID == 0) {
@@ -1241,12 +1245,14 @@ void topo_init ( int32_t myID, const char *parametersin ) {
     double_message[7]    = theFLR;
     double_message[8]    = theSLR;
     double_message[9]    = theRR;
-
     double_message[10]    = theVs1R;
     double_message[11]    = theVs2R;
     double_message[12]    = theVsHS;
     double_message[13]    = theVpHS;
     double_message[14]    = therhoHS;
+    double_message[15]    = theFLRaiR;
+    double_message[16]    = theSLRaiR;
+
 
     int_message   [0]    = theMaxoctlevel;
     int_message   [1]    = ntp;
@@ -1256,25 +1262,26 @@ void topo_init ( int32_t myID, const char *parametersin ) {
     int_message   [5]    = (int)theTopoMethod;
 
 
-    MPI_Bcast(double_message, 15, MPI_DOUBLE, 0, comm_solver);
+    MPI_Bcast(double_message, 17, MPI_DOUBLE, 0, comm_solver);
     MPI_Bcast(int_message,    6, MPI_INT,    0, comm_solver);
 
-    thebase_zcoord       = double_message[0];
-    So				     = double_message[1];
-    theDomainLong_ew     = double_message[2];
-    theDomainLong_ns     = double_message[3];
-    theLy  =  double_message[4];
-    theBR  =  double_message[5];
-    theHR  =  double_message[6];
-    theFLR =  double_message[7];
-    theSLR =  double_message[8];
-    theRR  =  double_message[9];
-
-    theVs1R  = double_message[10];
-    theVs2R  = double_message[11];
-    theVsHS  = double_message[12];
-    theVpHS  = double_message[13];
-    therhoHS = double_message[14];
+    thebase_zcoord       =  double_message[0];
+    So				     =  double_message[1];
+    theDomainLong_ew     =  double_message[2];
+    theDomainLong_ns     =  double_message[3];
+    theLy                =  double_message[4];
+    theBR                =  double_message[5];
+    theHR                =  double_message[6];
+    theFLR               =  double_message[7];
+    theSLR               =  double_message[8];
+    theRR                =  double_message[9];
+    theVs1R              =  double_message[10];
+    theVs2R              =  double_message[11];
+    theVsHS              =  double_message[12];
+    theVpHS              =  double_message[13];
+    therhoHS             =  double_message[14];
+    theFLRaiR            =  double_message[15];
+    theSLRaiR            =  double_message[16];
 
     theMaxoctlevel       = int_message[0];
     ntp					 = int_message[1];
