@@ -45,7 +45,7 @@ static int                ntp, np_ew, np_ns;
 static int8_t             theMaxoctlevel;
 static double             thebase_zcoord = 0.0, So, theDomainLong_ew, theDomainLong_ns;
 static double             *theTopoInfo;
-static double             theLy,theBR, theHR, theFLR, theSLR, theRR,theFLRaiR,theSLRaiR,
+static double             theLy,theBR, theHR, theFLR, theSLR,theFLRaiR,theSLRaiR,
                           theVs1R, theVs2R, theVsHS, theVpHS, therhoHS;
 static etreetype_t        theEtreeType;
 static int32_t            myTopoElementsCount = 0;
@@ -923,13 +923,13 @@ int
 layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload, double ticksize, double theFact )
 {
 
-	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3, Del3_FL, Del3_SL;
+	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3_FL, Del3_SL;
 
 	Pelev = point_elevation( north_m, east_m );
 	H     = theHR * theLy;
 	Del1  = theFLR * H;
 	Del2  = theSLR * H;
-	Del3  = theRR  * H;
+
 
 	Del3_FL  = theFLRaiR  * H;
 	Del3_SL  = theSLRaiR  * H;
@@ -996,13 +996,13 @@ int
 layer_Correctprop( double east_m, double north_m, double depth_m, cvmpayload_t* payload )
 {
 
-	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3, Del3_FL, Del3_SL;
+	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3_FL, Del3_SL;
 
 	Pelev = point_elevation( north_m, east_m );
 	H     = theHR * theLy;
 	Del1  = theFLR * H;
 	Del2  = theSLR * H;
-	Del3  = theRR  * H;
+
 
 	Del3_FL  = theFLRaiR  * H;
 	Del3_SL  = theSLRaiR  * H;
@@ -1097,7 +1097,6 @@ topography_initparameters ( const char *parametersin )
     if ( ( parsetext(fp, "maximum_octant_level",    'i', &Maxoctlevel           ) != 0) ||
          ( parsetext(fp, "computation_method",      's', &fem_meth              ) != 0) ||
          ( parsetext(fp, "topographybase_zcoord",   'd', &thebase_zcoord        ) != 0) ||
-         ( parsetext(fp, "topoprahy_directory",     's', &topo_dir              ) != 0) ||
          ( parsetext(fp, "region_length_east_m",    'd', &L_ew                  ) != 0) ||
          ( parsetext(fp, "type_of_etree",           's', &etree_model           ) != 0) ||
          ( parsetext(fp, "Mnt_YLong",               'd', &theLy                 ) != 0) ||
@@ -1107,7 +1106,6 @@ topography_initparameters ( const char *parametersin )
          ( parsetext(fp, "Snd_lay_ratio",           'd', &theSLR                ) != 0) ||
          ( parsetext(fp, "Fst_lay_Raising_ratio",   'd', &theFLRaiR             ) != 0) ||
          ( parsetext(fp, "Snd_lay_Raising_ratio",   'd', &theSLRaiR             ) != 0) ||
-         ( parsetext(fp, "Raising_ratio",           'd', &theRR                 ) != 0) ||
          ( parsetext(fp, "Vs1_ratio",               'd', &theVs1R               ) != 0) ||
          ( parsetext(fp, "Vs2_ratio",               'd', &theVs2R               ) != 0) ||
          ( parsetext(fp, "VsHs",                    'd', &theVsHS               ) != 0) ||
@@ -1176,43 +1174,43 @@ topography_initparameters ( const char *parametersin )
 	theDomainLong_ns    = L_ns;
 
     /* read topography info */
-	sprintf( topo_file,"%s/topography.in", topo_dir );
+//	sprintf( topo_file,"%s/topography.in", topo_dir );
 
-	if ( ( fp_topo   = fopen ( topo_file ,   "r") ) == NULL ) {
-	    fprintf(stderr, "Error opening topography file\n" );
-	    return -1;
-	}
+//	if ( ( fp_topo   = fopen ( topo_file ,   "r") ) == NULL ) {
+//	    fprintf(stderr, "Error opening topography file\n" );
+//	    return -1;
+//	}
 
-	fscanf( fp_topo,   " %lf ", &So );
+//	fscanf( fp_topo,   " %lf ", &So );
 
-	fract_np_ew = modf ( L_ew / So, &int_np_ew );
-	fract_np_ns = modf ( L_ns / So, &int_np_ns );
+//	fract_np_ew = modf ( L_ew / So, &int_np_ew );
+//	fract_np_ns = modf ( L_ns / So, &int_np_ns );
+//
+//	if ( ( fract_np_ew != 0) || ( fract_np_ns != 0 ) ) {
+//	    fprintf(stderr, "Error opening topography file - NOT A REGULAR MESH \n" );
+//	    return -1;
+//	}
 
-	if ( ( fract_np_ew != 0) || ( fract_np_ns != 0 ) ) {
-	    fprintf(stderr, "Error opening topography file - NOT A REGULAR MESH \n" );
-	    return -1;
-	}
-
-	np_ew              = ( L_ew / So + 1 );
-	np_ns              = ( L_ns / So + 1 );
-	ntp                = ( L_ew / So + 1 ) * ( L_ns / So + 1 );
-	theTopoInfo        = (double*)malloc( sizeof(double) * ntp );
+//	np_ew              = ( L_ew / So + 1 );
+//	np_ns              = ( L_ns / So + 1 );
+//	ntp                = ( L_ew / So + 1 ) * ( L_ns / So + 1 );
+//	theTopoInfo        = (double*)malloc( sizeof(double) * ntp );
 
 
-	if ( theTopoInfo           == NULL ) {
-		fprintf( stderr, "Error allocating transient array for the topography data"
-				"in topography_initparameters " );
-		return -1;
-	}
+//	if ( theTopoInfo           == NULL ) {
+//		fprintf( stderr, "Error allocating transient array for the topography data"
+//				"in topography_initparameters " );
+//		return -1;
+//	}
 
-	for ( iTopo = 0; iTopo < ntp; ++iTopo) {
+//	for ( iTopo = 0; iTopo < ntp; ++iTopo) {
+//
+//	    fscanf(fp_topo,   " %lf ", &(theTopoInfo[iTopo]));
+//
+//	}
 
-	    fscanf(fp_topo,   " %lf ", &(theTopoInfo[iTopo]));
-
-	}
-
-    fclose(fp);
-    fclose(fp_topo);
+//    fclose(fp);
+//    fclose(fp_topo);
 
     return 0;
 }
@@ -1220,7 +1218,7 @@ topography_initparameters ( const char *parametersin )
 void topo_init ( int32_t myID, const char *parametersin ) {
 
     int     int_message[6];
-    double  double_message[17];
+    double  double_message[16];
 
     /* Capturing data from file --- only done by PE0 */
     if (myID == 0) {
@@ -1236,59 +1234,57 @@ void topo_init ( int32_t myID, const char *parametersin ) {
     /* Broadcasting data */
 
     double_message[0]    = thebase_zcoord;
-    double_message[1]    = So;
-    double_message[2]    = theDomainLong_ew;
-    double_message[3]    = theDomainLong_ns;
-    double_message[4]    = theLy;
-    double_message[5]    = theBR;
-    double_message[6]    = theHR;
-    double_message[7]    = theFLR;
-    double_message[8]    = theSLR;
-    double_message[9]    = theRR;
-    double_message[10]    = theVs1R;
-    double_message[11]    = theVs2R;
-    double_message[12]    = theVsHS;
-    double_message[13]    = theVpHS;
-    double_message[14]    = therhoHS;
-    double_message[15]    = theFLRaiR;
-    double_message[16]    = theSLRaiR;
+//    double_message[1]    = So;
+    double_message[1]    = theDomainLong_ew;
+    double_message[2]    = theDomainLong_ns;
+    double_message[3]    = theLy;
+    double_message[4]    = theBR;
+    double_message[5]    = theHR;
+    double_message[6]    = theFLR;
+    double_message[7]    = theSLR;
+    double_message[8]    = theVs1R;
+    double_message[9]    = theVs2R;
+    double_message[10]    = theVsHS;
+    double_message[11]    = theVpHS;
+    double_message[12]    = therhoHS;
+    double_message[13]    = theFLRaiR;
+    double_message[14]    = theSLRaiR;
 
 
     int_message   [0]    = theMaxoctlevel;
-    int_message   [1]    = ntp;
-    int_message   [2]    = np_ew;
-    int_message   [3]    = np_ns;
-    int_message   [4]    = (int)theEtreeType;
-    int_message   [5]    = (int)theTopoMethod;
+//    int_message   [1]    = ntp;
+//    int_message   [2]    = np_ew;
+//    int_message   [3]    = np_ns;
+    int_message   [1]    = (int)theEtreeType;
+    int_message   [2]    = (int)theTopoMethod;
 
 
-    MPI_Bcast(double_message, 17, MPI_DOUBLE, 0, comm_solver);
-    MPI_Bcast(int_message,    6, MPI_INT,    0, comm_solver);
+    MPI_Bcast(double_message, 15, MPI_DOUBLE, 0, comm_solver);
+    MPI_Bcast(int_message,    3, MPI_INT,    0, comm_solver);
 
     thebase_zcoord       =  double_message[0];
-    So				     =  double_message[1];
-    theDomainLong_ew     =  double_message[2];
-    theDomainLong_ns     =  double_message[3];
-    theLy                =  double_message[4];
-    theBR                =  double_message[5];
-    theHR                =  double_message[6];
-    theFLR               =  double_message[7];
-    theSLR               =  double_message[8];
-    theRR                =  double_message[9];
-    theVs1R              =  double_message[10];
-    theVs2R              =  double_message[11];
-    theVsHS              =  double_message[12];
-    theVpHS              =  double_message[13];
-    therhoHS             =  double_message[14];
-    theFLRaiR            =  double_message[15];
-    theSLRaiR            =  double_message[16];
+//    So				     =  double_message[1];
+    theDomainLong_ew     =  double_message[1];
+    theDomainLong_ns     =  double_message[2];
+    theLy                =  double_message[3];
+    theBR                =  double_message[4];
+    theHR                =  double_message[5];
+    theFLR               =  double_message[6];
+    theSLR               =  double_message[7];
+    theVs1R              =  double_message[8];
+    theVs2R              =  double_message[9];
+    theVsHS              =  double_message[10];
+    theVpHS              =  double_message[11];
+    therhoHS             =  double_message[12];
+    theFLRaiR            =  double_message[13];
+    theSLRaiR            =  double_message[14];
 
     theMaxoctlevel       = int_message[0];
-    ntp					 = int_message[1];
-    np_ew			     = int_message[2];
-    np_ns			     = int_message[3];
-    theEtreeType         = int_message[4];
-    theTopoMethod        = int_message[5];
+//    ntp					 = int_message[1];
+//    np_ew			     = int_message[2];
+//    np_ns			     = int_message[3];
+    theEtreeType         = int_message[1];
+    theTopoMethod        = int_message[2];
 
 //    /* allocate table of properties for all other PEs */
 
