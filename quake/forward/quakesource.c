@@ -1187,9 +1187,14 @@ load_myForces_with_point_source(
     }
 
     /* derive the local coordinate of the source inside the element */
-    pointSource->x = pointSource->domainCoords.x[ 0 ] - center_x;
-    pointSource->y = pointSource->domainCoords.x[ 1 ] - center_y;
-    pointSource->z = pointSource->domainCoords.x[ 2 ] - center_z;
+//    pointSource->x = pointSource->domainCoords.x[ 0 ] - center_x;
+//    pointSource->y = pointSource->domainCoords.x[ 1 ] - center_y;
+//    pointSource->z = pointSource->domainCoords.x[ 2 ] - center_z;
+
+    /* Dorian: here I am forcing the load to be at the center of the element  */
+    pointSource->x = 0;
+    pointSource->y = 0;
+    pointSource->z = 0;
 
     /* obtain the value of mu to get the moment in the case of extended fault*/
     elemp = &myMesh->elemTable[eindex];
