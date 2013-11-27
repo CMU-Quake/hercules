@@ -211,6 +211,7 @@ static struct Param_t {
     int    monitor_stats_rate;
     double  theSofteningFactor;
     int     theStepMeshingFactor;
+    noyesflag_t  skipDanglingCommunication;
     int32_t  theTotalSteps;
     int32_t  theRate;
     damping_type_t  theTypeOfDamping;
@@ -367,7 +368,7 @@ monitor_print( const char* format, ... )
 static void read_parameters( int argc, char** argv ){
 
 #define LOCAL_INIT_DOUBLE_MESSAGE_LENGTH 18  /* Must adjust this if adding double params */
-#define LOCAL_INIT_INT_MESSAGE_LENGTH 20     /* Must adjust this if adding int params */
+#define LOCAL_INIT_INT_MESSAGE_LENGTH 21     /* Must adjust this if adding int params */
 
     double  double_message[LOCAL_INIT_DOUBLE_MESSAGE_LENGTH];
     int     int_message[LOCAL_INIT_INT_MESSAGE_LENGTH];
@@ -446,6 +447,7 @@ static void read_parameters( int argc, char** argv ){
     int_message[17] = (int)Param.drmImplement;
     int_message[18] = (int)Param.useInfQk;
     int_message[19] = Param.theStepMeshingFactor;
+    int_message[20] = (int)Param.skipDanglingCommunication;
 
 
     MPI_Bcast(int_message, LOCAL_INIT_INT_MESSAGE_LENGTH, MPI_INT, 0, comm_solver);
@@ -470,6 +472,7 @@ static void read_parameters( int argc, char** argv ){
     Param.drmImplement                   = int_message[17];
     Param.useInfQk                       = int_message[18];
     Param.theStepMeshingFactor           = int_message[19];
+    Param.skipDanglingCommunication      = int_message[20];
 
     /*Broadcast all string params*/
     MPI_Bcast (Param.parameters_input_file,  256, MPI_CHAR, 0, comm_solver);
@@ -669,7 +672,8 @@ static int32_t parse_parameters( const char* numericalin )
               print_station_accelerations[64],
 	      	  mesh_coordinates_for_matlab[64],
     		  implement_drm[64],
-    		  use_infinite_qk[64];
+    		  use_infinite_qk[64],
+              skip_dangling_nodes_communication[64];
 
     damping_type_t   typeOfDamping     = -1;
     stiffness_type_t stiffness_method  = -1;
@@ -679,6 +683,8 @@ static int32_t parse_parameters( const char* numericalin )
     noyesflag_t      printStationVels  = -1;
     noyesflag_t      printStationAccs  = -1;
     noyesflag_t      useInfQk          = -1;
+    
+    noyesflag_t      skipDangling      = -1;
 
     noyesflag_t      meshCoordinatesForMatlab  = -1;
     noyesflag_t      implementdrm  = -1;
@@ -753,6 +759,7 @@ static int32_t parse_parameters( const char* numericalin )
         (parsetext(fp, "simulation_delta_time_sec",      'd', &deltaT                      ) != 0) ||
         (parsetext(fp, "softening_factor",               'd', &softening_factor            ) != 0) ||
         (parsetext(fp, "use_progressive_meshing",        'i', &step_meshing                ) != 0) ||
+        (parsetext(fp, "skip_dangling_nodes_communication", 'i', &skip_dangling_nodes_communication  ) != 0) ||
         (parsetext(fp, "simulation_output_rate",         'i', &rate                        ) != 0) ||
         (parsetext(fp, "number_output_planes",           'i', &number_output_planes        ) != 0) ||
         (parsetext(fp, "number_output_stations",         'i', &number_output_stations      ) != 0) ||
@@ -841,6 +848,17 @@ static int32_t parse_parameters( const char* numericalin )
     if (step_meshing < 0) {
         fprintf(stderr, "Illegal progressive meshing factor %d\n", step_meshing);
         return -1;
+    }
+    
+    if ( strcasecmp(skip_dangling_nodes_communication, "yes") == 0 ) {
+        skipDanglingCommunication = YES;
+    } else if ( strcasecmp(skip_dangling_nodes_communication, "no") == 0 ) {
+        skipDanglingCommunication = NO;
+    } else {
+        solver_abort( __FUNCTION_NAME, NULL,
+        	"Unknown response for skip_dangling"
+                "(yes or no): %s\n",
+                skip_dangling_nodes_communication );
     }
 
     if (rate <= 0) {
@@ -1015,6 +1033,7 @@ static int32_t parse_parameters( const char* numericalin )
 
     Param.theSofteningFactor        = softening_factor;
     Param.theStepMeshingFactor     = step_meshing;
+    Param.skipDangling                = skipDangling;
     Param.theThresholdDamping	      = threshold_damping;
     Param.theThresholdVpVs	      = threshold_VpVs;
     Param.theDampingStatisticsFlag  = damping_statistics;
