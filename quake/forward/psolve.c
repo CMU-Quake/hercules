@@ -684,7 +684,7 @@ static int32_t parse_parameters( const char* numericalin )
     noyesflag_t      printStationAccs  = -1;
     noyesflag_t      useInfQk          = -1;
     
-    noyesflag_t      skipDangling      = -1;
+    noyesflag_t      skipDanglingCommunication = -1;
 
     noyesflag_t      meshCoordinatesForMatlab  = -1;
     noyesflag_t      implementdrm  = -1;
@@ -1033,7 +1033,7 @@ static int32_t parse_parameters( const char* numericalin )
 
     Param.theSofteningFactor        = softening_factor;
     Param.theStepMeshingFactor     = step_meshing;
-    Param.skipDangling                = skipDangling;
+    Param.skipDanglingCommunication                = skipDanglingCommunication;
     Param.theThresholdDamping	      = threshold_damping;
     Param.theThresholdVpVs	      = threshold_VpVs;
     Param.theDampingStatisticsFlag  = damping_statistics;
