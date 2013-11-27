@@ -759,7 +759,7 @@ static int32_t parse_parameters( const char* numericalin )
         (parsetext(fp, "simulation_delta_time_sec",      'd', &deltaT                      ) != 0) ||
         (parsetext(fp, "softening_factor",               'd', &softening_factor            ) != 0) ||
         (parsetext(fp, "use_progressive_meshing",        'i', &step_meshing                ) != 0) ||
-        (parsetext(fp, "skip_dangling_nodes_communication", 'i', &skip_dangling_nodes_communication  ) != 0) ||
+        (parsetext(fp, "skip_dangling_nodes_communication", 's', &skip_dangling_nodes_communication  ) != 0) ||
         (parsetext(fp, "simulation_output_rate",         'i', &rate                        ) != 0) ||
         (parsetext(fp, "number_output_planes",           'i', &number_output_planes        ) != 0) ||
         (parsetext(fp, "number_output_stations",         'i', &number_output_stations      ) != 0) ||
