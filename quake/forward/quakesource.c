@@ -450,10 +450,24 @@ static void source_initnodalforce ( ptsrc_t *sourcePtr )
     t[1] =   cos(r) * sin(s) - sin(r) * cos(s) * cos(d);
     t[2] = - sin(r) * sin(d);
 
+//    for (j = 0; j < 3; j++) {
+//	for ( k = 0; k < 3; k++) {
+//	    v[j][k] = n[j] * t[k] + n[k] * t[j];
+//	}
+//    }
+
+    // Dorian: Added changes for isotropic source
     for (j = 0; j < 3; j++) {
-	for ( k = 0; k < 3; k++) {
-	    v[j][k] = n[j] * t[k] + n[k] * t[j];
-	}
+    	for ( k = 0; k < 3; k++) {
+
+    		if ( j==k )
+    			v[j][k] = 1.0;
+    		else {
+    			v[j][k] = 0.0;
+    		}
+
+    		//v[j][k] = n[j] * t[k] + n[k] * t[j];
+    	}
     }
 
     /* calculate equivalent force on each node */
