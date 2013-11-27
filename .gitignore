@@ -1,4 +1,5 @@
 user.mk
+systemdef.mk
 rundir
 
 quake/cvm/dumpcvm
