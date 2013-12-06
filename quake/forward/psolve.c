@@ -2019,7 +2019,12 @@ mesh_generate()
 #endif
 
     for ( mstep = Param.theStepMeshingFactor; mstep >= 0; mstep-- ) {
-
+        
+        if (Param.skipDanglingCommunication == YES) {
+            mstep = 1;
+            Param.skipDanglingCommunication = NO;
+        }
+        
         double myFactor = (double)(1 << mstep); // 2^mstep
         Param.theFactor = originalFactor / myFactor;
 
