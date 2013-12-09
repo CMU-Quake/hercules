@@ -190,6 +190,12 @@ typedef struct master_constrained_slab_bldg {
 	double**  distance_to_centroid_ym; /* matrix Dy - distance (y) matrix wrt to
 	the centroid. same or each level in a building in meter. dim : node_x x node_y */
 
+	/* information needed for calculating the horizontal disp due to base
+	 * rocking (rigid body h*theta)*/
+	/* initial values are set as 0 for base rockings */
+	double prev_base_rocking_x; /* previous steps base rocking along x */
+	double prev_base_rocking_y; /* previous steps base rocking along y */
+
 } master_constrained_slab_bldg_t;
 
 
@@ -210,6 +216,7 @@ typedef struct sharer_constrained_slab_bldg {
 	int node_x; /* # of nodes in x direction for each building */
 	int node_y; /* # of nodes in y direction for each building */
 
+	int l_bldg_base; /* level id of the base of the building. Used in the shear buildings*/
 
 	/* information needed for communication with the master */
 
@@ -238,6 +245,14 @@ typedef struct sharer_constrained_slab_bldg {
 
 	double**  distance_to_centroid_ym; /* matrix Dy - distance (y) matrix wrt to
 		the centroid. same or each level in a building in meter. dim : node_x x node_y */
+
+
+	/* information needed for calculating the horizontal disp due to base
+	 * rocking (rigid body h*theta)*/
+	/* initial values are set as 0 for base rockings */
+	double prev_base_rocking_x; /* previous steps base rocking along x */
+	double prev_base_rocking_y; /* previous steps base rocking along y */
+
 
 } sharer_constrained_slab_bldg_t;
 
@@ -951,6 +966,8 @@ int bldgs_setrec ( octant_t *leaf, double ticksize,
     cvmpayload_t props;
 
     res = bldgs_search( leaf, ticksize, edata );
+    z_m = leaf->lz * ticksize;
+
     if ( res > 0 ) {
         props      = get_props( res, z_m );
         edata->Vp  = props.Vp;
@@ -958,8 +975,6 @@ int bldgs_setrec ( octant_t *leaf, double ticksize,
         edata->rho = props.rho;
         return 1;
     }
-
-    z_m = leaf->lz * ticksize;
 
     if ( z_m < theSurfaceShift ) {
         get_airprops( leaf, ticksize, edata, cvm,xoriginm,yoriginm,zoriginm);
@@ -2575,6 +2590,9 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, double deltaT, int
 				theMasterConstrainedSlab[iMaster].Iy =  0;
 				theMasterConstrainedSlab[iMaster].Ixy = 0;
 
+				/* initialize as 0 */
+				theMasterConstrainedSlab[iMaster].prev_base_rocking_x = 0;
+				theMasterConstrainedSlab[iMaster].prev_base_rocking_y = 0;
 
 				/* These are communication information */
 				theMasterConstrainedSlab[iMaster].which_bldg = iBldg;
@@ -2873,6 +2891,11 @@ void constrained_slabs_init ( mesh_t *myMesh, double simTime, double deltaT, int
 				theSharerConstrainedSlab[iSharer].node_y = nodes_y;
 				theSharerConstrainedSlab[iSharer].n = nodes_y * nodes_x;
 
+				theSharerConstrainedSlab[iSharer].l_bldg_base = theBuilding[iBldg].depth/theMinOctSizeMeters;
+
+				/* initialize as 0 */
+				theSharerConstrainedSlab[iSharer].prev_base_rocking_x = 0;
+				theSharerConstrainedSlab[iSharer].prev_base_rocking_y = 0;
 
 				/* These are communication information */
 				theSharerConstrainedSlab[iSharer].which_bldg = iBldg;
@@ -3512,11 +3535,36 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 
 	for (iMaster = 0; iMaster < theNumberOfBuildingsMaster; iMaster++) {
 
+		/* relative rocking wrt previous time step */
+		double rel_base_rocking_x, rel_base_rocking_y;
+
+		/* initial rocking values at timestep = 0 is set to equal to 0 */
+		if ( shearBuildings == YES ) {
+
+			rel_base_rocking_x = theMasterConstrainedSlab[iMaster].average_values[6*0 + 4]
+			                   - theMasterConstrainedSlab[iMaster].prev_base_rocking_x;
+
+			rel_base_rocking_y = theMasterConstrainedSlab[iMaster].average_values[6*0 + 5]
+			                    - theMasterConstrainedSlab[iMaster].prev_base_rocking_y;
+
+			/* update previous timestep rocking values */
+			theMasterConstrainedSlab[iMaster].prev_base_rocking_x =
+					theMasterConstrainedSlab[iMaster].average_values[6*0 + 4];
+
+			theMasterConstrainedSlab[iMaster].prev_base_rocking_y =
+					theMasterConstrainedSlab[iMaster].average_values[6*0 + 5];
+		}
+
 		for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
 			for ( i = 0; i <  theMasterConstrainedSlab[iMaster].node_x ; i++ ) {
 				for ( j = 0; j <  theMasterConstrainedSlab[iMaster].node_y ; j++) {
 					lnid_t  nindex, index;
 					fvector_t* dis;
+					double height_wrt_surface;
+
+
+					height_wrt_surface = theMinOctSizeMeters *
+							(l - theMasterConstrainedSlab[iMaster].l_bldg_base);
 
 					index = j + i*theMasterConstrainedSlab[iMaster].node_y;
 
@@ -3538,6 +3586,16 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 								theMasterConstrainedSlab[iMaster].average_values[6*l + 4] +
 								theMasterConstrainedSlab[iMaster].distance_to_centroid_xm[i][j] * -1 *
 								theMasterConstrainedSlab[iMaster].average_values[6*l + 5] ;
+
+
+						/* add the horizontal displacement due to base rocking (rigid body) */
+						if ( shearBuildings == YES ) {
+
+							dis->f[0] -= height_wrt_surface * rel_base_rocking_y;
+							dis->f[1] += height_wrt_surface * rel_base_rocking_x;
+
+						}
+
 					}
 				}
 			}
@@ -3549,11 +3607,37 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 
 	for (iSharer = 0; iSharer < theNumberOfBuildingsSharer; iSharer++) {
 
+		/* relative rocking wrt previous time step */
+		double rel_base_rocking_x, rel_base_rocking_y;
+
+		/* initial rocking values at timestep = 0 is set to equal to 0 */
+		if ( shearBuildings == YES ) {
+
+			rel_base_rocking_x = theSharerConstrainedSlab[iSharer].average_values[6*0 + 4]
+			                   - theSharerConstrainedSlab[iSharer].prev_base_rocking_x;
+
+			rel_base_rocking_y = theSharerConstrainedSlab[iSharer].average_values[6*0 + 5]
+			                   - theSharerConstrainedSlab[iSharer].prev_base_rocking_y;
+
+			/* update previous timestep rocking values */
+			theSharerConstrainedSlab[iSharer].prev_base_rocking_x =
+					theSharerConstrainedSlab[iSharer].average_values[6*0 + 4];
+
+			theSharerConstrainedSlab[iSharer].prev_base_rocking_y =
+					theSharerConstrainedSlab[iSharer].average_values[6*0 + 5];
+		}
+
+
 		for ( l = 0; l < theSharerConstrainedSlab[iSharer].l; l++) {
 			for ( i = 0; i <  theSharerConstrainedSlab[iSharer].node_x ; i++ ) {
 				for ( j = 0; j <  theSharerConstrainedSlab[iSharer].node_y ; j++) {
 					lnid_t  nindex, index;
 					fvector_t* dis;
+
+					double height_wrt_surface;
+
+					height_wrt_surface = theMinOctSizeMeters *
+							(l - theSharerConstrainedSlab[iSharer].l_bldg_base);
 
 					index = j + i*theSharerConstrainedSlab[iSharer].node_y;
 
@@ -3575,6 +3659,15 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 								theSharerConstrainedSlab[iSharer].average_values[6*l + 4] +
 								theSharerConstrainedSlab[iSharer].distance_to_centroid_xm[i][j] * -1 *
 								theSharerConstrainedSlab[iSharer].average_values[6*l + 5] ;
+
+						/* add the horizontal displacement due to base rocking (rigid body) */
+						if ( shearBuildings == YES ) {
+
+							dis->f[0] -= height_wrt_surface * rel_base_rocking_y;
+							dis->f[1] += height_wrt_surface * rel_base_rocking_x;
+
+						}
+
 					}
 				}
 			}
