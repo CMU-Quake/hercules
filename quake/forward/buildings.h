@@ -42,7 +42,7 @@ typedef struct intvector_t intvector_t;
 typedef enum
 {
 
-  TRANSLATION = 0, ROTATION
+  TRANSLATION = 0, ROTATION, ROCKING
 
 } fixed_excitation_type_t;
 

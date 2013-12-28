@@ -950,6 +950,8 @@ int bldgs_setrec ( octant_t *leaf, double ticksize,
     double       z_m;
     cvmpayload_t props;
 
+    z_m = leaf->lz * ticksize;
+
     res = bldgs_search( leaf, ticksize, edata );
     if ( res > 0 ) {
         props      = get_props( res, z_m );
@@ -958,8 +960,6 @@ int bldgs_setrec ( octant_t *leaf, double ticksize,
         edata->rho = props.rho;
         return 1;
     }
-
-    z_m = leaf->lz * ticksize;
 
     if ( z_m < theSurfaceShift ) {
         get_airprops( leaf, ticksize, edata, cvm,xoriginm,yoriginm,zoriginm);
@@ -1594,6 +1594,8 @@ void bldgs_init ( int32_t myID, const char *parametersin )
     			base_fixed_type = TRANSLATION;
     		} else if (strcasecmp(theTypeBaseExcitation, "rotation") == 0) {
     			base_fixed_type = ROTATION;
+    		} else if (strcasecmp(theTypeBaseExcitation, "rocking") == 0) {
+    		    base_fixed_type = ROCKING;
     		} else {
     			solver_abort( __FUNCTION_NAME, NULL,
     					"Unknown fixed base excitation type: %s\n",
@@ -3134,6 +3136,24 @@ void bldgs_load_fixedbase_disps ( mysolver_t* solver, mesh_t *myMesh, double sim
         	dis->f[2] = 0;
 
     	}
+
+
+    	/* only in one direction along x */
+    	if (theBaseFixedType == ROCKING ) {
+    		fvector_t dis_rot;
+    		dis_rot = bldgs_get_base_disp ( bldg, simDT, step );
+
+    		double dist_y, dist_x;
+
+    		dist_x = (myMesh->nodeTable[nindex].x)*myMesh->ticksize - (theBuilding[bldg].bounds.xmax + theBuilding[bldg].bounds.xmin)/2;
+    		dist_y = (myMesh->nodeTable[nindex].y)*myMesh->ticksize - (theBuilding[bldg].bounds.ymax + theBuilding[bldg].bounds.ymin)/2;
+
+    		dis->f[0] = 0;
+    		dis->f[1] = 0;
+    		dis->f[2] = 10.0 *dis_rot.f[0]*dist_y;
+
+    	}
+
 
     }
 
