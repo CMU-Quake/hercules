@@ -3457,10 +3457,13 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 			if (shearBuildings == YES) {
 				/* Pure shear buildings */
 
-				/* Fixed base response assumes zero rocking rotations*/
+				/* Fixed base response assumes zero rocking rotations. This
+				 * could be redundant. */
 				if (areBaseFixed == YES) {
-					base_rocking_x = 0;
-					base_rocking_y = 0;
+					if (theBaseFixedType != ROCKING) {
+						base_rocking_x = 0;
+						base_rocking_y = 0;
+					}
 				}
 
 				theMasterConstrainedSlab[iMaster].average_values[6*l + 2] = constrained_z;
