@@ -19,12 +19,28 @@ ifndef SYSTEM
 	SYSTEM = XT5
 endif
 
+
 ifeq ($(SYSTEM), XT5)
-        MPI_DIR ?= /opt/cray/mpt/6.0.1/gni/mpich2-cray/81
+        CC      = cc
+        CXX     = CC
+        LD      = CC
+        CFLAGS  += -DBIGBEN 
+        LDFLAGS += 
+        ifdef IOBUF_INC
+            CPPFLAGS += -I${IOBUF_INC}
+        endif        
+        CPPFLAGS    += -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64       
+        
+endif
+
+
+# XK7 (Titan/BW): Depends on mpi/cuda environment variables provided by system
+ifeq ($(SYSTEM), XK7)
+        MPI_DIR ?= ${MPICH_DIR}
         CC      = nvcc
         CXX     = nvcc
         LD      = CC
-        NVCC	= /opt/nvidia/cudatoolkit/5.0.35/bin/nvcc
+        NVCC	= ${CRAY_CUDATOOLKIT_DIR}/bin/nvcc
         CFLAGS  += -DBIGBEN 
         LDFLAGS += 
         ifdef IOBUF_INC
