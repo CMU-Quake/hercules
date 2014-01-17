@@ -41,10 +41,11 @@ ifeq ($(SYSTEM), XK7)
         CXX     = nvcc
         LD      = CC
         NVCC	= ${CRAY_CUDATOOLKIT_DIR}/bin/nvcc
-        CFLAGS  += -DBIGBEN 
+        CFLAGS  += -DBIGBEN
         LDFLAGS += 
         ifdef IOBUF_INC
-            CPPFLAGS += -I${IOBUF_INC}
+	    NVFLAGS  += -DUSE_IOBUF -I${IOBUF_INC}/include
+            CPPFLAGS += -DUSE_IOBUF -I${IOBUF_INC}/include
         endif
         NVFLAGS     += -arch sm_35 -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64
         CPPFLAGS    += -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64 -I$(MPI_DIR)/include
