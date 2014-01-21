@@ -3447,10 +3447,19 @@ void bldgs_update_constrainedslabs_disps ( mysolver_t* solver, double simDT, int
 		/* In case of shear buildings -- Set rotations equal to base rocking everywhere (Base of the building not foundation). */
 
 		int base_level = theMasterConstrainedSlab[iMaster].l_bldg_base;
+		int fdn_level;
 
-		base_rocking_x = theMasterConstrainedSlab[iMaster].average_values[6*base_level + 4];
-		base_rocking_y = theMasterConstrainedSlab[iMaster].average_values[6*base_level + 5];
-		constrained_z  = theMasterConstrainedSlab[iMaster].average_values[6*base_level + 2];
+		base_rocking_x = 0;
+		base_rocking_y = 0;
+		constrained_z = 0;
+
+		/* Take average of all foundation levels for calculating base rocking */
+		for ( fdn_level = 0; fdn_level < base_level+1; fdn_level++) {
+
+			base_rocking_x += theMasterConstrainedSlab[iMaster].average_values[6*fdn_level + 4]/(base_level+1);
+			base_rocking_y += theMasterConstrainedSlab[iMaster].average_values[6*fdn_level + 5]/(base_level+1);
+			constrained_z  += theMasterConstrainedSlab[iMaster].average_values[6*fdn_level + 2]/(base_level+1);
+		}
 
 		for ( l = 0; l < theMasterConstrainedSlab[iMaster].l; l++) {
 
