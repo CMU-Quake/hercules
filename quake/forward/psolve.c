@@ -1399,6 +1399,12 @@ setrec( octant_t* leaf, double ticksize, void* data )
 			g_props.Vs = g_props.Vs*sqrt(modulusfactor);
 			g_props.Vp = g_props.Vp*sqrt(modulusfactor);
 
+			/*Artificially make the upper 30m soft soil of Vs = 60m/s. */
+			if( modulusfactor < 1 && z_m <= 30) {
+				g_props.Vs = 60;
+				g_props.Vp = 60*2.5;
+			}
+
 		}
 
 
@@ -7343,6 +7349,12 @@ mesh_correct_properties( etree_t* cvm )
         				/*Shear strain is proportional to the square root of the modulus ratio */
         				g_props.Vs = g_props.Vs*sqrt(modulusfactor);
         				g_props.Vp = g_props.Vp*sqrt(modulusfactor);
+
+        				/*Artificially make the upper 30m soft soil of Vs = 60m/s. */
+        				if( modulusfactor < 1 && depth_m <= 30) {
+        					g_props.Vs = 60;
+        					g_props.Vp = 60*2.5;
+        				}
         			}
 
         			vp  += g_props.Vp;
