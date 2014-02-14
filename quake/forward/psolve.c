@@ -2020,11 +2020,6 @@ mesh_generate()
 
     for ( mstep = Param.theStepMeshingFactor; mstep >= 0; mstep-- ) {
         
-        if (Param.skipDanglingCommunication == YES) {
-            mstep = 1;
-            Param.skipDanglingCommunication = NO;
-        }
-        
         double myFactor = (double)(1 << mstep); // 2^mstep
         Param.theFactor = originalFactor / myFactor;
 
@@ -2103,9 +2098,41 @@ mesh_generate()
         }
         Timer_Stop("Octor Partitiontree");
         if (Global.myID == 0) {
-            fprintf(stdout, "%11.2f\n\n", Timer_Value("Octor Partitiontree", 0) - prevtpar);
+            fprintf(stdout, "%11.2f\n", Timer_Value("Octor Partitiontree", 0) - prevtpar);
             prevtpar = Timer_Value("Octor Partitiontree", 0);
             fflush(stdout);
+        }
+
+        if (Param.skipDanglingCommunication == YES) {
+            /* Refinement */
+		Timer_Start("Octor Refinetree");
+		if (Global.myID == 0) {
+		    fprintf(stdout, "Refining     ");
+		    fflush(stdout);
+		}
+		if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
+		    fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
+		    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
+		}
+		MPI_Barrier(comm_solver);
+		tote = octor_getleavescount(Global.myOctree, GLOBAL);
+		mine = octor_getminleavescount(Global.myOctree, GLOBAL);
+		maxe = octor_getmaxleavescount(Global.myOctree, GLOBAL);
+		if (Global.myID == 0) {
+		    fprintf(stdout, "%11"INT64_FMT" %11"INT64_FMT" %11"INT64_FMT, mine, maxe, tote);
+		    fflush(stdout);
+		}
+		Timer_Stop("Octor Refinetree");
+		if (Global.myID == 0) {
+		    fprintf(stdout, "%11.2f", Timer_Value("Octor Refinetree", 0) - prevtref);
+		    if (Param.theStepMeshingFactor == 0 ) {
+		        fprintf(stdout, "\n\n");
+		    } else {
+		        fprintf(stdout, "   %4d %6.2f\n\n", step, Param.theFactor/ppwl);
+		    }
+		    prevtref = Timer_Value("Octor Refinetree", 0);
+		    fflush(stdout);
+		}
         }
 
         step++;
