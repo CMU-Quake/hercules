@@ -174,3 +174,16 @@ ifeq ($(SYSTEM), MACBOOK)
         CPPFLAGS    += -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
 endif
  
+# The configuration for University of Memphis HPC
+#  in order to run, you must load the openmpi module before compiling
+
+ifeq ($(SYSTEM), MEMHPC)
+        MPI_DIR     ?= /opt/scyld/openmpi/1.6/gnu/
+	MPI_INCLUDE ?= $(MPI_DIR)/include
+        CC           = $(MPI_DIR)/bin/mpicc
+	CXX          = $(MPI_DIR)/bin/mpicxx
+	LD           = $(MPI_DIR)/bin/mpicxx
+	CXXFLAGS    += -DMPICH_IGNORE_CXX_SEEK
+	CFLAGS      += -Wall
+	CPPFLAGS    += -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64
+endif
