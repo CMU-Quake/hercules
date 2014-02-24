@@ -211,6 +211,7 @@ static struct Param_t {
     int    monitor_stats_rate;
     double  theSofteningFactor;
     int     theStepMeshingFactor;
+    noyesflag_t useNewSetrec;
     int32_t  theTotalSteps;
     int32_t  theRate;
     damping_type_t  theTypeOfDamping;
@@ -367,7 +368,7 @@ monitor_print( const char* format, ... )
 static void read_parameters( int argc, char** argv ){
 
 #define LOCAL_INIT_DOUBLE_MESSAGE_LENGTH 18  /* Must adjust this if adding double params */
-#define LOCAL_INIT_INT_MESSAGE_LENGTH 20     /* Must adjust this if adding int params */
+#define LOCAL_INIT_INT_MESSAGE_LENGTH 21     /* Must adjust this if adding int params */
 
     double  double_message[LOCAL_INIT_DOUBLE_MESSAGE_LENGTH];
     int     int_message[LOCAL_INIT_INT_MESSAGE_LENGTH];
@@ -446,7 +447,7 @@ static void read_parameters( int argc, char** argv ){
     int_message[17] = (int)Param.drmImplement;
     int_message[18] = (int)Param.useInfQk;
     int_message[19] = Param.theStepMeshingFactor;
-
+    int_message[20] = Param.useNewSetrec;
 
     MPI_Bcast(int_message, LOCAL_INIT_INT_MESSAGE_LENGTH, MPI_INT, 0, comm_solver);
 
@@ -470,7 +471,8 @@ static void read_parameters( int argc, char** argv ){
     Param.drmImplement                   = int_message[17];
     Param.useInfQk                       = int_message[18];
     Param.theStepMeshingFactor           = int_message[19];
-
+    Param.useNewSetrec                   = int_message[20];
+    
     /*Broadcast all string params*/
     MPI_Bcast (Param.parameters_input_file,  256, MPI_CHAR, 0, comm_solver);
     MPI_Bcast (Param.theCheckPointingDirOut, 256, MPI_CHAR, 0, comm_solver);
@@ -670,6 +672,7 @@ static int32_t parse_parameters( const char* numericalin )
 	      	  mesh_coordinates_for_matlab[64],
     		  implement_drm[64],
     		  use_infinite_qk[64];
+              use_new_setrec[64];   
 
     damping_type_t   typeOfDamping     = -1;
     stiffness_type_t stiffness_method  = -1;
@@ -680,6 +683,8 @@ static int32_t parse_parameters( const char* numericalin )
     noyesflag_t      printStationAccs  = -1;
     noyesflag_t      useInfQk          = -1;
 
+    noyesflat_t      useNewSetrec      = -1;
+    
     noyesflag_t      meshCoordinatesForMatlab  = -1;
     noyesflag_t      implementdrm  = -1;
 
@@ -753,6 +758,7 @@ static int32_t parse_parameters( const char* numericalin )
         (parsetext(fp, "simulation_delta_time_sec",      'd', &deltaT                      ) != 0) ||
         (parsetext(fp, "softening_factor",               'd', &softening_factor            ) != 0) ||
         (parsetext(fp, "use_progressive_meshing",        'i', &step_meshing                ) != 0) ||
+        (parsetext(fp, "use_new_setrec",                 's', &use_new_setrec              ) != 0) ||
         (parsetext(fp, "simulation_output_rate",         'i', &rate                        ) != 0) ||
         (parsetext(fp, "number_output_planes",           'i', &number_output_planes        ) != 0) ||
         (parsetext(fp, "number_output_stations",         'i', &number_output_stations      ) != 0) ||
@@ -842,7 +848,18 @@ static int32_t parse_parameters( const char* numericalin )
         fprintf(stderr, "Illegal progressive meshing factor %d\n", step_meshing);
         return -1;
     }
-
+    
+    if ( strcasecmp(use_new_setrec, "yes") == 0 ) {
+        useNewSetrec = YES;
+    } else if ( strcasecmp(use_new_setrec, "no") == 0 ) {
+        useNewSetrec = NO;
+    } else {
+        solver_abort( __FUNCTION_NAME, NULL,
+                "Unknown response for use_new_setrec"
+                "(yes or no): %s\n",
+                use_new_setrec );
+    }
+    
     if (rate <= 0) {
         fprintf(stderr, "Illegal output rate %d\n", rate);
         return -1;
@@ -1015,6 +1032,7 @@ static int32_t parse_parameters( const char* numericalin )
 
     Param.theSofteningFactor        = softening_factor;
     Param.theStepMeshingFactor     = step_meshing;
+    Param.useNewSetrec                = use_new_setrec;  
     Param.theThresholdDamping	      = threshold_damping;
     Param.theThresholdVpVs	      = threshold_VpVs;
     Param.theDampingStatisticsFlag  = damping_statistics;
@@ -1856,9 +1874,73 @@ static cvmrecord_t *sliceCVM_old(const char *cvm_flatfile)
 /**
  * setrec: Search the CVM record array to obtain the material property of
  *	   a leaf octant.
+ * 
+ *         This setrec queries only one point to obtain the material property
+ *         for the octant, as opposed to setrec2, which queries the 27 points.
  *
  */
 void setrec(octant_t *leaf, double ticksize, void *data)
+{
+    cvmrecord_t *agghit;
+    edata_t *edata;
+    etree_tick_t x, y, z;
+    etree_tick_t halfticks;
+    point_t searchpoint;
+
+    edata = (edata_t *)data;
+
+    halfticks = (tick_t)1 << (PIXELLEVEL - leaf->level - 1);
+
+    edata->edgesize = ticksize * halfticks * 2;
+
+    searchpoint.x = x = leaf->lx + halfticks;
+    searchpoint.y = y = leaf->ly + halfticks;
+    searchpoint.z = z = leaf->lz + halfticks;
+
+    if ((x * ticksize >= Param.theDomainX) ||
+	(y * ticksize >= Param.theDomainY) ||
+	(z * ticksize >= Param.theDomainZ)) {
+	/* Center point out the bound. Set Vs to force split */
+	edata->Vs = Param.theFactor * edata->edgesize / 2;
+    } else {
+	int offset;
+
+	/* map the coordinate from the octor address space to the
+	   etree address space */
+	searchpoint.x = x << 1;
+	searchpoint.y = y << 1;
+	searchpoint.z = z << 1;
+
+	/* Inbound */
+	offset = zsearch(Global.theCVMRecord, Global.theCVMRecordCount, Global.theCVMRecordSize,
+			 &searchpoint);
+	if (offset < 0) {
+	    fprintf(stderr, "setrec: fatal error\n");
+	    MPI_Abort(MPI_COMM_WORLD, ERROR);
+	    exit(1);
+	}
+
+	agghit = Global.theCVMRecord + offset;
+	edata->Vs = agghit->Vs;
+	edata->Vp = agghit->Vp;
+	edata->rho = agghit->density;
+
+	/* Adjust the Vs */
+	edata->Vs = (edata->Vs < Param.theVsCut) ? Param.theVsCut : edata->Vs;
+    }
+
+    return;
+}
+
+/**
+ * setrec2: Search the CVM record array to obtain the material property of
+ *	    a leaf octant.
+ *              
+ *          This setrec queries the 27 points to find the material property of
+ *          the octant, as opposed to the other setrec which only queries one.
+ *
+ */
+void setrec2(octant_t *leaf, double ticksize, void *data)
 {
     cvmrecord_t *agghit;
     edata_t *edata;
@@ -1998,7 +2080,10 @@ mesh_generate()
 	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Slice CVM", 0));
     }
 #endif
-
+    
+    if (Param.useNewSetrec == YES)
+        fprintf(stdout, "USE NEW SETREC == YES * * * * * * * * * * *");
+    
     for ( mstep = Param.theStepMeshingFactor; mstep >= 0; mstep-- ) {
 
         double myFactor = (double)(1 << mstep); // 2^mstep
