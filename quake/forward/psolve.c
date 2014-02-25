@@ -1451,48 +1451,26 @@ setrec2( octant_t* leaf, double ticksize, void* data )
     g_props_min.Vs  = FLT_MAX;
     g_props_min.Vp  = NAN;
     g_props_min.rho = NAN;
-
-    for ( i_x = 0; i_x < n_points; i_x++ ) {
-
+	
 	x_m = (Global.theXForMeshOrigin
-	       + (leaf->lx + points[i_x] * halfticks) * ticksize);
+			   + (leaf->lx + halfticks) * ticksize);
+	y_m  = Global.theYForMeshOrigin
+		+ (leaf->ly + halfticks) * ticksize;
+	z_m = Global.theZForMeshOrigin
+		    + (leaf->lz + halfticks) * ticksize;
 
-	for ( i_y = 0; i_y < n_points; i_y++ ) {
-
-	    y_m  = Global.theYForMeshOrigin
-		+ (leaf->ly + points[i_y] * halfticks) * ticksize;
-
-	    for ( i_z = 0; i_z < n_points; i_z++) {
-
-		z_m = Global.theZForMeshOrigin
-		    + (leaf->lz +  points[i_z] * halfticks) * ticksize;
-
-		/* Shift the domain if buildings are considered */
-		if ( Param.includeBuildings == YES ) {
-                    z_m -= get_surface_shift();
-		}
-
-		res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
-
-		if (res != 0) {
-		    continue;
-		}
-
-		if ( g_props.Vs < g_props_min.Vs ) {
-		    /* assign minimum value of vs to produce elements
-		     * that are small enough to rightly represent the model */
-		    g_props_min = g_props;
-		}
-
-		if (g_props.Vs <= Param.theVsCut) {
-		    /* stop early if needed, completely break out of all
-		     * the loops, the label is just outside the loop */
-		    goto outer_loop_label;
-		}
-	    }
+	/* Shift the domain if buildings are considered */
+	if ( Param.includeBuildings == YES ) {
+                z_m -= get_surface_shift();
 	}
-    }
- outer_loop_label: /* in order to completely break out from the inner loop */
+
+	res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
+	
+	if ( g_props.Vs < g_props_min.Vs ) {
+	    /* assign minimum value of vs to produce elements
+	     * that are small enough to rightly represent the model */
+	    g_props_min = g_props;
+	}
 
     edata->Vp  = g_props_min.Vp;
     edata->Vs  = g_props_min.Vs;
@@ -2129,10 +2107,18 @@ mesh_generate()
             fprintf(stdout, "Refining     ");
             fflush(stdout);
         }
-        if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
-            fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
-            MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
-        }
+		if (Param.useNewSetrec == YES) {
+		    if (octor_refinetree(Global.myOctree, toexpand, setrec2) != 0) {
+		        fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
+		        MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
+		    }
+		} else {
+		    if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
+		        fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
+		        MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
+		    }
+		}
+		
         MPI_Barrier(comm_solver);
         tote = octor_getleavescount(Global.myOctree, GLOBAL);
         mine = octor_getminleavescount(Global.myOctree, GLOBAL);
@@ -2159,10 +2145,17 @@ mesh_generate()
             fprintf(stdout, "Balancing    ");
             fflush(stdout);
         }
-        if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
-            fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
-            MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
-        }
+		if (Param.useNewSetrec == YES) {
+		    if (octor_balancetree(Global.myOctree, setrec2, Param.theStepMeshingFactor) != 0) {
+		        fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
+		        MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
+		    }
+		} else {
+		    if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
+		        fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
+		        MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
+		    }
+		}
         MPI_Barrier(comm_solver);
         tote = octor_getleavescount(Global.myOctree, GLOBAL);
         mine = octor_getminleavescount(Global.myOctree, GLOBAL);
