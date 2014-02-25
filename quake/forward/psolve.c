@@ -1415,6 +1415,103 @@ setrec( octant_t* leaf, double ticksize, void* data )
     return;
 }
 
+/**
+ * Assign values (material properties) to a leaf octant specified by
+ * octleaf.  This function only checks one point to determine the 
+ * material properties.
+ */
+static void
+setrec2( octant_t* leaf, double ticksize, void* data )
+{
+    double x_m, y_m, z_m;	/* x:south-north, y:east-west, z:depth */
+    tick_t halfticks;
+    cvmpayload_t g_props;	/* cvm record with ground properties */
+    cvmpayload_t g_props_min;	/* cvm record with the min Vs found */
+
+    int i_x, i_y, i_z, n_points = 3;
+    double points[3];
+
+    int res = 0;
+    edata_t* edata = (edata_t*)data;
+
+    points[0] = 0.01;
+    points[1] = 1;
+    points[2] = 1.99;
+
+    halfticks = (tick_t)1 << (PIXELLEVEL - leaf->level - 1);
+    edata->edgesize = ticksize * halfticks * 2;
+
+    /* Check for buildings and proceed according to the buildings setrec */
+    if ( Param.includeBuildings == YES ) {
+		if ( bldgs_setrec( leaf, ticksize, edata, Global.theCVMEp,Global.theXForMeshOrigin,Global.theYForMeshOrigin,Global.theZForMeshOrigin ) ) {
+            return;
+        }
+    }
+
+    g_props_min.Vs  = FLT_MAX;
+    g_props_min.Vp  = NAN;
+    g_props_min.rho = NAN;
+
+    for ( i_x = 0; i_x < n_points; i_x++ ) {
+
+	x_m = (Global.theXForMeshOrigin
+	       + (leaf->lx + points[i_x] * halfticks) * ticksize);
+
+	for ( i_y = 0; i_y < n_points; i_y++ ) {
+
+	    y_m  = Global.theYForMeshOrigin
+		+ (leaf->ly + points[i_y] * halfticks) * ticksize;
+
+	    for ( i_z = 0; i_z < n_points; i_z++) {
+
+		z_m = Global.theZForMeshOrigin
+		    + (leaf->lz +  points[i_z] * halfticks) * ticksize;
+
+		/* Shift the domain if buildings are considered */
+		if ( Param.includeBuildings == YES ) {
+                    z_m -= get_surface_shift();
+		}
+
+		res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
+
+		if (res != 0) {
+		    continue;
+		}
+
+		if ( g_props.Vs < g_props_min.Vs ) {
+		    /* assign minimum value of vs to produce elements
+		     * that are small enough to rightly represent the model */
+		    g_props_min = g_props;
+		}
+
+		if (g_props.Vs <= Param.theVsCut) {
+		    /* stop early if needed, completely break out of all
+		     * the loops, the label is just outside the loop */
+		    goto outer_loop_label;
+		}
+	    }
+	}
+    }
+ outer_loop_label: /* in order to completely break out from the inner loop */
+
+    edata->Vp  = g_props_min.Vp;
+    edata->Vs  = g_props_min.Vs;
+    edata->rho = g_props_min.rho;
+
+    if (res != 0 && g_props_min.Vs == DBL_MAX) {
+	/* all the queries failed, then center out of bound point. Set Vs
+	 * to force split */
+	edata->Vs = Param.theFactor * edata->edgesize / 2;
+    } else if (edata->Vs <= Param.theVsCut) {	/* adjust Vs and Vp */
+	double VpVsRatio = edata->Vp / edata->Vs;
+
+	edata->Vs = Param.theVsCut;
+	edata->Vp = Param.theVsCut * VpVsRatio;
+    }
+
+    return;
+}
+
 #else /* USECVMDB */
 
 static int32_t
@@ -1881,67 +1978,6 @@ static cvmrecord_t *sliceCVM_old(const char *cvm_flatfile)
  *
  */
 void setrec(octant_t *leaf, double ticksize, void *data)
-{
-    cvmrecord_t *agghit;
-    edata_t *edata;
-    etree_tick_t x, y, z;
-    etree_tick_t halfticks;
-    point_t searchpoint;
-
-    edata = (edata_t *)data;
-
-    halfticks = (tick_t)1 << (PIXELLEVEL - leaf->level - 1);
-
-    edata->edgesize = ticksize * halfticks * 2;
-
-    searchpoint.x = x = leaf->lx + halfticks;
-    searchpoint.y = y = leaf->ly + halfticks;
-    searchpoint.z = z = leaf->lz + halfticks;
-
-    if ((x * ticksize >= Param.theDomainX) ||
-	(y * ticksize >= Param.theDomainY) ||
-	(z * ticksize >= Param.theDomainZ)) {
-	/* Center point out the bound. Set Vs to force split */
-	edata->Vs = Param.theFactor * edata->edgesize / 2;
-    } else {
-	int offset;
-
-	/* map the coordinate from the octor address space to the
-	   etree address space */
-	searchpoint.x = x << 1;
-	searchpoint.y = y << 1;
-	searchpoint.z = z << 1;
-
-	/* Inbound */
-	offset = zsearch(Global.theCVMRecord, Global.theCVMRecordCount, Global.theCVMRecordSize,
-			 &searchpoint);
-	if (offset < 0) {
-	    fprintf(stderr, "setrec: fatal error\n");
-	    MPI_Abort(MPI_COMM_WORLD, ERROR);
-	    exit(1);
-	}
-
-	agghit = Global.theCVMRecord + offset;
-	edata->Vs = agghit->Vs;
-	edata->Vp = agghit->Vp;
-	edata->rho = agghit->density;
-
-	/* Adjust the Vs */
-	edata->Vs = (edata->Vs < Param.theVsCut) ? Param.theVsCut : edata->Vs;
-    }
-
-    return;
-}
-
-/**
- * setrec2: Search the CVM record array to obtain the material property of
- *	    a leaf octant.
- *              
- *          This setrec queries the 27 points to find the material property of
- *          the octant, as opposed to the other setrec which only queries one.
- *
- */
-void setrec2(octant_t *leaf, double ticksize, void *data)
 {
     cvmrecord_t *agghit;
     edata_t *edata;
