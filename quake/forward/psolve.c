@@ -133,6 +133,7 @@ typedef struct mrecord_t {
 /* Mesh generation related routines */
 static int32_t toexpand(octant_t *leaf, double ticksize, const void *data);
 static void    setrec(octant_t *leaf, double ticksize, void *data);
+static void    setrec2(octant_t *leaf, double ticksize, void *data);
 static void    mesh_generate(void);
 static int32_t bulkload(etree_t *mep, mrecord_t *partTable, int32_t count);
 static void    mesh_output(void);
@@ -671,7 +672,7 @@ static int32_t parse_parameters( const char* numericalin )
               print_station_accelerations[64],
 	      	  mesh_coordinates_for_matlab[64],
     		  implement_drm[64],
-    		  use_infinite_qk[64];
+    		  use_infinite_qk[64],
               use_new_setrec[64];   
 
     damping_type_t   typeOfDamping     = -1;
@@ -683,7 +684,7 @@ static int32_t parse_parameters( const char* numericalin )
     noyesflag_t      printStationAccs  = -1;
     noyesflag_t      useInfQk          = -1;
 
-    noyesflat_t      useNewSetrec      = -1;
+    noyesflag_t      useNewSetrec      = -1;
     
     noyesflag_t      meshCoordinatesForMatlab  = -1;
     noyesflag_t      implementdrm  = -1;
@@ -1032,7 +1033,7 @@ static int32_t parse_parameters( const char* numericalin )
 
     Param.theSofteningFactor        = softening_factor;
     Param.theStepMeshingFactor     = step_meshing;
-    Param.useNewSetrec                = use_new_setrec;  
+    Param.useNewSetrec                = useNewSetrec;  
     Param.theThresholdDamping	      = threshold_damping;
     Param.theThresholdVpVs	      = threshold_VpVs;
     Param.theDampingStatisticsFlag  = damping_statistics;
@@ -1940,6 +1941,7 @@ void setrec(octant_t *leaf, double ticksize, void *data)
  *          the octant, as opposed to the other setrec which only queries one.
  *
  */
+/*
 void setrec2(octant_t *leaf, double ticksize, void *data)
 {
     cvmrecord_t *agghit;
@@ -1961,18 +1963,18 @@ void setrec2(octant_t *leaf, double ticksize, void *data)
     if ((x * ticksize >= Param.theDomainX) ||
 	(y * ticksize >= Param.theDomainY) ||
 	(z * ticksize >= Param.theDomainZ)) {
-	/* Center point out the bound. Set Vs to force split */
+	/* Center point out the bound. Set Vs to force split */  /*
 	edata->Vs = Param.theFactor * edata->edgesize / 2;
     } else {
 	int offset;
 
 	/* map the coordinate from the octor address space to the
-	   etree address space */
+	   etree address space */  /*
 	searchpoint.x = x << 1;
 	searchpoint.y = y << 1;
 	searchpoint.z = z << 1;
 
-	/* Inbound */
+	/* Inbound */ /*
 	offset = zsearch(Global.theCVMRecord, Global.theCVMRecordCount, Global.theCVMRecordSize,
 			 &searchpoint);
 	if (offset < 0) {
@@ -1986,12 +1988,13 @@ void setrec2(octant_t *leaf, double ticksize, void *data)
 	edata->Vp = agghit->Vp;
 	edata->rho = agghit->density;
 
-	/* Adjust the Vs */
+	/* Adjust the Vs */ /*
 	edata->Vs = (edata->Vs < Param.theVsCut) ? Param.theVsCut : edata->Vs;
     }
 
     return;
 }
+*/
 #endif	/* USECVMDB */
 
 
