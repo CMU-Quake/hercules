@@ -1941,7 +1941,6 @@ void setrec(octant_t *leaf, double ticksize, void *data)
  *          the octant, as opposed to the other setrec which only queries one.
  *
  */
-/*
 void setrec2(octant_t *leaf, double ticksize, void *data)
 {
     cvmrecord_t *agghit;
@@ -1963,18 +1962,18 @@ void setrec2(octant_t *leaf, double ticksize, void *data)
     if ((x * ticksize >= Param.theDomainX) ||
 	(y * ticksize >= Param.theDomainY) ||
 	(z * ticksize >= Param.theDomainZ)) {
-	/* Center point out the bound. Set Vs to force split */  /*
+	/* Center point out the bound. Set Vs to force split */
 	edata->Vs = Param.theFactor * edata->edgesize / 2;
     } else {
 	int offset;
 
 	/* map the coordinate from the octor address space to the
-	   etree address space */  /*
+	   etree address space */
 	searchpoint.x = x << 1;
 	searchpoint.y = y << 1;
 	searchpoint.z = z << 1;
 
-	/* Inbound */ /*
+	/* Inbound */
 	offset = zsearch(Global.theCVMRecord, Global.theCVMRecordCount, Global.theCVMRecordSize,
 			 &searchpoint);
 	if (offset < 0) {
@@ -1988,13 +1987,12 @@ void setrec2(octant_t *leaf, double ticksize, void *data)
 	edata->Vp = agghit->Vp;
 	edata->rho = agghit->density;
 
-	/* Adjust the Vs */ /*
+	/* Adjust the Vs */
 	edata->Vs = (edata->Vs < Param.theVsCut) ? Param.theVsCut : edata->Vs;
     }
 
     return;
 }
-*/
 #endif	/* USECVMDB */
 
 
@@ -2083,9 +2081,6 @@ mesh_generate()
 	fprintf(stdout, "done : %9.2f seconds\n", Timer_Value("Slice CVM", 0));
     }
 #endif
-    
-    if (Param.useNewSetrec == YES)
-        fprintf(stdout, "USE NEW SETREC == YES * * * * * * * * * * *");
     
     for ( mstep = Param.theStepMeshingFactor; mstep >= 0; mstep-- ) {
 
