@@ -2104,7 +2104,7 @@ mesh_generate()
 		// For progressive meshing, if useNewSetrec==YES, then use setrec2 for Refinetree and Balancetree,
 		// which only queries one point in the octant to determine the material properties,
 		// instead of the previous 27 points.
-		if (mstep>=0) {
+		if (mstep>0) {
 		    /* Refinement */
 		    Timer_Start("Octor Refinetree");
 		    if (Global.myID == 0) {
