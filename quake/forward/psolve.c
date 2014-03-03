@@ -1426,17 +1426,9 @@ setrec2( octant_t* leaf, double ticksize, void* data )
     double x_m, y_m, z_m;	/* x:south-north, y:east-west, z:depth */
     tick_t halfticks;
     cvmpayload_t g_props;	/* cvm record with ground properties */
-    cvmpayload_t g_props_min;	/* cvm record with the min Vs found */
-
-    int i_x, i_y, i_z, n_points = 3;
-    double points[3];
 
     int res = 0;
     edata_t* edata = (edata_t*)data;
-
-    points[0] = 0.01;
-    points[1] = 1;
-    points[2] = 1.99;
 
     halfticks = (tick_t)1 << (PIXELLEVEL - leaf->level - 1);
     edata->edgesize = ticksize * halfticks * 2;
@@ -1447,36 +1439,26 @@ setrec2( octant_t* leaf, double ticksize, void* data )
             return;
         }
     }
-
-    g_props_min.Vs  = FLT_MAX;
-    g_props_min.Vp  = NAN;
-    g_props_min.rho = NAN;
 	
-	x_m = (Global.theXForMeshOrigin
-			   + (leaf->lx + halfticks) * ticksize);
-	y_m  = Global.theYForMeshOrigin
+    x_m = (Global.theXForMeshOrigin
+		+ (leaf->lx + halfticks) * ticksize);
+    y_m  = Global.theYForMeshOrigin
 		+ (leaf->ly + halfticks) * ticksize;
-	z_m = Global.theZForMeshOrigin
-		    + (leaf->lz + halfticks) * ticksize;
+    z_m = Global.theZForMeshOrigin
+		+ (leaf->lz + halfticks) * ticksize;
 
-	/* Shift the domain if buildings are considered */
-	if ( Param.includeBuildings == YES ) {
-                z_m -= get_surface_shift();
-	}
+    /* Shift the domain if buildings are considered */
+    if ( Param.includeBuildings == YES ) {
+        z_m -= get_surface_shift();
+    }
 
-	res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
-	
-	if ( g_props.Vs < g_props_min.Vs ) {
-	    /* assign minimum value of vs to produce elements
-	     * that are small enough to rightly represent the model */
-	    g_props_min = g_props;
-	}
+    res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
 
-    edata->Vp  = g_props_min.Vp;
-    edata->Vs  = g_props_min.Vs;
-    edata->rho = g_props_min.rho;
+    edata->Vp  = g_props.Vp;
+    edata->Vs  = g_props.Vs;
+    edata->rho = g_props.rho;
 
-    if (res != 0 && g_props_min.Vs == DBL_MAX) {
+    if (res != 0 && g_props.Vs == DBL_MAX) {
 	/* all the queries failed, then center out of bound point. Set Vs
 	 * to force split */
 	edata->Vs = Param.theFactor * edata->edgesize / 2;
