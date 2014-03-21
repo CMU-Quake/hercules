@@ -187,7 +187,7 @@ typedef int32_t toexpand_t ( octant_t *leaf, double ticksize,
                              const void *data );
 typedef int32_t toshrink_t ( octant_t *leaf[8], double ticksize,
                              const void *data[8] );
-typedef void setrec_t ( octant_t *leaf, double ticksize, void *data );
+typedef void setrec_t ( octant_t *leaf, double ticksize, void *data, boolean useSetrec2);
 
 typedef int bldgs_nodesearch_t ( tick_t x, tick_t y, tick_t z,
                                  double ticksize );
@@ -308,13 +308,13 @@ extern void
 octor_deletetree(octree_t * octree);
 
 extern int32_t 
-octor_refinetree(octree_t *octree, toexpand_t *toexpand, setrec_t *setrec);
+octor_refinetree(octree_t *octree, toexpand_t *toexpand, setrec_t *setrec, boolean useSetrec2);
 
 extern int32_t 
 octor_coarsentree(octree_t *octree, toshrink_t *toshrink, setrec_t *setrec);
 
 extern int32_t 
-octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor);
+octor_balancetree(octree_t *octree, setrec_t *setrec, boolean useSetrec2, int theStepMeshingFactor);
 
 extern void
 octor_carvebuildings(octree_t *octree, int flag,

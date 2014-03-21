@@ -132,7 +132,7 @@ typedef struct mrecord_t {
 
 /* Mesh generation related routines */
 static int32_t toexpand(octant_t *leaf, double ticksize, const void *data);
-static void    setrec(octant_t *leaf, double ticksize, void *data);
+static void    setrec(octant_t *leaf, double ticksize, void *data, boolean useSetrec2);
 static void    setrec2(octant_t *leaf, double ticksize, void *data);
 static void    mesh_generate(void);
 static int32_t bulkload(etree_t *mep, mrecord_t *partTable, int32_t count);
@@ -1324,8 +1324,13 @@ replicateDB(const char *dbname)
  * sample points: 8 near the corners and 19 midpoints.
  */
 static void
-setrec( octant_t* leaf, double ticksize, void* data )
+setrec( octant_t* leaf, double ticksize, void* data, boolean useSetrec2 )
 {
+    if (useSetrec2 == true) {
+	setrec2(leaf, ticksize, data);
+	return;
+    }
+  
     double x_m, y_m, z_m;	/* x:south-north, y:east-west, z:depth */
     tick_t halfticks;
     cvmpayload_t g_props;	/* cvm record with ground properties */
@@ -2094,12 +2099,12 @@ mesh_generate()
 		        fflush(stdout);
 		    }
 			if (Param.useNewSetrec == YES) {
-				if (octor_refinetree(Global.myOctree, toexpand, setrec2) != 0) {
+				if (octor_refinetree(Global.myOctree, toexpand, setrec, true) != 0) {
 				    fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
 				    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
 				}
 			} else {
-				if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
+				if (octor_refinetree(Global.myOctree, toexpand, setrec, false) != 0) {
 				    fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
 				    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
 				}
@@ -2132,12 +2137,12 @@ mesh_generate()
 		        fflush(stdout);
 		    }
 			if (Param.useNewSetrec == YES) {
-				if (octor_balancetree(Global.myOctree, setrec2, Param.theStepMeshingFactor) != 0) {
+				if (octor_balancetree(Global.myOctree, setrec, true, Param.theStepMeshingFactor) != 0) {
 				    fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
 				    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
 				}
 			} else {
-				if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
+				if (octor_balancetree(Global.myOctree, setrec, false, Param.theStepMeshingFactor) != 0) {
 				    fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
 				    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
 				}
@@ -2166,7 +2171,7 @@ mesh_generate()
 		        fprintf(stdout, "Refining     ");
 		        fflush(stdout);
 		    }
-			if (octor_refinetree(Global.myOctree, toexpand, setrec) != 0) {
+			if (octor_refinetree(Global.myOctree, toexpand, setrec, false) != 0) {
 			    fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
 			    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
 			}
@@ -2196,7 +2201,7 @@ mesh_generate()
 		        fprintf(stdout, "Balancing    ");
 		        fflush(stdout);
 		    }
-			if (octor_balancetree(Global.myOctree, setrec, Param.theStepMeshingFactor) != 0) {
+			if (octor_balancetree(Global.myOctree, setrec, false, Param.theStepMeshingFactor) != 0) {
 			    fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
 			    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
 			}
