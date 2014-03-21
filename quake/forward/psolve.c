@@ -1418,8 +1418,6 @@ setrec( octant_t* leaf, double ticksize, void* data, int useSetrec2 )
     edata->Vp  = g_props_min.Vp;
     edata->Vs  = g_props_min.Vs;
     edata->rho = g_props_min.rho;
-    
-    //fprintf(stdout, "Test counter: %d\n\n", test_counter);
 
     if (res != 0 && g_props_min.Vs == DBL_MAX) {
 	/* all the queries failed, then center out of bound point. Set Vs
@@ -1435,17 +1433,19 @@ setrec( octant_t* leaf, double ticksize, void* data, int useSetrec2 )
     return;
 }
 
+
 /**
  * Assign values (material properties) to a leaf octant specified by
  * octleaf.  This function only checks one point to determine the 
  * material properties.
  */
+/*
 static void
 setrec2( octant_t* leaf, double ticksize, void* data )
 {
-    double x_m, y_m, z_m;	/* x:south-north, y:east-west, z:depth */
+    double x_m, y_m, z_m;	//x:south-north, y:east-west, z:depth 
     tick_t halfticks;
-    cvmpayload_t g_props;	/* cvm record with ground properties */
+    cvmpayload_t g_props;	// cvm record with ground properties 
 
     int res = 0;
     edata_t* edata = (edata_t*)data;
@@ -1453,7 +1453,7 @@ setrec2( octant_t* leaf, double ticksize, void* data )
     halfticks = (tick_t)1 << (PIXELLEVEL - leaf->level - 1);
     edata->edgesize = ticksize * halfticks * 2;
 
-    /* Check for buildings and proceed according to the buildings setrec */
+    //Check for buildings and proceed according to the buildings setrec
     if ( Param.includeBuildings == YES ) {
 		if ( bldgs_setrec( leaf, ticksize, edata, Global.theCVMEp,Global.theXForMeshOrigin,Global.theYForMeshOrigin,Global.theZForMeshOrigin ) ) {
             return;
@@ -1467,7 +1467,7 @@ setrec2( octant_t* leaf, double ticksize, void* data )
     z_m = Global.theZForMeshOrigin
 		+ (leaf->lz + halfticks) * ticksize;
 
-    /* Shift the domain if buildings are considered */
+    //Shift the domain if buildings are considered
     if ( Param.includeBuildings == YES ) {
         z_m -= get_surface_shift();
     }
@@ -1479,10 +1479,10 @@ setrec2( octant_t* leaf, double ticksize, void* data )
     edata->rho = g_props.rho;
 
     if (res != 0 && g_props.Vs == DBL_MAX) {
-	/* all the queries failed, then center out of bound point. Set Vs
-	 * to force split */
+	// all the queries failed, then center out of bound point. Set Vs
+	// to force split 
 	edata->Vs = Param.theFactor * edata->edgesize / 2;
-    } else if (edata->Vs <= Param.theVsCut) {	/* adjust Vs and Vp */
+    } else if (edata->Vs <= Param.theVsCut) {	// adjust Vs and Vp 
 	double VpVsRatio = edata->Vp / edata->Vs;
 
 	edata->Vs = Param.theVsCut;
@@ -1491,6 +1491,7 @@ setrec2( octant_t* leaf, double ticksize, void* data )
 
     return;
 }
+*/
 
 #else /* USECVMDB */
 
