@@ -1329,16 +1329,20 @@ replicateDB(const char *dbname)
 static void
 setrec( octant_t* leaf, double ticksize, void* data, int useSetrec2 )
 {
+    /*
     if (useSetrec2 == TRUE) {
 	setrec2(leaf, ticksize, data);
 	return;
     }
+    */
   
     double x_m, y_m, z_m;	/* x:south-north, y:east-west, z:depth */
     tick_t halfticks;
     cvmpayload_t g_props;	/* cvm record with ground properties */
     cvmpayload_t g_props_min;	/* cvm record with the min Vs found */
-
+    
+    int test_counter = 0;
+    
     int i_x, i_y, i_z, n_points = 3;
     double points[3];
 
@@ -1348,6 +1352,11 @@ setrec( octant_t* leaf, double ticksize, void* data, int useSetrec2 )
     points[0] = 0.01;
     points[1] = 1;
     points[2] = 1.99;
+    
+    if (useSetrec2 == TRUE) {
+	n_points = 1;
+	points[0] = 1;
+    }
 
     halfticks = (tick_t)1 << (PIXELLEVEL - leaf->level - 1);
     edata->edgesize = ticksize * halfticks * 2;
@@ -1362,7 +1371,7 @@ setrec( octant_t* leaf, double ticksize, void* data, int useSetrec2 )
     g_props_min.Vs  = FLT_MAX;
     g_props_min.Vp  = NAN;
     g_props_min.rho = NAN;
-
+    
     for ( i_x = 0; i_x < n_points; i_x++ ) {
 
 	x_m = (Global.theXForMeshOrigin
@@ -1374,7 +1383,8 @@ setrec( octant_t* leaf, double ticksize, void* data, int useSetrec2 )
 		+ (leaf->ly + points[i_y] * halfticks) * ticksize;
 
 	    for ( i_z = 0; i_z < n_points; i_z++) {
-
+		test_counter++;
+	      
 		z_m = Global.theZForMeshOrigin
 		    + (leaf->lz +  points[i_z] * halfticks) * ticksize;
 
@@ -1408,6 +1418,8 @@ setrec( octant_t* leaf, double ticksize, void* data, int useSetrec2 )
     edata->Vp  = g_props_min.Vp;
     edata->Vs  = g_props_min.Vs;
     edata->rho = g_props_min.rho;
+    
+    //fprintf(stdout, "Test counter: %d\n\n", test_counter);
 
     if (res != 0 && g_props_min.Vs == DBL_MAX) {
 	/* all the queries failed, then center out of bound point. Set Vs
