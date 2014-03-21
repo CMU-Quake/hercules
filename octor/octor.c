@@ -568,7 +568,7 @@ static int32_t oct_installleaf(tick_t lx, tick_t ly, tick_t lz,
 static int32_t oct_sprout(oct_t *leafoct, tree_t *tree);
 static void    oct_prune(oct_t *oct, tree_t *tree);
 static int32_t oct_expand(oct_t *leafoct, tree_t *tree,
-                          toexpand_t *toexpand, setrec_t *setrec);
+                          toexpand_t *toexpand, setrec_t *setrec, int useSetrec2);
 static oct_t * oct_shrink(oct_t *oct, tree_t *tree, unsigned char where,
                          toshrink_t *toshrink, setrec_t *setrec);
 
@@ -1676,7 +1676,7 @@ oct_prune(oct_t *oct, tree_t *tree)
  */
 static int32_t
 oct_expand(oct_t *leafoct, tree_t *tree, toexpand_t *toexpand,
-           setrec_t *setrec)
+           setrec_t *setrec, int useSetrec2)
 {
     int8_t which;
     const void *data;
@@ -1736,10 +1736,10 @@ oct_expand(oct_t *leafoct, tree_t *tree, toexpand_t *toexpand,
                 }
 
                 /* instantiate the child */
-                setrec((octant_t *)child, tree->ticksize, data);
+                setrec((octant_t *)child, tree->ticksize, data, useSetrec2);
 
                 /* This child intersects the domain of interest */
-                if (oct_expand(child, tree, toexpand, setrec) != 0)
+                if (oct_expand(child, tree, toexpand, setrec, useSetrec2) != 0)
                     return -1;
             }
         }
@@ -1832,7 +1832,7 @@ oct_shrink(oct_t *oct, tree_t *tree, unsigned char where,
                     return NULL;
                 }
 
-                setrec((octant_t *)oct, tree->ticksize, data);
+                setrec((octant_t *)oct, tree->ticksize, data, FALSE);
             }
         }
     }
@@ -2407,7 +2407,7 @@ tree_pushdown(oct_t *nbr, tree_t *tree, oct_stack_t *stackp, setrec_t *setrec)
                     return -1;
                 }
 
-                setrec((octant_t *)child, tree->ticksize, data);
+                setrec((octant_t *)child, tree->ticksize, data, FALSE);
 
                 /* add child to the corresponding link level list */
                 oct_linkleaf(child, tree->toleaf);
@@ -4334,7 +4334,7 @@ octor_deletetree(octree_t *octree)
  *
  */
 extern int32_t
-octor_refinetree(octree_t *octree, toexpand_t *toexpand, setrec_t *setrec)
+octor_refinetree(octree_t *octree, toexpand_t *toexpand, setrec_t *setrec, int useSetrec2)
 {
     tree_t *tree = (tree_t *)octree;
     oct_t *oct;
@@ -4342,7 +4342,7 @@ octor_refinetree(octree_t *octree, toexpand_t *toexpand, setrec_t *setrec)
     oct = tree->firstleaf;
 
     while ((oct != NULL) && (oct->where == LOCAL)) {
-        if (oct_expand(oct, tree, toexpand, setrec) != 0) {
+        if (oct_expand(oct, tree, toexpand, setrec, useSetrec2) != 0) {
             fprintf(stderr,
                     "Proc %d (Failed): created %d leaves. min = %d max = %d\n",
                     tree->procid,
@@ -4395,7 +4395,7 @@ octor_coarsentree(octree_t *octree, toshrink_t *toshrink, setrec_t *setrec)
  *
  */
 extern int32_t
-octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
+octor_balancetree(octree_t *octree, setrec_t *setrec, int useSetrec2, int theStepMeshingFactor)
 {
     int32_t lmax, gmax, lmin, gmin, level, threshold;
     oct_t *oct, *nbr;

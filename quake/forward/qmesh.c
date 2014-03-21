@@ -977,7 +977,7 @@ int main(int argc, char **argv)
     if (myID == 0) {
 	fprintf(stdout, "octor_refinetree ...");
     }
-    if (octor_refinetree(myOctree, toexpand, setrec) != 0) {
+    if (octor_refinetree(myOctree, toexpand, setrec, 0) != 0) {
 	fprintf(stderr, "Thread %d: fail to refine octree\n", myID);
 	MPI_Abort(MPI_COMM_WORLD, ERROR);
 	exit(1);
@@ -995,7 +995,7 @@ int main(int argc, char **argv)
     if (myID == 0) {
 	fprintf(stdout, "octor_balancetree ... ");
     }
-    if (octor_balancetree(myOctree, setrec, 0) != 0) { /* no progressive meshing (ricardo) */
+    if (octor_balancetree(myOctree, setrec, 0, 0) != 0) { /* no progressive meshing (ricardo) */
 	fprintf(stderr, "Thread %d: fail to balance octree\n", myID);
 	MPI_Abort(MPI_COMM_WORLD, ERROR);
 	exit(1);
