@@ -92,8 +92,9 @@ MPI_Comm comm_IO;
 #define DISTRIBUTION    903  /**< Dangling nodes to anchored nodes */
 #define ASSIGNMENT      904  /**< Anchored nodes to dangling nodes */
 
-#define FALSE		0
-#define TRUE		1
+#define SETREC_1	0
+#define SETREC_27	1
+#define SETREC_CORRECT  2
 
 
 /*---------------Initialization and cleanup routines----------------------*/
@@ -135,7 +136,7 @@ typedef struct mrecord_t {
 
 /* Mesh generation related routines */
 static int32_t toexpand(octant_t *leaf, double ticksize, const void *data);
-static void    setrec(octant_t *leaf, double ticksize, void *data, int useSetrec2);
+static void    setrec(octant_t *leaf, double ticksize, void *data, int mode);
 static void    setrec2(octant_t *leaf, double ticksize, void *data);
 static void    mesh_generate(void);
 static int32_t bulkload(etree_t *mep, mrecord_t *partTable, int32_t count);
@@ -1327,10 +1328,10 @@ replicateDB(const char *dbname)
  * sample points: 8 near the corners and 19 midpoints.
  */
 static void
-setrec( octant_t* leaf, double ticksize, void* data, int useSetrec2 )
+setrec( octant_t* leaf, double ticksize, void* data, int mode )
 {
     /*
-    if (useSetrec2 == TRUE) {
+    if (mode == TRUE) {
 	setrec2(leaf, ticksize, data);
 	return;
     }
@@ -1343,19 +1344,27 @@ setrec( octant_t* leaf, double ticksize, void* data, int useSetrec2 )
     
     int test_counter = 0;
     
-    int i_x, i_y, i_z, n_points = 3;
+    int i_x, i_y, i_z, n_points = 0;
     double points[3];
 
+    points[0] = 0;
+    points[1] = 0;
+    points[2] = 0;
+    
     int res = 0;
     edata_t* edata = (edata_t*)data;
-
-    points[0] = 0.01;
-    points[1] = 1;
-    points[2] = 1.99;
     
-    if (useSetrec2 == TRUE) {
+    if (mode == SETREC_1) {
 	n_points = 1;
+	
 	points[0] = 1;
+    }
+    else if (mode==SETREC_27 || mode==SETREC_CORRECT) {
+	n_points = 3;
+      
+	points[0] = 0.01;
+	points[1] = 1;
+	points[2] = 1.99;
     }
 
     halfticks = (tick_t)1 << (PIXELLEVEL - leaf->level - 1);
