@@ -1324,8 +1324,15 @@ replicateDB(const char *dbname)
 
 /**
  * Assign values (material properties) to a leaf octant specified by
- * octleaf.  In order to refine the mesh, select the minimum Vs of 27
- * sample points: 8 near the corners and 19 midpoints.
+ * octleaf.  
+ * For mode==SETREC_27: In order to refine the mesh, select the minimum Vs of 27
+ * 			sample points: 8 near the corners and 19 midpoints.
+ * 
+ * For mode==SETREC_1:  Select only the center point to determine material properties
+ * 
+ * For mode==SETREC_CORRECT:  	Select the 27 points, and then average them to determine
+ * 			      	the material properties.  This mode does what 
+ * 				mesh_correct_properties() does.
  */
 static void
 setrec( octant_t* leaf, double ticksize, void* data, int mode )
@@ -1342,6 +1349,8 @@ setrec( octant_t* leaf, double ticksize, void* data, int mode )
     cvmpayload_t g_props;	/* cvm record with ground properties */
     cvmpayload_t g_props_min;	/* cvm record with the min Vs found */
     
+    double vp, vs, rho;
+    
     int test_counter = 0;
     
     int i_x, i_y, i_z, n_points = 0;
@@ -1350,6 +1359,10 @@ setrec( octant_t* leaf, double ticksize, void* data, int mode )
     points[0] = 0;
     points[1] = 0;
     points[2] = 0;
+    
+    vp = 0;
+    vs = 0;
+    rho = 0;
     
     int res = 0;
     edata_t* edata = (edata_t*)data;
@@ -1392,51 +1405,99 @@ setrec( octant_t* leaf, double ticksize, void* data, int mode )
 		+ (leaf->ly + points[i_y] * halfticks) * ticksize;
 
 	    for ( i_z = 0; i_z < n_points; i_z++) {
-		test_counter++;
 	      
 		z_m = Global.theZForMeshOrigin
 		    + (leaf->lz +  points[i_z] * halfticks) * ticksize;
-
+		
 		/* Shift the domain if buildings are considered */
 		if ( Param.includeBuildings == YES ) {
                     z_m -= get_surface_shift();
 		}
-
+    
 		res = cvm_query( Global.theCVMEp, y_m, x_m, z_m, &g_props );
-
+		
 		if (res != 0) {
 		    continue;
 		}
-
-		if ( g_props.Vs < g_props_min.Vs ) {
-		    /* assign minimum value of vs to produce elements
-		     * that are small enough to rightly represent the model */
-		    g_props_min = g_props;
+		
+		if (mode == SETREC_CORRECT) {
+		    vp += g_props.Vp;
+		    vs += g_props.Vs;
+		    rho += g_props.rho;
 		}
+		// else mode == SETREC_1 or mode == SETREC_27
+		else {    
+		    if ( g_props.Vs < g_props_min.Vs ) {
+			/* assign minimum value of vs to produce elements
+			* that are small enough to rightly represent the model */
+			g_props_min = g_props;
+		    }
 
-		if (g_props.Vs <= Param.theVsCut) {
-		    /* stop early if needed, completely break out of all
-		     * the loops, the label is just outside the loop */
-		    goto outer_loop_label;
+		    if (g_props.Vs <= Param.theVsCut) {
+			/* stop early if needed, completely break out of all
+			* the loops, the label is just outside the loop */
+			goto outer_loop_label;
+		    }
 		}
 	    }
 	}
     }
  outer_loop_label: /* in order to completely break out from the inner loop */
+    
+    if (mode == SETREC_CORRECT) {
+	edata->Vp  =  vp / 27;
+        edata->Vs  =  vs / 27;
+        edata->rho = rho / 27;
 
-    edata->Vp  = g_props_min.Vp;
-    edata->Vs  = g_props_min.Vs;
-    edata->rho = g_props_min.rho;
+        /* Auxiliary ratios for adjustments */
+        VpVsRatio  = edata->Vp  / edata->Vs;
+        RhoVpRatio = edata->rho / edata->Vp;
 
-    if (res != 0 && g_props_min.Vs == DBL_MAX) {
-	/* all the queries failed, then center out of bound point. Set Vs
-	 * to force split */
-	edata->Vs = Param.theFactor * edata->edgesize / 2;
-    } else if (edata->Vs <= Param.theVsCut) {	/* adjust Vs and Vp */
-	double VpVsRatio = edata->Vp / edata->Vs;
+        /* Adjust material properties according to the element size and
+         * softening factor.
+         *
+         * A factor of 1 means perfect compliance between the mesh and the
+         * elements' material properties resulting in strong changes to the
+         * results. A factor of 4 tends to double the simulation delta_t
+         * without affecting too much the results. Testing is needed but for
+         * now I recommend factors > 4.
+         */
+        if ( Param.theSofteningFactor > 0 ) {
 
-	edata->Vs = Param.theVsCut;
-	edata->Vp = Param.theVsCut * VpVsRatio;
+            double idealVs, factoredVs;
+
+            idealVs    = edata->edgesize * Param.theFactor;
+            factoredVs = idealVs * Param.theSofteningFactor;
+
+            if ( edata->Vs > factoredVs ) {
+                edata->Vs  = factoredVs;
+                edata->Vp  = factoredVs * VpVsRatio;
+                edata->rho = edata->Vp  * RhoVpRatio;
+            }
+        }
+
+        /* Readjust Vs, Vp and Density according to VsCut */
+        if ( edata->Vs < Param.theVsCut ) {
+            edata->Vs  = Param.theVsCut;
+            edata->Vp  = Param.theVsCut  * VpVsRatio;
+            /* edata->rho = edata->Vp * RhoVpRatio; */ /* Discuss with Jacobo */
+        }
+    }
+    else if (mode==SETREC_1 || mode==SETREC_27) {
+	edata->Vp  = g_props_min.Vp;
+	edata->Vs  = g_props_min.Vs;
+	edata->rho = g_props_min.rho;
+
+	if (res != 0 && g_props_min.Vs == DBL_MAX) {
+	    /* all the queries failed, then center out of bound point. Set Vs
+	    * to force split */
+	    edata->Vs = Param.theFactor * edata->edgesize / 2;
+	} else if (edata->Vs <= Param.theVsCut) {	/* adjust Vs and Vp */
+	    double VpVsRatio = edata->Vp / edata->Vs;
+
+	    edata->Vs = Param.theVsCut;
+	    edata->Vp = Param.theVsCut * VpVsRatio;
+	}
     }
 
     return;
