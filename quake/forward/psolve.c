@@ -1349,9 +1349,7 @@ setrec( octant_t* leaf, double ticksize, void* data, int mode )
     cvmpayload_t g_props;	/* cvm record with ground properties */
     cvmpayload_t g_props_min;	/* cvm record with the min Vs found */
     
-    double vp, vs, rho;
-    
-    int test_counter = 0;
+    double vp, vs, rho, VpVsRatio, RhoVpRatio;
     
     int i_x, i_y, i_z, n_points = 0;
     double points[3];
@@ -2185,12 +2183,12 @@ mesh_generate()
 		        fflush(stdout);
 		    }
 			if (Param.useNewSetrec == YES) {
-				if (octor_refinetree(Global.myOctree, toexpand, setrec, TRUE) != 0) {
+				if (octor_refinetree(Global.myOctree, toexpand, setrec, SETREC_1) != 0) {
 				    fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
 				    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
 				}
 			} else {
-				if (octor_refinetree(Global.myOctree, toexpand, setrec, FALSE) != 0) {
+				if (octor_refinetree(Global.myOctree, toexpand, setrec, SETREC_27) != 0) {
 				    fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
 				    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
 				}
@@ -2223,12 +2221,12 @@ mesh_generate()
 		        fflush(stdout);
 		    }
 			if (Param.useNewSetrec == YES) {
-				if (octor_balancetree(Global.myOctree, setrec, TRUE, Param.theStepMeshingFactor) != 0) {
+				if (octor_balancetree(Global.myOctree, setrec, SETREC_1, Param.theStepMeshingFactor) != 0) {
 				    fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
 				    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
 				}
 			} else {
-				if (octor_balancetree(Global.myOctree, setrec, FALSE, Param.theStepMeshingFactor) != 0) {
+				if (octor_balancetree(Global.myOctree, setrec, SETREC_27, Param.theStepMeshingFactor) != 0) {
 				    fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
 				    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
 				}
@@ -2257,7 +2255,7 @@ mesh_generate()
 		        fprintf(stdout, "Refining     ");
 		        fflush(stdout);
 		    }
-			if (octor_refinetree(Global.myOctree, toexpand, setrec, FALSE) != 0) {
+			if (octor_refinetree(Global.myOctree, toexpand, setrec, SETREC_27) != 0) {
 			    fprintf(stderr, "Thread %d: mesh_generate: fail to refine octree\n",Global.myID);
 			    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
 			}
@@ -2287,7 +2285,7 @@ mesh_generate()
 		        fprintf(stdout, "Balancing    ");
 		        fflush(stdout);
 		    }
-			if (octor_balancetree(Global.myOctree, setrec, FALSE, Param.theStepMeshingFactor) != 0) {
+			if (octor_balancetree(Global.myOctree, setrec, SETREC_27, Param.theStepMeshingFactor) != 0) {
 			    fprintf(stderr, "Thread %d: mesh_generate: fail to balance octree\n",Global.myID);
 			    MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
 			}
@@ -2406,8 +2404,22 @@ mesh_generate()
         fflush(stdout);
     }
 
-    mesh_correct_properties( Global.theCVMEp );
-
+    //mesh_correct_properties( Global.theCVMEp );
+    
+    //octant_t *oct = Global.myOctree->root;
+    //tree_t *tree = (tree_t *)Global.myOctree;
+    //setrec(oct, tree->ticksize, ((oct_t *)tree->firstleaf)->payload.leaf->data, SETREC_CORRECT);
+  
+    if (Param.useNewSetrec==YES) {
+	if (octor_refinetree(Global.myOctree, toexpand, setrec, SETREC_CORRECT)!=0) {
+	    fprintf(stdout, "Error: Could not correct properties.");
+	}
+    }
+    else {
+	mesh_correct_properties( Global.theCVMEp );
+    }
+    
+    
     MPI_Barrier( comm_solver );
     Timer_Stop( "Mesh correct properties" );
     if (Global.myID == 0) {
