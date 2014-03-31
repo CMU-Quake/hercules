@@ -1359,6 +1359,7 @@ setrec( octant_t* leaf, double ticksize, void* data )
     g_props_min.Vp  = NAN;
     g_props_min.rho = NAN;
 
+
     for ( i_x = 0; i_x < n_points; i_x++ ) {
 
 	x_m = (Global.theXForMeshOrigin
@@ -7315,9 +7316,9 @@ mesh_correct_properties( etree_t* cvm )
     edata_t* edata;
     int32_t  eindex;
     double   east_m, north_m, depth_m, VpVsRatio, RhoVpRatio;
-    int	     res, iNorth, iEast, iDepth, numPoints = 3, cnt=0;
+    int	     res, iNorth, iEast, iDepth, numPoints = 9, cnt=0;
     double   vs, vp, rho;
-    double   points[3];
+    double   points[9];
     int32_t  lnid0;
 
     // INTRODUCE BKT MODEL
@@ -7329,6 +7330,12 @@ mesh_correct_properties( etree_t* cvm )
     points[0] = 0.005;
     points[1] = 0.5;
     points[2] = 0.995;
+    points[3] = 0.275;
+    points[4] = 0.725;
+    points[5] = 0.1625;
+    points[6] = 0.385;
+    points[7] = 0.6125;
+    points[8] = 0.86;
 
     /* iterate over mesh elements */
     for (eindex = 0; eindex < Global.myMesh->lenum; eindex++) {
@@ -7367,6 +7374,15 @@ mesh_correct_properties( etree_t* cvm )
         vs  = 0;
         rho = 0;
         cnt = 0;
+
+        double xx,yy,zz,po;
+
+    	xx = (Global.myMesh->ticksize) * (double)Global.myMesh->nodeTable[lnid0].x + Global.theXForMeshOrigin;
+    	yy = (Global.myMesh->ticksize) * (double)Global.myMesh->nodeTable[lnid0].y + Global.theYForMeshOrigin;
+    	zz = (Global.myMesh->ticksize) * (double)Global.myMesh->nodeTable[lnid0].z + Global.theZForMeshOrigin;
+
+    	if ( (xx==1000) && (yy==1164.0625) && (zz=121.09375) )
+    		po=90;
 
         for (iNorth = 0; iNorth < numPoints; iNorth++) {
 

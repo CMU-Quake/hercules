@@ -28,11 +28,13 @@
 #include "util.h"
 #include "stiffness.h"
 #include "quake_util.h"
+#include "quakesource.h"
 //#include "commutil.h"
 #include "cvm.h"
 //#include "nonlinear.h"
 #include "topography.h"
 #include "geometrics.h"
+
 
 
 /* -------------------------------------------------------------------------- */
@@ -1060,26 +1062,52 @@ int
 layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload, double ticksize, double theFact )
 {
 
-	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3_FL, Del3_SL;
+	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3_FL, Del3_SL, aa=0, bb=0;
 
 	Pelev = point_elevation( north_m, east_m );
 	H     = theHR * theLy;
-	Del1  = theFLR * H;
+	Del1  = theFLR * H; /* first and second layer depth   */
 	Del2  = theSLR * H;
 
 
 	Del3_FL  = theFLRaiR  * H;
 	Del3_SL  = theSLRaiR  * H;
 
+
+	if (Del3_FL < 0)
+		aa = abs(Del3_FL);
+
+	if (Del3_SL < 0)
+		bb = abs(Del3_SL);
+
+	double h1 = H + Del2 - ( aa + bb );
+
+	z0 = Pelev;
+	z1 = thebase_zcoord + (Del1 + Del2) - h1/H * (thebase_zcoord - Pelev);
+
+	double emin = ( (tick_t)1 << (PIXELLEVEL - theMaxoctlevel) ) * ticksize;
+
+	if ( ( depth_m >= z0  ) && ( depth_m < z1 ) ) {
+
+			payload->Vp = emin * theFact * theVpHS / theVsHS;
+			payload->Vs = emin * theFact;
+			payload->rho = therhoHS;
+
+			return 0;
+		}
+
+	 /* ======================== */
+	/*  ======================== */
+
 	/* compute limits to layers   */
 	/* external relief  */
-	z0 = Pelev;
+/*	z0 = Pelev;
 
-	/* first layer  */
+	 first layer
 	ratio = ( Del1 + H + Del3_FL ) / H ;
 	z1 = thebase_zcoord * ( 1 - ratio ) + ratio * Pelev + Del1;
 
-	/* second layer  */
+	 second layer
 	ratio = ( Del2 + H + Del3_SL ) / H ;
 	z2 = thebase_zcoord * ( 1 - ratio ) + ratio * Pelev + Del2;
 
@@ -1087,7 +1115,7 @@ layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload
 	double emin = ( (tick_t)1 << (PIXELLEVEL - theMaxoctlevel) ) * ticksize;
 
 
-	/* Point in first layer */
+	 Point in first layer
 	if ( ( depth_m >= z0  ) && ( depth_m < z1 ) ) {
 
 		payload->Vp = emin * theFact * theVpHS / theVsHS;
@@ -1097,7 +1125,7 @@ layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload
 		return 0;
 	}
 
-	/* Point in second layer */
+	 Point in second layer
 	if ( ( ( depth_m >= z0  ) && ( depth_m > z1 ) && ( depth_m < z2 ) ) ||
 		 ( ( depth_m >= z0  ) && ( z0 > z1 ) && ( depth_m < z2 ) )	) {
 
@@ -1106,20 +1134,21 @@ layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload
 		payload->rho = therhoHS;
 
 		return 0;
-	}
+	}*/
+ /* ======================== */
+/*  ======================== */
+
+
 
 	/* Point in Half-space */
-//	if ( ( depth_m >= z0  ) && ( depth_m > z2 ) && ( depth_m < z2 ) ){
+
 
 		payload->Vp = theVpHS;
 		payload->Vs = theVsHS;
 		payload->rho = therhoHS;
 
 		return 0;
-//	}
 
-
-//	return -1;
 
 }
 
@@ -1209,16 +1238,51 @@ layer_Correctprop( double east_m, double north_m, double depth_m, cvmpayload_t* 
 int32_t
 topography_initparameters ( const char *parametersin )
 {
-    FILE                *fp;
-    FILE                *fp_topo;
-    int                 iTopo;
-    int8_t              Maxoctlevel;
-    char                topo_dir[256];
-    char                topo_file[256];
-    double              L_ew, L_ns, int_np_ew, int_np_ns, fract_np_ew, fract_np_ns;
-    char                etree_model[64], fem_meth[64];
-    etreetype_t         etreetype;
-    topometh_t          topo_method;
+
+    FILE        *fp;
+    int 		my_Maxoctlevel;
+    char        my_etree_model[64], my_fem_meth[64];
+    double      my_thebase_zcoord,my_L_ew, my_L_ns, my_theLy, my_theBR, my_theHR, my_theFLR,
+    			my_theSLR, my_theFLRaiR, my_theSLRaiR, my_theVs1R, my_theVs2R,
+    			my_theVsHS,my_theVpHS,my_therhoHS;
+    etreetype_t         my_etreetype;
+    topometh_t          my_topo_method;
+
+
+    /* =========================================== */
+    /* read point source coordinates  */
+    /* =========================================== */
+
+    FILE* fparea, *fpstrike, *fpdip, *fprake, *fpslip, *fpcoords,
+	*fpslipfun;
+
+    char source_dir[256], slipin[256], slipfunin[256];
+    char coordsin[256], areain[256], strikein[256], dipin[256], rakein[256];
+
+    size_t src_dir_len = sizeof(source_dir);
+    size_t sdo_len     = 0;
+    char* src_dir_p    = source_dir;
+    char*  theSourceOutputDir = NULL;
+    source_type_t  theTypeOfSource;
+
+    /* =========================================== */
+    /* read domain and source path from physics.in */
+    /* =========================================== */
+
+    FILE* fp11 = fopen( parametersin, "r" );
+
+    if ( ( parsetext(fp11, "source_directory",    's', &source_dir           ) != 0 ) )
+    {
+        fprintf( stderr,
+                 "Error parsing topography parameters from %s\n",
+                 parametersin );
+        return -1;
+    }
+
+    fclose(fp11);
+
+    /* ======================== */
+
 
     /* Opens parametersin file */
 
@@ -1231,24 +1295,24 @@ topography_initparameters ( const char *parametersin )
 
     /* Parses parametersin to capture topography single-value parameters */
 
-    if ( ( parsetext(fp, "maximum_octant_level",    'i', &Maxoctlevel           ) != 0) ||
-         ( parsetext(fp, "computation_method",      's', &fem_meth              ) != 0) ||
-         ( parsetext(fp, "topographybase_zcoord",   'd', &thebase_zcoord        ) != 0) ||
-         ( parsetext(fp, "region_length_east_m",    'd', &L_ew                  ) != 0) ||
-         ( parsetext(fp, "type_of_etree",           's', &etree_model           ) != 0) ||
-         ( parsetext(fp, "Mnt_YLong",               'd', &theLy                 ) != 0) ||
-         ( parsetext(fp, "Base_ratio",              'd', &theBR                 ) != 0) ||
-         ( parsetext(fp, "Height_ratio",            'd', &theHR                 ) != 0) ||
-         ( parsetext(fp, "Fst_lay_ratio",           'd', &theFLR                ) != 0) ||
-         ( parsetext(fp, "Snd_lay_ratio",           'd', &theSLR                ) != 0) ||
-         ( parsetext(fp, "Fst_lay_Raising_ratio",   'd', &theFLRaiR             ) != 0) ||
-         ( parsetext(fp, "Snd_lay_Raising_ratio",   'd', &theSLRaiR             ) != 0) ||
-         ( parsetext(fp, "Vs1_ratio",               'd', &theVs1R               ) != 0) ||
-         ( parsetext(fp, "Vs2_ratio",               'd', &theVs2R               ) != 0) ||
-         ( parsetext(fp, "VsHs",                    'd', &theVsHS               ) != 0) ||
-         ( parsetext(fp, "VpHs",                    'd', &theVpHS               ) != 0) ||
-         ( parsetext(fp, "rhoHs",                   'd', &therhoHS              ) != 0) ||
-         ( parsetext(fp, "region_length_north_m",   'd', &L_ns                  ) != 0) )
+    if ( ( parsetext(fp, "maximum_octant_level",    'i', &my_Maxoctlevel           ) != 0) ||
+         ( parsetext(fp, "computation_method",      's', &my_fem_meth              ) != 0) ||
+         ( parsetext(fp, "topographybase_zcoord",   'd', &my_thebase_zcoord           ) != 0) ||
+         ( parsetext(fp, "region_length_east_m",    'd', &my_L_ew                  ) != 0) ||
+         ( parsetext(fp, "region_length_north_m",   'd', &my_L_ns                  ) != 0) ||
+         ( parsetext(fp, "type_of_etree",           's', &my_etree_model           ) != 0) ||
+         ( parsetext(fp, "Mnt_YLong",               'd', &my_theLy                 ) != 0) ||
+         ( parsetext(fp, "Base_ratio",              'd', &my_theBR                 ) != 0) ||
+         ( parsetext(fp, "Height_ratio",            'd', &my_theHR                 ) != 0) ||
+         ( parsetext(fp, "Fst_lay_ratio",           'd', &my_theFLR                ) != 0) ||
+         ( parsetext(fp, "Snd_lay_ratio",           'd', &my_theSLR                ) != 0) ||
+         ( parsetext(fp, "Fst_lay_Raising_ratio",   'd', &my_theFLRaiR             ) != 0) ||
+         ( parsetext(fp, "Snd_lay_Raising_ratio",   'd', &my_theSLRaiR             ) != 0) ||
+         ( parsetext(fp, "Vs1_ratio",               'd', &my_theVs1R               ) != 0) ||
+         ( parsetext(fp, "Vs2_ratio",               'd', &my_theVs2R               ) != 0) ||
+         ( parsetext(fp, "VsHs",                    'd', &my_theVsHS               ) != 0) ||
+         ( parsetext(fp, "VpHs",                    'd', &my_theVpHS               ) != 0) ||
+         ( parsetext(fp, "rhoHs",                   'd', &my_therhoHS              ) != 0)  )
     {
         fprintf( stderr,
                  "Error parsing topography parameters from %s\n",
@@ -1257,97 +1321,71 @@ topography_initparameters ( const char *parametersin )
     }
 
 
-    if ( strcasecmp(etree_model, "full") == 0 ) {
-        etreetype = FULL;
-    } else if ( strcasecmp(etree_model, "flat") == 0 ) {
-        etreetype = FLAT;
+    if ( strcasecmp(my_etree_model, "full") == 0 ) {
+        my_etreetype = FULL;
+    } else if ( strcasecmp(my_etree_model, "flat") == 0 ) {
+        my_etreetype = FLAT;
     } else {
         fprintf(stderr,
                 "Illegal etree_type model for topography analysis"
-                "(Flat, Full): %s\n", etree_model);
+                "(Flat, Full): %s\n", my_etree_model);
         return -1;
     }
 
-    if ( strcasecmp(fem_meth, "vt") == 0 ) {
-        topo_method = VT;
-    } else if ( strcasecmp(fem_meth, "fem") == 0 ) {
-        topo_method = FEM;
+    if ( strcasecmp(my_fem_meth, "vt") == 0 ) {
+        my_topo_method = VT;
+    } else if ( strcasecmp(my_fem_meth, "fem") == 0 ) {
+        my_topo_method = FEM;
     } else {
         fprintf(stderr,
                 "Illegal computation_method for topography analysis"
-                "(vt, fem): %s\n", fem_meth);
+                "(vt, fem): %s\n", my_fem_meth);
         return -1;
     }
 
 
     /* Performs sanity checks */
-    if ( ( Maxoctlevel < 0 ) || ( Maxoctlevel > 30 ) ) {
+    if ( ( my_Maxoctlevel < 0 ) || ( my_Maxoctlevel > 30 ) ) {
         fprintf( stderr,
                  "Illegal maximum octant level for topography %d\n",
-                 Maxoctlevel );
+                 my_Maxoctlevel );
         return -1;
     }
 
-    if ( ( thebase_zcoord <= 0 ) ) {
+    if ( ( my_thebase_zcoord <= 0 ) ) {
         fprintf( stderr,
                  "Illegal z coordinate for the base of the topography %f\n",
-                 thebase_zcoord );
+                 my_thebase_zcoord );
         return -1;
     }
 
-    if ( ( L_ew <= 0 ) || ( L_ns <=0 ) ) {
+    if ( ( my_L_ew <= 0 ) || ( my_L_ns <=0 ) ) {
         fprintf( stderr,
                  "Illegal domain's dimensions ew_long=%f ns_long=%f\n",
-                 L_ew, L_ns );
+                 my_L_ew, my_L_ns );
         return -1;
     }
 
 
     /* Initialize the static global variables */
-	theEtreeType        = etreetype;
-	theMaxoctlevel      = Maxoctlevel;
-	theTopoMethod       = topo_method;
-	theDomainLong_ew    = L_ew;
-	theDomainLong_ns    = L_ns;
-
-    /* read topography info */
-//	sprintf( topo_file,"%s/topography.in", topo_dir );
-
-//	if ( ( fp_topo   = fopen ( topo_file ,   "r") ) == NULL ) {
-//	    fprintf(stderr, "Error opening topography file\n" );
-//	    return -1;
-//	}
-
-//	fscanf( fp_topo,   " %lf ", &So );
-
-//	fract_np_ew = modf ( L_ew / So, &int_np_ew );
-//	fract_np_ns = modf ( L_ns / So, &int_np_ns );
-//
-//	if ( ( fract_np_ew != 0) || ( fract_np_ns != 0 ) ) {
-//	    fprintf(stderr, "Error opening topography file - NOT A REGULAR MESH \n" );
-//	    return -1;
-//	}
-
-//	np_ew              = ( L_ew / So + 1 );
-//	np_ns              = ( L_ns / So + 1 );
-//	ntp                = ( L_ew / So + 1 ) * ( L_ns / So + 1 );
-//	theTopoInfo        = (double*)malloc( sizeof(double) * ntp );
-
-
-//	if ( theTopoInfo           == NULL ) {
-//		fprintf( stderr, "Error allocating transient array for the topography data"
-//				"in topography_initparameters " );
-//		return -1;
-//	}
-
-//	for ( iTopo = 0; iTopo < ntp; ++iTopo) {
-//
-//	    fscanf(fp_topo,   " %lf ", &(theTopoInfo[iTopo]));
-//
-//	}
-
-//    fclose(fp);
-//    fclose(fp_topo);
+	theMaxoctlevel      = my_Maxoctlevel;
+	theTopoMethod       = my_topo_method;
+	thebase_zcoord		= my_thebase_zcoord;
+	theDomainLong_ew    = my_L_ew;
+	theDomainLong_ns    = my_L_ns;
+	theEtreeType        = my_etreetype;
+	theLy				= my_theLy;
+	theBR				= my_theBR;
+	theHR				= my_theHR;
+	theFLR				= my_theFLR;
+	theSLR				= my_theSLR;
+	theFLRaiR			= my_theFLRaiR;
+	theSLRaiR			= my_theSLRaiR;
+	theVs1R				= my_theVs1R;
+	theVs2R				= my_theVs2R;
+	theVsHS				= my_theVsHS;
+	theVpHS				= my_theVpHS;
+	therhoHS			= my_therhoHS;
 
     return 0;
 }
@@ -1371,7 +1409,6 @@ void topo_init ( int32_t myID, const char *parametersin ) {
     /* Broadcasting data */
 
     double_message[0]    = thebase_zcoord;
-//    double_message[1]    = So;
     double_message[1]    = theDomainLong_ew;
     double_message[2]    = theDomainLong_ns;
     double_message[3]    = theLy;
@@ -1389,9 +1426,6 @@ void topo_init ( int32_t myID, const char *parametersin ) {
 
 
     int_message   [0]    = theMaxoctlevel;
-//    int_message   [1]    = ntp;
-//    int_message   [2]    = np_ew;
-//    int_message   [3]    = np_ns;
     int_message   [1]    = (int)theEtreeType;
     int_message   [2]    = (int)theTopoMethod;
 
@@ -1400,7 +1434,6 @@ void topo_init ( int32_t myID, const char *parametersin ) {
     MPI_Bcast(int_message,    3, MPI_INT,    0, comm_solver);
 
     thebase_zcoord       =  double_message[0];
-//    So				     =  double_message[1];
     theDomainLong_ew     =  double_message[1];
     theDomainLong_ns     =  double_message[2];
     theLy                =  double_message[3];
@@ -1417,20 +1450,8 @@ void topo_init ( int32_t myID, const char *parametersin ) {
     theSLRaiR            =  double_message[14];
 
     theMaxoctlevel       = int_message[0];
-//    ntp					 = int_message[1];
-//    np_ew			     = int_message[2];
-//    np_ns			     = int_message[3];
     theEtreeType         = int_message[1];
     theTopoMethod        = int_message[2];
-
-//    /* allocate table of properties for all other PEs */
-
-//    if (myID != 0) {
-//        theTopoInfo        = (double*)malloc( sizeof(double) * ntp );
-//    }
-
-    /* Broadcast table of properties */
-//    MPI_Bcast(theTopoInfo,   ntp, MPI_DOUBLE, 0, comm_solver);
 
     return;
 
