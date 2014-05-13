@@ -31,10 +31,9 @@
 #include "quakesource.h"
 //#include "commutil.h"
 #include "cvm.h"
-//#include "nonlinear.h"
+#include "nonlinear.h"
 #include "topography.h"
 #include "geometrics.h"
-
 
 
 /* -------------------------------------------------------------------------- */
@@ -97,6 +96,10 @@ static int32_t            myDRM_Brd6 = 0;
 static int32_t            myDRM_Brd7 = 0;
 static int32_t            myDRM_Brd8 = 0;
 
+
+static double The_hypocenter_lat_deg = 0;
+static double The_hypocenter_long_deg = 0;
+static double The_hypocenter_deep = 0;
 
 /* ==============================   */
 
@@ -269,6 +272,39 @@ static int32_t            myDRM_Brd8 = 0;
 								       	   	   {0, 0, 1, 1}, \
 								       	   	   {0, 1, 1, 0}, \
 								       	   	   {0, 1, 0, 1}   }
+
+
+#define TETRADER tetraDer[15][4] =   { {   -1,     0,    1,    0}, \
+								       {   -1,     1,    0,    0}, \
+								       {   -1,     0,    0,    1}, \
+								       {    1,     0,   -1,    0}, \
+								       {    1,    -1,    0,    0}, \
+								       {   -1,     0,    0,    1}, \
+								       {   -1,     0,    1,    0}, \
+								       {    1,    -1,    0,    0}, \
+								       {    1,     0,    0,   -1}, \
+								       {    1,     0,   -1,    0}, \
+								       {   -1,     1,    0,    0}, \
+								       {    1,     0,    0,   -1}, \
+								       { -0.5,  -0.5,  0.5,  0.5}, \
+								       {  0.5,  -0.5,  0.5, -0.5}, \
+								       { -0.5,   0.5,  0.5, -0.5}, }
+
+#define TETRADERSYMM tetraDerSymm[15][4] =   { {   -1,     0,    1,    0}, \
+								               {    0,     1,   -1,    0}, \
+								               {    0,     0,   -1,    1}, \
+								               {    0,    -1,    1,    0}, \
+								               {   -1,     1,    0,    0}, \
+								               {    0,    -1,    0,    1}, \
+								               {   -1,     1,    0,    0}, \
+								               {   -1,     0,    1,    0}, \
+								               {    1,     0,    0,   -1}, \
+								               {   -1,     0,    1,    0}, \
+								               {    0,    -1,    1,    0}, \
+								               {    0,     0,    1,   -1}, \
+								               { -0.5,  -0.5,  0.5,  0.5}, \
+								               { -0.5,   0.5,  0.5, -0.5}, \
+								               { -0.5,   0.5, -0.5,  0.5}, }
 
 
 /* -------------------------------------------------------------------------- */
@@ -685,7 +721,7 @@ void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_to
 	} /* for every i */
 
 	/* check 16 combinations */
-	if ( ( far_air_flag == 1 ) ) {
+	if ( far_air_flag == 1 ) {
 		if ( ( near_air_flag == 1 ) &&
 			 ( near_mat_flag == 0 ) &&
 			 ( far_mat_flag == 0 ) ) {
@@ -1062,7 +1098,7 @@ int
 layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload, double ticksize, double theFact )
 {
 
-	double Pelev, ratio, z0, z1, z2, H, Del1, Del2, Del3_FL, Del3_SL, aa=0, bb=0;
+	double Pelev, z0, z1, H, Del1, Del2, Del3_FL, Del3_SL, aa=0, bb=0;
 
 	Pelev = point_elevation( north_m, east_m );
 	H     = theHR * theLy;
@@ -1080,14 +1116,30 @@ layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload
 	if (Del3_SL < 0)
 		bb = abs(Del3_SL);
 
+	/* este es h1 para discretizacion en los tres estratos  */
 	double h1 = H + Del2 - ( aa + bb );
 
+	/* este es h1 para discretizacion SOLO en el primer estrato  */
+	//double h1 = H + Del1 - ( aa );
+
+
 	z0 = Pelev;
-	z1 = thebase_zcoord + (Del1 + Del2) - h1/H * (thebase_zcoord - Pelev);
+
+	/* este es z1 para discretizacion en los tres estratos  */
+	//z1 = thebase_zcoord + (Del1 + Del2) - h1/H * (thebase_zcoord - Pelev);
+
+	/* este es z1 para discretizacion SOLO en el primer estrato  */
+	z1 = thebase_zcoord + (Del1) - h1/H * (thebase_zcoord - Pelev);
+
 
 	double emin = ( (tick_t)1 << (PIXELLEVEL - theMaxoctlevel) ) * ticksize;
+	double source_sph = (east_m - The_hypocenter_long_deg) * (east_m - The_hypocenter_long_deg) +
+						(north_m - The_hypocenter_lat_deg) * (north_m - The_hypocenter_lat_deg) +
+						(depth_m - The_hypocenter_deep) * (depth_m - The_hypocenter_deep);
 
-	if ( ( depth_m >= z0  ) && ( depth_m < z1 ) ) {
+	source_sph = sqrt (source_sph);
+
+	if ( ( ( depth_m >= z0  ) && ( depth_m < z1 ) ) || ( source_sph < theVsHS / theFact / 5.0  )  ) {
 
 			payload->Vp = emin * theFact * theVpHS / theVsHS;
 			payload->Vs = emin * theFact;
@@ -1240,7 +1292,7 @@ topography_initparameters ( const char *parametersin )
 {
 
     FILE        *fp;
-    int 		my_Maxoctlevel;
+    int 		my_Maxoctlevel, LonLatParam;
     char        my_etree_model[64], my_fem_meth[64];
     double      my_thebase_zcoord,my_L_ew, my_L_ns, my_theLy, my_theBR, my_theHR, my_theFLR,
     			my_theSLR, my_theFLRaiR, my_theSLRaiR, my_theVs1R, my_theVs2R,
@@ -1253,17 +1305,20 @@ topography_initparameters ( const char *parametersin )
     /* read point source coordinates  */
     /* =========================================== */
 
-    FILE* fparea, *fpstrike, *fpdip, *fprake, *fpslip, *fpcoords,
-	*fpslipfun;
+//    FILE* fparea, *fpstrike, *fpdip, *fprake, *fpslip, *fpcoords,
+//	*fpslipfun;
 
-    char source_dir[256], slipin[256], slipfunin[256];
-    char coordsin[256], areain[256], strikein[256], dipin[256], rakein[256];
+    FILE *fsource;
 
-    size_t src_dir_len = sizeof(source_dir);
-    size_t sdo_len     = 0;
-    char* src_dir_p    = source_dir;
-    char*  theSourceOutputDir = NULL;
-    source_type_t  theTypeOfSource;
+    char source_dir[256], source_file[256];
+//    char coordsin[256], areain[256], strikein[256], dipin[256], rakein[256];
+
+  //  size_t src_dir_len = sizeof(source_dir);
+  //  size_t sdo_len     = 0;
+ //   char* src_dir_p    = source_dir;
+ //   char*  theSourceOutputDir = NULL;
+ //   source_type_t  theTypeOfSource;
+    double hypocenter_lat_deg=0, hypocenter_long_deg=0, hypocenter_depth_m=0;
 
     /* =========================================== */
     /* read domain and source path from physics.in */
@@ -1271,18 +1326,51 @@ topography_initparameters ( const char *parametersin )
 
     FILE* fp11 = fopen( parametersin, "r" );
 
-    if ( ( parsetext(fp11, "source_directory",    's', &source_dir           ) != 0 ) )
+    if ( ( parsetext(fp11, "source_directory",    's', &source_dir ) != 0 ) )
     {
         fprintf( stderr,
-                 "Error parsing topography parameters from %s\n",
+                 "Error parsing source_directory in topography module from %s\n",
                  parametersin );
         return -1;
     }
 
     fclose(fp11);
 
-    /* ======================== */
+    /* read source info */
+	sprintf( source_file,"%s/source.in", source_dir );
 
+	if ( ( fsource   = fopen ( source_file ,   "r") ) == NULL ) {
+	    fprintf(stderr, "Error opening source file in topography module\n" );
+	    return -1;
+	}
+
+	if ( (parsetext(fsource,"lonlat_or_cartesian", 'i',&LonLatParam) != 0) ){
+	    fprintf(stderr,
+		    "Err lonlat_or_cartesian in source.in point source parameters\n");
+	    return -1;
+	}
+
+	if( LonLatParam == 1 )  {
+
+	    if ( (parsetext(fsource,"hypocenter_x",       'd',&hypocenter_lat_deg  ) != 0) ||
+		     (parsetext(fsource,"hypocenter_y",       'd',&hypocenter_long_deg ) != 0) ||
+		     (parsetext(fsource,"hypocenter_depth_m", 'd',&hypocenter_depth_m  ) != 0) ){
+	    		fprintf(stderr, "Err hypocenter x or y:read_point_source\n");
+	    		return -1; }
+	} else {
+	      fprintf(stderr, "Err point-source coordinates must be Cartesian\n");
+	      return -1; }
+
+	The_hypocenter_lat_deg = hypocenter_lat_deg;
+	The_hypocenter_long_deg = hypocenter_long_deg;
+	The_hypocenter_deep = hypocenter_depth_m ;
+
+
+    fclose(fsource);
+
+    /* ======================== */
+    /* ======================== */
+    /* ======================== */
 
     /* Opens parametersin file */
 
@@ -1392,8 +1480,8 @@ topography_initparameters ( const char *parametersin )
 
 void topo_init ( int32_t myID, const char *parametersin ) {
 
-    int     int_message[6];
-    double  double_message[16];
+    int     int_message[3];
+    double  double_message[18];
 
     /* Capturing data from file --- only done by PE0 */
     if (myID == 0) {
@@ -1424,13 +1512,17 @@ void topo_init ( int32_t myID, const char *parametersin ) {
     double_message[13]    = theFLRaiR;
     double_message[14]    = theSLRaiR;
 
+    double_message[15]    = The_hypocenter_long_deg;
+    double_message[16]    = The_hypocenter_lat_deg;
+    double_message[17]    = The_hypocenter_deep;
+
 
     int_message   [0]    = theMaxoctlevel;
     int_message   [1]    = (int)theEtreeType;
     int_message   [2]    = (int)theTopoMethod;
 
 
-    MPI_Bcast(double_message, 15, MPI_DOUBLE, 0, comm_solver);
+    MPI_Bcast(double_message, 18, MPI_DOUBLE, 0, comm_solver);
     MPI_Bcast(int_message,    3, MPI_INT,    0, comm_solver);
 
     thebase_zcoord       =  double_message[0];
@@ -1448,6 +1540,11 @@ void topo_init ( int32_t myID, const char *parametersin ) {
     therhoHS             =  double_message[12];
     theFLRaiR            =  double_message[13];
     theSLRaiR            =  double_message[14];
+
+    The_hypocenter_long_deg = double_message[15];
+    The_hypocenter_lat_deg  = double_message[16];
+    The_hypocenter_deep     = double_message[17];
+
 
     theMaxoctlevel       = int_message[0];
     theEtreeType         = int_message[1];
@@ -1666,7 +1763,6 @@ void topo_solver_init(int32_t myID, mesh_t *myMesh) {
     topography_elements_count   ( myID, myMesh );
     topography_elements_mapping ( myID, myMesh );
 
-//    compute_KTetrah();
 
     fprintf(stdout, "TopoElem=%d, MyID=%d\n", myTopoElementsCount, myID);
 
@@ -2764,6 +2860,8 @@ void topography_stations_init( mesh_t    *myMesh,
     octant_t   *octant;
     int32_t     lnid0;
     elem_t     *elemp;
+    // int         i,j;
+
 
     if ( ( myNumberOfStations == 0   ) ||
          ( theTopoMethod      == FEM ) )
@@ -2783,7 +2881,14 @@ void topography_stations_init( mesh_t    *myMesh,
     	myTopoStations[iStation].nodes_to_interpolate[1] = 0;
     	myTopoStations[iStation].nodes_to_interpolate[2] = 0;
     	myTopoStations[iStation].nodes_to_interpolate[3] = 0;
+
+//    	for ( i = 0; i < 3; i++ ){
+//    		for ( j = 0; j < 4; j++ ){
+//    			myTopoStations[iStation].tetraDer[i][j] = 0.0;
+//    		}
+//    	}
     }
+
 
     for (iStation = 0; iStation < myNumberOfStations; iStation++) {
 
@@ -2832,7 +2937,10 @@ void topography_stations_init( mesh_t    *myMesh,
                 topoconstants_t  *ecp;
                 ecp    = myTopoSolver->topoconstants + topo_eindex;
 
-                compute_tetra_localcoord ( point, elemp,
+                myTopoStations[iStation].lambda = ecp->lambda;
+                myTopoStations[iStation].mu     = ecp->mu;
+
+                compute_tetra_localcoord ( point, elemp,myTopoStations[iStation].Der,
                 		                   myTopoStations[iStation].nodes_to_interpolate,
                 		                   myTopoStations[iStation].local_coord,
                 		                   xo, yo, zo, ecp->h );
@@ -2846,7 +2954,7 @@ void topography_stations_init( mesh_t    *myMesh,
 
 }
 
-void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
+void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp, fvector_t *Der,
 		                        int32_t *localNode, double *localCoord,
 		                        double xo, double yo, double zo, double h )
 {
@@ -2886,6 +2994,22 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 					*(localNode + 2)  = elemp->lnid[ 1 ];
 					*(localNode + 3)  = elemp->lnid[ 4 ];
 
+					Der[0].f[0] = -1.0 / h;
+					Der[0].f[1] = -1.0 / h;
+					Der[0].f[2] = -1.0 / h;
+
+					Der[1].f[0] =  0.0;
+					Der[1].f[1] =  1.0 / h;
+					Der[1].f[2] =  0.0;
+
+					Der[2].f[0] =  1.0 / h;
+					Der[2].f[1] =  0.0;
+					Der[2].f[2] =  0.0;
+
+					Der[3].f[0] =  0.0;
+					Der[3].f[1] =  0.0;
+					Der[3].f[2] =  1.0 / h;
+
 					return;
 				}
 				break;
@@ -2911,6 +3035,22 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 					*(localNode + 1)  = elemp->lnid[ 1 ];
 					*(localNode + 2)  = elemp->lnid[ 2 ];
 					*(localNode + 3)  = elemp->lnid[ 7 ];
+
+					Der[0].f[0] =  1.0 / h;
+					Der[0].f[1] =  1.0 / h;
+					Der[0].f[2] = -1.0 / h;
+
+					Der[1].f[0] =  0.0;
+					Der[1].f[1] = -1.0 / h;
+					Der[1].f[2] =  0.0;
+
+					Der[2].f[0] = -1.0 / h;
+					Der[2].f[1] =  0.0;
+					Der[2].f[2] =  0.0;
+
+					Der[3].f[0] =  0.0;
+					Der[3].f[1] =  0.0;
+					Der[3].f[2] =  1.0 / h;
 
 					return;
 				}
@@ -2938,6 +3078,23 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 					*(localNode + 2)  = elemp->lnid[ 7 ];
 					*(localNode + 3)  = elemp->lnid[ 2 ];
 
+					Der[0].f[0] = -1.0 / h;
+					Der[0].f[1] =  1.0 / h;
+					Der[0].f[2] =  1.0 / h;
+
+					Der[1].f[0] =  0.0;
+					Der[1].f[1] = -1.0 / h;
+					Der[1].f[2] =  0.0;
+
+					Der[2].f[0] =  1.0 / h;
+					Der[2].f[1] =  0.0;
+					Der[2].f[2] =  0.0;
+
+					Der[3].f[0] =  0.0;
+					Der[3].f[1] =  0.0;
+					Der[3].f[2] = -1.0 / h;
+
+
 					return;
 				}
 				break;
@@ -2964,6 +3121,22 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 					*(localNode + 2)  = elemp->lnid[ 4 ];
 					*(localNode + 3)  = elemp->lnid[ 1 ];
 
+					Der[0].f[0] =  1.0 / h;
+					Der[0].f[1] = -1.0 / h;
+					Der[0].f[2] =  1.0 / h;
+
+					Der[1].f[0] =  0.0;
+					Der[1].f[1] =  1.0 / h;
+					Der[1].f[2] =  0.0;
+
+					Der[2].f[0] = -1.0 / h;
+					Der[2].f[1] =  0.0;
+					Der[2].f[2] =  0.0;
+
+					Der[3].f[0] =  0.0;
+					Der[3].f[1] =  0.0;
+					Der[3].f[2] = -1.0 / h;
+
 					return;
 				}
 				break;
@@ -2989,6 +3162,22 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 					*(localNode + 1)  = elemp->lnid[ 4 ];
 					*(localNode + 2)  = elemp->lnid[ 7 ];
 					*(localNode + 3)  = elemp->lnid[ 1 ];
+
+					Der[0].f[0] = -1.0 / ( 2 * h );
+					Der[0].f[1] =  1.0 / ( 2 * h );
+					Der[0].f[2] = -1.0 / ( 2 * h );
+
+					Der[1].f[0] = -1.0 / ( 2 * h );
+					Der[1].f[1] = -1.0 / ( 2 * h );
+					Der[1].f[2] =  1.0 / ( 2 * h );
+
+					Der[2].f[0] =  1.0 / ( 2 * h );
+					Der[2].f[1] =  1.0 / ( 2 * h );
+					Der[2].f[2] =  1.0 / ( 2 * h );
+
+					Der[3].f[0] =  1.0 / ( 2 * h );
+					Der[3].f[1] = -1.0 / ( 2 * h );
+					Der[3].f[2] = -1.0 / ( 2 * h );
 
 					return;
 				}
@@ -3026,6 +3215,22 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 					*(localNode + 2)  = elemp->lnid[ 1 ];
 					*(localNode + 3)  = elemp->lnid[ 5 ];
 
+					Der[0].f[0] = -1.0 / h;
+					Der[0].f[1] =  0.0;
+					Der[0].f[2] =  0.0;
+
+					Der[1].f[0] =  0.0;
+					Der[1].f[1] =  1.0 / h;
+					Der[1].f[2] =  0.0;
+
+					Der[2].f[0] =  1.0 / h;
+					Der[2].f[1] = -1.0 / h;
+					Der[2].f[2] = -1.0 / h;
+
+					Der[3].f[0] =  0.0;
+					Der[3].f[1] =  0.0;
+					Der[3].f[2] =  1.0 / h;
+
 					return;
 				}
 				break;
@@ -3051,6 +3256,22 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 					*(localNode + 1)  = elemp->lnid[ 2 ];
 					*(localNode + 2)  = elemp->lnid[ 3 ];
 					*(localNode + 3)  = elemp->lnid[ 6 ];
+
+					Der[0].f[0] =  0.0;
+					Der[0].f[1] = -1.0 / h;;
+					Der[0].f[2] =  0.0;
+
+					Der[1].f[0] = -1.0 / h;
+					Der[1].f[1] =  1.0 / h;
+					Der[1].f[2] = -1.0 / h;
+
+					Der[2].f[0] =  1.0 / h;
+					Der[2].f[1] =  0.0;
+					Der[2].f[2] =  0.0;
+
+					Der[3].f[0] =  0.0;
+					Der[3].f[1] =  0.0;
+					Der[3].f[2] =  1.0 / h;
 
 					return;
 				}
@@ -3078,6 +3299,22 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 					*(localNode + 2)  = elemp->lnid[ 6 ];
 					*(localNode + 3)  = elemp->lnid[ 0 ];
 
+					Der[0].f[0] = -1.0 / h;
+					Der[0].f[1] = -1.0 / h;
+					Der[0].f[2] =  1.0 / h;
+
+					Der[1].f[0] =  1.0 / h;
+					Der[1].f[1] =  0.0;
+					Der[1].f[2] =  0.0;
+
+					Der[2].f[0] =  0.0;
+					Der[2].f[1] =  1.0 / h;;
+					Der[2].f[2] =  0.0;
+
+					Der[3].f[0] =  0.0;
+					Der[3].f[1] =  0.0;
+					Der[3].f[2] = -1.0 / h;
+
 					return;
 				}
 				break;
@@ -3103,6 +3340,22 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 					*(localNode + 1)  = elemp->lnid[ 5 ];
 					*(localNode + 2)  = elemp->lnid[ 7 ];
 					*(localNode + 3)  = elemp->lnid[ 3 ];
+
+					Der[0].f[0] = -1.0 / h;
+					Der[0].f[1] =  0.0;
+					Der[0].f[2] =  0.0;
+
+					Der[1].f[0] =  0.0;
+					Der[1].f[1] = -1.0 / h;
+					Der[1].f[2] =  0.0;
+
+					Der[2].f[0] =  1.0 / h;
+					Der[2].f[1] =  1.0 / h;
+					Der[2].f[2] =  1.0 / h;
+
+					Der[3].f[0] =  0.0;
+					Der[3].f[1] =  0.0;
+					Der[3].f[2] = -1.0 / h;
 
 					return;
 				}
@@ -3130,7 +3383,24 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 					*(localNode + 2)  = elemp->lnid[ 3 ];
 					*(localNode + 3)  = elemp->lnid[ 5 ];
 
+					Der[0].f[0] = -1.0 / ( 2 * h );
+					Der[0].f[1] = -1.0 / ( 2 * h );
+					Der[0].f[2] = -1.0 / ( 2 * h );
+
+					Der[1].f[0] = -1.0 / ( 2 * h );
+					Der[1].f[1] =  1.0 / ( 2 * h );
+					Der[1].f[2] =  1.0 / ( 2 * h );
+
+					Der[2].f[0] =  1.0 / ( 2 * h );
+					Der[2].f[1] =  1.0 / ( 2 * h );
+					Der[2].f[2] = -1.0 / ( 2 * h );
+
+					Der[3].f[0] =  1.0 / ( 2 * h );
+					Der[3].f[1] = -1.0 / ( 2 * h );
+					Der[3].f[2] =  1.0 / ( 2 * h );
+
 					return;
+
 				}
 				break;
 
@@ -3150,6 +3420,32 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 	MPI_Abort(MPI_COMM_WORLD, ERROR);
 	exit(1);
 
+}
+
+/*
+ * Compute strain tensor of a given point in the tetrahedron.
+ */
+tensor_t tetra_strain (fvector_t *u, fvector_t *Der) {
+
+    int i;
+
+    tensor_t strain = init_tensor();
+
+    /* Contribution of each node */
+    for (i = 0; i < 4; i++) {
+
+        strain.xx += Der[i].f[0] * u[i].f[0];
+        strain.yy += Der[i].f[1] * u[i].f[1];
+        strain.zz += Der[i].f[2] * u[i].f[2];
+
+        strain.xy += 0.5 * ( Der[i].f[1] * u[i].f[0] + Der[i].f[0] * u[i].f[1] );
+        strain.xz += 0.5 * ( Der[i].f[2] * u[i].f[0] + Der[i].f[0] * u[i].f[2] );
+        strain.yz += 0.5 * ( Der[i].f[2] * u[i].f[1] + Der[i].f[1] * u[i].f[2] );
+
+
+    } /* nodes contribution */
+
+    return strain;
 }
 
 int compute_tetra_displ (double *dis_x, double *dis_y, double *dis_z,
@@ -3227,7 +3523,40 @@ int compute_tetra_displ (double *dis_x, double *dis_y, double *dis_z,
 			          + myTopoStations[statID].local_coord[1] * uz_10
 			          + myTopoStations[statID].local_coord[2] * uz_30;
 
-		/*   get velocities */
+
+		/*  compute tetrahedra strains  */
+		fvector_t      u[4];
+
+		u[0].f[0]  = mySolver->tm1[ myTopoStations[statID].nodes_to_interpolate[0] ].f[0];
+		u[0].f[1]  = mySolver->tm1[ myTopoStations[statID].nodes_to_interpolate[0] ].f[1];
+		u[0].f[2]  = mySolver->tm1[ myTopoStations[statID].nodes_to_interpolate[0] ].f[2];
+
+		u[1].f[0]  = mySolver->tm1[ myTopoStations[statID].nodes_to_interpolate[1] ].f[0];
+		u[1].f[1]  = mySolver->tm1[ myTopoStations[statID].nodes_to_interpolate[1] ].f[1];
+		u[1].f[2]  = mySolver->tm1[ myTopoStations[statID].nodes_to_interpolate[1] ].f[2];
+
+		u[2].f[0]  = mySolver->tm1[ myTopoStations[statID].nodes_to_interpolate[2] ].f[0];
+		u[2].f[1]  = mySolver->tm1[ myTopoStations[statID].nodes_to_interpolate[2] ].f[1];
+		u[2].f[2]  = mySolver->tm1[ myTopoStations[statID].nodes_to_interpolate[2] ].f[2];
+
+		u[3].f[0]  = mySolver->tm1[ myTopoStations[statID].nodes_to_interpolate[3] ].f[0];
+		u[3].f[1]  = mySolver->tm1[ myTopoStations[statID].nodes_to_interpolate[3] ].f[1];
+		u[3].f[2]  = mySolver->tm1[ myTopoStations[statID].nodes_to_interpolate[3] ].f[2];
+
+		tensor_t strain = tetra_strain (u, myTopoStations[statID].Der  );
+		tensor_t stress = point_stress ( strain, myTopoStations[statID].mu, myTopoStations[statID].lambda );
+
+
+		/* Here I am using the velocity and acceleration variables to print out the stress components     */
+		*vel_x = stress.xx;
+		*vel_y = stress.yy;
+		*vel_z = stress.zz;
+
+		*accel_x = stress.xy;
+		*accel_y = stress.xz;
+		*accel_z = stress.yz;
+
+/*		   get velocities
 
 		*vel_x =    ( *dis_x
 				  - ( vx_0   + myTopoStations[statID].local_coord[0] * vx_20
@@ -3244,7 +3573,7 @@ int compute_tetra_displ (double *dis_x, double *dis_y, double *dis_z,
 			                 + myTopoStations[statID].local_coord[1] * vz_10
 			                 + myTopoStations[statID].local_coord[2] * vz_30 ) ) / theDeltaT;
 
-		/* get accelerations */
+		 get accelerations
 
 		*accel_x  = ( *dis_x
 				  - 2.0 * ( vx_0   + myTopoStations[statID].local_coord[0] * vx_20
@@ -3268,7 +3597,7 @@ int compute_tetra_displ (double *dis_x, double *dis_y, double *dis_z,
 			                       + myTopoStations[statID].local_coord[2] * vz_30 )
 				  +       ( wz_0   + myTopoStations[statID].local_coord[0] * wz_20
 								   + myTopoStations[statID].local_coord[1] * wz_10
-								   + myTopoStations[statID].local_coord[2] * wz_30 ) ) / theDeltaTSquared;
+								   + myTopoStations[statID].local_coord[2] * wz_30 ) ) / theDeltaTSquared;*/
 
 		return 1;
 

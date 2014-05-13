@@ -51,9 +51,12 @@ typedef enum {
 
 typedef struct topostation_t {
 
-	int32_t  TopoStation;
-    int32_t  nodes_to_interpolate[4];
-    double   local_coord[3];
+	int32_t   TopoStation;
+    int32_t   nodes_to_interpolate[4];
+    double    local_coord[3];
+    fvector_t Der[4];
+	double    lambda;
+    double    mu;
 
 } topostation_t;
 
@@ -72,7 +75,7 @@ void   compute_addforce_topo    ( mesh_t *myMesh, mysolver_t *mySolver, double t
 void   TetraForces              ( fvector_t* un, fvector_t* resVec, double tetraVol[5], edata_t *edata,
 		                          double mu, double lambda, double xo, double yo, double zo  );
 void   compute_addforce_topoEffective    ( mesh_t *myMesh, mysolver_t *mySolver, double theDeltaTSquared );
-void   compute_tetra_localcoord ( vector3D_t point, elem_t *elemp, int32_t *localNode, double *localCoord, double xo, double yo, double zo, double h );
+void   compute_tetra_localcoord ( vector3D_t point, elem_t *elemp, fvector_t *Der, int32_t *localNode, double *localCoord, double xo, double yo, double zo, double h );
 void   topography_stations_init ( mesh_t    *myMesh, station_t *myStations, int32_t    myNumberOfStations);
 int    compute_tetra_displ      (double *dis_x, double *dis_y, double *dis_z,
 						 	 	 double *vel_x, double *vel_y, double *vel_z,
