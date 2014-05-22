@@ -6764,6 +6764,10 @@ void setup_stations_data()
 	XMALLOC_VAR_N( Param.myStations, station_t, Param.myNumberOfStations );
     }
 
+    int32_t    eindex, lnid;
+    elem_t     *elemp;
+    edata_t    *edata;
+
     for (iStation = 0; iStation < Param.theNumberOfStations; iStation++) {
 	stationCoords.x[0] = Param.theStationX[iStation];
 	stationCoords.x[1] = Param.theStationY[iStation];
@@ -6771,6 +6775,28 @@ void setup_stations_data()
 
 	if (search_point( stationCoords, &octant ) == 1) {
 	    Param.myStations[iLCStation].id = iStation;
+
+	    /* Dorian says. I need this to compute the strain tensor at the station location */
+	    Param.myStations[iLCStation].h  = Global.myMesh->ticksize * ( (tick_t)1 << (PIXELLEVEL - octant->level) );
+	    for ( eindex = 0; eindex < Global.myMesh->lenum  ; eindex++ ) {
+	    	lnid = Global.myMesh->elemTable[eindex].lnid[0];
+
+            if ( (Global.myMesh->nodeTable[lnid].x == octant->lx) &&
+                 (Global.myMesh->nodeTable[lnid].y == octant->ly) &&
+                 (Global.myMesh->nodeTable[lnid].z == octant->lz) ) {
+
+            	 elemp  = &Global.myMesh->elemTable[eindex];
+            	 edata = (edata_t *)elemp->data;
+
+            	 double mu;
+            	 double lambda;
+
+            	 mu_and_lambda(&mu, &lambda,edata, eindex);
+            	 Param.myStations[iLCStation].mu = mu;
+            	 Param.myStations[iLCStation].lambda = lambda;
+            }
+	    }
+
 	    Param.myStations[iLCStation].coords=stationCoords;
 	    sprintf(stationFile, "%s/station.%d",Param.theStationsDirOut,iStation);
 	    Param.myStations[iLCStation].fpoutputfile = hu_fopen( stationFile,"w" );
@@ -6918,6 +6944,8 @@ interpolate_station_displacements( int32_t step )
 
         } else {
 
+        fvector_t      u[8];
+
         for (iPhi = 0; iPhi < 8; iPhi++) {
             phi[ iPhi ] = ( 1 + xi[0][iPhi]*localCoords.x[0] )
 		                * ( 1 + xi[1][iPhi]*localCoords.x[1] )
@@ -6926,7 +6954,16 @@ interpolate_station_displacements( int32_t step )
             dis_x += phi[iPhi] * Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[0];
             dis_y += phi[iPhi] * Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[1];
             dis_z += phi[iPhi] * Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[2];
+
+            /* compute strain values */
+            /* get nodes values */
+            u[iPhi].f[0] =  Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[0];
+            u[iPhi].f[1] =  Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[1];
+            u[iPhi].f[2] =  Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[2];
         }
+
+        tensor_t strain = point_strain ( u, localCoords.x[0], localCoords.x[1], localCoords.x[2], Param.myStations[iStation].h );
+        tensor_t stress = point_stress ( strain, Param.myStations[iStation].mu, Param.myStations[iStation].lambda );
 
         /*
          * Please DO NOT CHANGE the format for printing the displacements.
@@ -6944,7 +6981,7 @@ interpolate_station_displacements( int32_t step )
         if ( ( Param.printStationVelocities    == YES ) ||
              ( Param.printStationAccelerations == YES ) ) {
 
-            for (iPhi = 0; iPhi < 8; iPhi++) {
+/*            for (iPhi = 0; iPhi < 8; iPhi++) {
 
                 phi[ iPhi ] = ( 1 + xi[0][iPhi]*localCoords.x[0] )
                                     * ( 1 + xi[1][iPhi]*localCoords.x[1] )
@@ -6953,11 +6990,15 @@ interpolate_station_displacements( int32_t step )
                 dis_x -= phi[iPhi] * Global.mySolver->tm2[ nodesToInterpolate[iPhi] ].f[0];
                 dis_y -= phi[iPhi] * Global.mySolver->tm2[ nodesToInterpolate[iPhi] ].f[1];
                 dis_z -= phi[iPhi] * Global.mySolver->tm2[ nodesToInterpolate[iPhi] ].f[2];
-            }
+            }*/
 
-            vel_x = dis_x / Param.theDeltaT;
+/*            vel_x = dis_x / Param.theDeltaT;
             vel_y = dis_y / Param.theDeltaT;
-            vel_z = dis_z / Param.theDeltaT;
+            vel_z = dis_z / Param.theDeltaT;*/
+
+            vel_x = stress.xx;
+            vel_y = stress.yy;
+            vel_z = stress.zz;
 
             fprintf( Param.myStations[iStation].fpoutputfile,
                      " % 8e % 8e % 8e", vel_x, vel_y, vel_z );
@@ -6969,7 +7010,7 @@ interpolate_station_displacements( int32_t step )
 
         if ( Param.printStationAccelerations == YES ) {
 
-            for (iPhi = 0; iPhi < 8; iPhi++) {
+/*            for (iPhi = 0; iPhi < 8; iPhi++) {
 
                 phi[ iPhi ] = ( 1 + xi[0][iPhi]*localCoords.x[0] )
                                             * ( 1 + xi[1][iPhi]*localCoords.x[1] )
@@ -6982,11 +7023,15 @@ interpolate_station_displacements( int32_t step )
                 dis_x += phi[iPhi] * Global.mySolver->tm3[ nodesToInterpolate[iPhi] ].f[0];
                 dis_y += phi[iPhi] * Global.mySolver->tm3[ nodesToInterpolate[iPhi] ].f[1];
                 dis_z += phi[iPhi] * Global.mySolver->tm3[ nodesToInterpolate[iPhi] ].f[2];
-            }
+            }*/
 
-            acc_x = dis_x / Param.theDeltaTSquared;
+/*            acc_x = dis_x / Param.theDeltaTSquared;
             acc_y = dis_y / Param.theDeltaTSquared;
-            acc_z = dis_z / Param.theDeltaTSquared;
+            acc_z = dis_z / Param.theDeltaTSquared;*/
+
+            acc_x = stress.xy;
+            acc_y = stress.xz;
+            acc_z = stress.yz;
 
             fprintf( Param.myStations[iStation].fpoutputfile,
                      " % 8e % 8e % 8e", acc_x, acc_y, acc_z );

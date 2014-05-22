@@ -335,6 +335,9 @@ struct station_t {
     double*    displacementsX;
     double*    displacementsY;
     double*    displacementsZ;
+    double     h; /* dorian: added size edge to compute station«s strains */
+    double     mu;
+    double     lambda;
 
     vector3D_t coords;        /* cartesian */
     vector3D_t localcoords;   /* csi, eta, dzeta in (-1,1) x (-1,1) x (-1,1) */

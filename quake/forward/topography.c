@@ -1139,7 +1139,7 @@ layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload
 
 	source_sph = sqrt (source_sph);
 
-	if ( ( ( depth_m >= z0  ) && ( depth_m < z1 ) ) || ( source_sph < theVsHS / theFact / 5.0  )  ) {
+	if ( ( ( depth_m >= z0  ) && ( depth_m < z1 ) ) || ( source_sph < ( theVsHS / theFact / 1.0 ) * 2.0  )  ) {
 
 			payload->Vp = emin * theFact * theVpHS / theVsHS;
 			payload->Vs = emin * theFact;
@@ -1644,13 +1644,6 @@ void topography_elements_count(int32_t myID, mesh_t *myMesh ) {
 
     for (eindex = 0; eindex < myMesh->lenum; eindex++) {
 
-
-//    	double po=90;
-//
-//    	if ( eindex == 557168 )
-//    			po=9090;
-
-
         elem_t     *elemp;
         edata_t    *edata;
         node_t     *node0dat;
@@ -1802,6 +1795,11 @@ void topo_solver_init(int32_t myID, mesh_t *myMesh) {
 
         node0    = elemp->lnid[0];             //Takes the ID for the zero node in element eindex
         node0dat = &myMesh->nodeTable[node0];
+
+        double po=90;
+
+        if ( topo_eindex == 5694 )
+             po=9090;
 
         /* get coordinates of element zero node */
 		xo = (node0dat->x)*(myMesh->ticksize);
@@ -2860,8 +2858,8 @@ void topography_stations_init( mesh_t    *myMesh,
     octant_t   *octant;
     int32_t     lnid0;
     elem_t     *elemp;
-    // int         i,j;
 
+    int topoStations_count = 0;
 
     if ( ( myNumberOfStations == 0   ) ||
          ( theTopoMethod      == FEM ) )
@@ -2881,12 +2879,6 @@ void topography_stations_init( mesh_t    *myMesh,
     	myTopoStations[iStation].nodes_to_interpolate[1] = 0;
     	myTopoStations[iStation].nodes_to_interpolate[2] = 0;
     	myTopoStations[iStation].nodes_to_interpolate[3] = 0;
-
-//    	for ( i = 0; i < 3; i++ ){
-//    		for ( j = 0; j < 4; j++ ){
-//    			myTopoStations[iStation].tetraDer[i][j] = 0.0;
-//    		}
-//    	}
     }
 
 
@@ -2926,6 +2918,7 @@ void topography_stations_init( mesh_t    *myMesh,
                 }
 
                 myTopoStations[iStation].TopoStation  = 1; /*  Station belongs to topography */
+                topoStations_count += 1;
 
                 /* zero node coordinates */
         		double xo = myMesh->nodeTable[lnid0].x * (myMesh->ticksize);
@@ -2949,6 +2942,8 @@ void topography_stations_init( mesh_t    *myMesh,
             }
 
         } /* for all my elements */
+
+        fprintf(stdout,"Topographic Stations count = %d",topoStations_count);
 
     } /* for all my stations */
 
@@ -3547,10 +3542,17 @@ int compute_tetra_displ (double *dis_x, double *dis_y, double *dis_z,
 		tensor_t stress = point_stress ( strain, myTopoStations[statID].mu, myTopoStations[statID].lambda );
 
 
-		/* Here I am using the velocity and acceleration variables to print out the stress components     */
+		/* Here I am using the velocity and acceleration variables to print out the stress components
+		 * In the former velocity field I am printing out the traction vector.
+		 * In the acceleration field, I am printing out the off diagonal stresses    */
+
 		*vel_x = stress.xx;
 		*vel_y = stress.yy;
 		*vel_z = stress.zz;
+
+/*		*vel_x = stress.xx * myTopoStations[statID].normal[0] + stress.xy * myTopoStations[statID].normal[1] + stress.xz * myTopoStations[statID].normal[2];
+		*vel_y = stress.xy * myTopoStations[statID].normal[0] + stress.yy * myTopoStations[statID].normal[1] + stress.yz * myTopoStations[statID].normal[2];
+		*vel_z = stress.xz * myTopoStations[statID].normal[0] + stress.yz * myTopoStations[statID].normal[1] + stress.zz * myTopoStations[statID].normal[2];*/
 
 		*accel_x = stress.xy;
 		*accel_y = stress.xz;
