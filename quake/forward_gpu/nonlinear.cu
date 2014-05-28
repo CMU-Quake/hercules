@@ -29,6 +29,8 @@
 #include "quake_util.h"
 #include "util.h"
 
+#include "kernel.h"
+
 #define  QC  qc = 0.577350269189 /* sqrt(3.0)/3.0; */
 
 #define  XI  xi[3][8] = { {-1,  1, -1,  1, -1,  1, -1, 1} , \

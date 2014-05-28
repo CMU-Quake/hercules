@@ -37,7 +37,7 @@ typedef enum {
 
 int32_t  imin(int32_t x, int32_t y);
 //int  vector_is_zero( const fvector_t* v );
-int  vector_is_all_zero( const fvector_t* v );
+//int  vector_is_all_zero( const fvector_t* v );
 
 void MultAddMatVec( fmatrix_t* M, fvector_t* V1, double c, fvector_t* V2 );
 

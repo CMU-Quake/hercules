@@ -3343,8 +3343,16 @@ static void gpu_init(int32_t myID)
       exit(1);
     }
 
+    /* Reset the device */
     if (cudaDeviceReset() != cudaSuccess) {
       fprintf(stderr, "Thread %d: Failed to reset device\n", myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+
+    /* Set cache preference for larger L1 */
+    if (cudaDeviceSetCacheConfig(cudaFuncCachePreferL1) != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Failed to reset device cache config\n", myID);
       MPI_Abort(MPI_COMM_WORLD, ERROR);
       exit(1);
     }
@@ -3408,9 +3416,30 @@ static void solver_init()
     /* Allocate memory */
     Global.mySolver->eTable = (e_t *)calloc(Global.myMesh->lenum, sizeof(e_t));
     Global.mySolver->nTable = (n_t *)calloc(Global.myMesh->nharbored, sizeof(n_t));
-    Global.mySolver->tm1    = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
-    Global.mySolver->tm2    = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
-    Global.mySolver->force  = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
+    //Global.mySolver->tm1    = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
+    //Global.mySolver->tm2    = (fvector_t *)calloc(Global.myMesh->nharbored, sizeof(fvector_t));
+    if (cudaMallocHost(&(Global.mySolver->tm1), Global.myMesh->nharbored * sizeof(fvector_t)) != cudaSuccess) {
+        fprintf(stderr, "Thread %d: Failed to allocate tm1 pinned memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    memset(Global.mySolver->tm1, 0, Global.myMesh->nharbored * sizeof(fvector_t));
+    if (cudaMallocHost(&(Global.mySolver->tm2), Global.myMesh->nharbored * sizeof(fvector_t)) != cudaSuccess) {
+        fprintf(stderr, "Thread %d: Failed to allocate tm2 pinned memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    memset(Global.mySolver->tm2, 0, Global.myMesh->nharbored * sizeof(fvector_t));
+
+    if (cudaMallocHost(&(Global.mySolver->force), Global.myMesh->nharbored * sizeof(fvector_t)) != cudaSuccess) {
+        fprintf(stderr, "Thread %d: Failed to allocate force pinned memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    memset(Global.mySolver->force, 0, Global.myMesh->nharbored * sizeof(fvector_t));
     Global.mySolver->conv_shear_1 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
     Global.mySolver->conv_shear_2 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
     Global.mySolver->conv_kappa_1 = (fvector_t *)calloc(8 * Global.myMesh->lenum, sizeof(fvector_t));
@@ -3606,26 +3635,26 @@ static void solver_init()
     Global.mySolver->gpu_spec = &(Global.gpu_spec);
 
     /* Allocate device memory */
-    if (cudaMalloc((void**)&(Global.gpuData.elemTableDevice), 
-		   Global.myMesh->lenum * sizeof(elem_t)) != cudaSuccess) {
-        fprintf(stderr, "Thread %d: Failed to allocate elemTable memory\n", 
-		Global.myID);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
-    }
-    if (cudaMalloc((void**)&(Global.gpuData.eTableDevice), 
-		   Global.myMesh->lenum * sizeof(e_t)) != cudaSuccess) {
-        fprintf(stderr, "Thread %d: Failed to allocate eTable memory\n", 
-		Global.myID);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
-    }
+    //if (cudaMalloc((void**)&(Global.gpuData.elemTableDevice), 
+    //		   Global.myMesh->lenum * sizeof(elem_t)) != cudaSuccess) {
+    //  fprintf(stderr, "Thread %d: Failed to allocate elemTable memory\n", 
+    //		Global.myID);
+    //  MPI_Abort(MPI_COMM_WORLD, ERROR);
+    //  exit(1);
+    //}
+    //if (cudaMalloc((void**)&(Global.gpuData.eTableDevice), 
+    //		   Global.myMesh->lenum * sizeof(e_t)) != cudaSuccess) {
+    //  fprintf(stderr, "Thread %d: Failed to allocate eTable memory\n", 
+    //		Global.myID);
+    //  MPI_Abort(MPI_COMM_WORLD, ERROR);
+    //  exit(1);
+    //}
     if (cudaMalloc((void**)&(Global.gpuData.nTableDevice), 
-		   Global.myMesh->nharbored * sizeof(n_t)) != cudaSuccess) {
-        fprintf(stderr, "Thread %d: Failed to allocate nTable memory\n", 
-		Global.myID);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
+    		   Global.myMesh->nharbored * sizeof(n_t)) != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Failed to allocate nTable memory\n", 
+    		Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
     }
     if (cudaMalloc((void**)&(Global.gpuData.tm1Device), 
 		   Global.myMesh->nharbored * sizeof(fvector_t)) != cudaSuccess) {
@@ -3641,13 +3670,14 @@ static void solver_init()
         MPI_Abort(MPI_COMM_WORLD, ERROR);
         exit(1);
     }
+
     if ( Param.printStationAccelerations == YES ) {
       if (cudaMalloc((void**)&(Global.gpuData.tm3Device), 
-		     Global.myMesh->nharbored * sizeof(fvector_t)) != cudaSuccess) {
+    		     Global.myMesh->nharbored * sizeof(fvector_t)) != cudaSuccess) {
           fprintf(stderr, "Thread %d: Failed to allocate tm3 memory\n", 
-		  Global.myID);
-	  MPI_Abort(MPI_COMM_WORLD, ERROR);
-	  exit(1);
+    		  Global.myID);
+    	  MPI_Abort(MPI_COMM_WORLD, ERROR);
+    	  exit(1);
       }
     }
     if (cudaMalloc((void**)&(Global.gpuData.forceDevice), 
@@ -3686,6 +3716,127 @@ static void solver_init()
         exit(1);
     }
 
+    if (cudaMalloc((void**)&(Global.gpuData.c1ArrayDevice), 
+		   Global.myMesh->lenum * sizeof(double)) != cudaSuccess) {
+        fprintf(stderr, "Thread %d: Failed to allocate c1 array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    if (cudaMalloc((void**)&(Global.gpuData.c2ArrayDevice), 
+		   Global.myMesh->lenum * sizeof(double)) != cudaSuccess) {
+        fprintf(stderr, "Thread %d: Failed to allocate c1 array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
+    if (cudaMalloc((void**)&(Global.gpuData.lnidArrayDevice), 
+		   Global.myMesh->lenum * 8 * sizeof(int32_t)) != cudaSuccess) {
+        fprintf(stderr, "Thread %d: Failed to allocate lnid array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
+    if (cudaMalloc((void**)&(Global.gpuData.g0_shearArrayDevice), 
+		   Global.myMesh->lenum * sizeof(double)) != cudaSuccess) {
+        fprintf(stderr, 
+		"Thread %d: Failed to allocate g0 shear array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    if (cudaMalloc((void**)&(Global.gpuData.g1_shearArrayDevice), 
+		   Global.myMesh->lenum * sizeof(double)) != cudaSuccess) {
+        fprintf(stderr, 
+		"Thread %d: Failed to allocate g1 shear array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
+    if (cudaMalloc((void**)&(Global.gpuData.g0_kappaArrayDevice), 
+		   Global.myMesh->lenum * sizeof(double)) != cudaSuccess) {
+        fprintf(stderr, 
+		"Thread %d: Failed to allocate g0 kappa array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    if (cudaMalloc((void**)&(Global.gpuData.g1_kappaArrayDevice), 
+		   Global.myMesh->lenum * sizeof(double)) != cudaSuccess) {
+        fprintf(stderr, 
+		"Thread %d: Failed to allocate g1 kappa array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
+    if (cudaMalloc((void**)&(Global.gpuData.b_shearArrayDevice), 
+		   Global.myMesh->lenum * sizeof(double)) != cudaSuccess) {
+        fprintf(stderr, 
+		"Thread %d: Failed to allocate b shear array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    if (cudaMalloc((void**)&(Global.gpuData.a0_shearArrayDevice), 
+		   Global.myMesh->lenum * sizeof(double)) != cudaSuccess) {
+        fprintf(stderr, 
+		"Thread %d: Failed to allocate a0 shear array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    if (cudaMalloc((void**)&(Global.gpuData.a1_shearArrayDevice), 
+		   Global.myMesh->lenum * sizeof(double)) != cudaSuccess) {
+        fprintf(stderr, 
+		"Thread %d: Failed to allocate a1 shear array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    if (cudaMalloc((void**)&(Global.gpuData.b_kappaArrayDevice), 
+		   Global.myMesh->lenum * sizeof(double)) != cudaSuccess) {
+        fprintf(stderr, 
+		"Thread %d: Failed to allocate b kappa array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    if (cudaMalloc((void**)&(Global.gpuData.a0_kappaArrayDevice), 
+		   Global.myMesh->lenum * sizeof(double)) != cudaSuccess) {
+        fprintf(stderr, 
+		"Thread %d: Failed to allocate a0 kappa array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    if (cudaMalloc((void**)&(Global.gpuData.a1_kappaArrayDevice), 
+		   Global.myMesh->lenum * sizeof(double)) != cudaSuccess) {
+        fprintf(stderr, 
+		"Thread %d: Failed to allocate a1 kappa array memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
+    if (cudaMalloc((void**)&(Global.gpuData.shearVectorDevice), 
+		   8 * Global.myMesh->lenum * sizeof(fvector_t)) != cudaSuccess) {
+        fprintf(stderr, "Thread %d: Failed to allocate shear vector memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+    if (cudaMalloc((void**)&(Global.gpuData.kappaVectorDevice), 
+		   8 * Global.myMesh->lenum * sizeof(fvector_t)) != cudaSuccess) {
+        fprintf(stderr, "Thread %d: Failed to allocate kappa vector memory\n", 
+		Global.myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
     Global.gpuData.nharbored =  Global.myMesh->nharbored;
     Global.gpuData.lenum = Global.myMesh->lenum;
 
@@ -3694,83 +3845,268 @@ static void solver_init()
     } 
 
     /* Copy mesh and solver elements to device */
-    elem_t tmpelem;
-    if (cudaMalloc((void**)&(Global.gpuData.matPropsDevice), 
-		   Global.myMesh->lenum * sizeof(edata_t)) != cudaSuccess) {
+    //if (cudaMalloc((void**)&(Global.gpuData.matPropsDevice), 
+    //		   Global.myMesh->lenum * sizeof(edata_t)) != cudaSuccess) {
+    //fprintf(stderr, 
+    //	      "Thread %d: Failed to allocate material property memory\n", 
+    //	      Global.myID);
+    //MPI_Abort(MPI_COMM_WORLD, ERROR);
+    //exit(1);
+    //}
+    //if (cudaMemcpy(Global.gpuData.elemTableDevice, Global.myMesh->elemTable, 
+    //		   Global.myMesh->lenum * sizeof(elem_t), 
+    //		   cudaMemcpyHostToDevice) != cudaSuccess) {
+    //fprintf(stderr, 
+    //	      "Thread %d: Failed to copy element table\n", Global.myID);
+    //MPI_Abort(MPI_COMM_WORLD, ERROR);
+    //exit(1);
+    //}
+    //Global.gpu_spec.numbytespci += Global.myMesh->lenum * sizeof(elem_t);
+
+    /* Temporary structure of arrays */
+    double *c1Array = (double *)malloc(Global.myMesh->lenum * sizeof(double));
+    double *c2Array = (double *)malloc(Global.myMesh->lenum * sizeof(double));
+    int32_t *lnidArray = (int32_t *)malloc(Global.myMesh->lenum * 8 * sizeof(int32_t));
+
+    double *g0_shearArray = (double *)malloc(Global.myMesh->lenum * sizeof(double));
+    double *g1_shearArray = (double *)malloc(Global.myMesh->lenum * sizeof(double));
+    double *g0_kappaArray = (double *)malloc(Global.myMesh->lenum * sizeof(double));
+    double *g1_kappaArray = (double *)malloc(Global.myMesh->lenum * sizeof(double));
+
+    double *b_shearArray = (double *)malloc(Global.myMesh->lenum * sizeof(double));
+    double *a0_shearArray = (double *)malloc(Global.myMesh->lenum * sizeof(double));
+    double *a1_shearArray = (double *)malloc(Global.myMesh->lenum * sizeof(double));
+    double *b_kappaArray = (double *)malloc(Global.myMesh->lenum * sizeof(double));
+    double *a0_kappaArray = (double *)malloc(Global.myMesh->lenum * sizeof(double));
+    double *a1_kappaArray = (double *)malloc(Global.myMesh->lenum * sizeof(double));
+
+    double rmax = 2. * M_PI * Param.theFreq * Param.theDeltaT;
+
+    for (int i = 0; i < Global.myMesh->lenum; i++) {
+      //if (cudaMemcpy(&Global.gpuData.matPropsDevice[i], 
+      //	     Global.myMesh->elemTable[i].data, 
+      // 		     sizeof(edata_t), cudaMemcpyHostToDevice) != cudaSuccess) {
+      // 	fprintf(stderr, 
+      //	"Thread %d: Failed to copy mat props for element %d\n", 
+      //		Global.myID, i);
+      //	MPI_Abort(MPI_COMM_WORLD, ERROR);
+      //	exit(1);
+      //}
+
+      c1Array[i] = Global.mySolver->eTable[i].c1;
+      c2Array[i] = Global.mySolver->eTable[i].c2;
+
+      for (int j = 0; j < 8; j++) {
+	lnidArray[j * Global.myMesh->lenum + i] = Global.myMesh->elemTable[i].lnid[j];
+      }
+
+      /* loop variables */
+      elem_t	*elemp;
+      edata_t *edata;
+
+      /* capturing the elements */
+      elemp = &Global.myMesh->elemTable[i];
+      edata = (edata_t *)elemp->data;
+      
+      g0_shearArray[i] = edata->g0_shear * rmax;
+      g1_shearArray[i] = edata->g1_shear * rmax;
+      g0_kappaArray[i] = edata->g0_kappa * rmax;
+      g1_kappaArray[i] = edata->g1_kappa * rmax;
+
+      b_shearArray[i] = edata->b_shear / rmax;
+      a0_shearArray[i] = edata->a0_shear;
+      a1_shearArray[i] = edata->a1_shear;
+      b_kappaArray[i] = edata->b_kappa / rmax;
+      a0_kappaArray[i] = edata->a0_kappa;
+      a1_kappaArray[i] = edata->a1_kappa;
+    }
+
+    //Global.gpu_spec.numbytespci += Global.myMesh->lenum * sizeof(edata_t);
+
+    if (cudaMemcpy(Global.gpuData.c1ArrayDevice, c1Array, 
+		   Global.myMesh->lenum * sizeof(double), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
       fprintf(stderr, 
-	      "Thread %d: Failed to allocate material property memory\n", 
-	      Global.myID);
+	      "Thread %d: Failed to copy c1 array\n", Global.myID);
       MPI_Abort(MPI_COMM_WORLD, ERROR);
       exit(1);
     }
-    for (int i = 0; i < Global.myMesh->lenum; i++) {
-      memcpy(&tmpelem, &(Global.myMesh->elemTable[i]), sizeof(elem_t));
-      tmpelem.data = Global.gpuData.matPropsDevice + i;
-      if (cudaMemcpy(tmpelem.data, Global.myMesh->elemTable[i].data, 
-		     sizeof(edata_t), cudaMemcpyHostToDevice) != cudaSuccess) {
-	fprintf(stderr, 
-		"Thread %d: Failed to copy data for element %d\n", 
-		Global.myID, i);
-	MPI_Abort(MPI_COMM_WORLD, ERROR);
-	exit(1);
-      }    
-      if (cudaMemcpy(Global.gpuData.elemTableDevice + i, &tmpelem, 
-		     sizeof(elem_t), cudaMemcpyHostToDevice) != cudaSuccess) {
-	fprintf(stderr, 
-		"Thread %d: Failed to copy element %d\n", 
-		Global.myID, i);
-	MPI_Abort(MPI_COMM_WORLD, ERROR);
-	exit(1);
-      }
-      Global.gpu_spec.numbytespci += (sizeof(edata_t) + sizeof(elem_t));
+    if (cudaMemcpy(Global.gpuData.c2ArrayDevice, c2Array, 
+		   Global.myMesh->lenum * sizeof(double), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to copy c2 array\n", Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
     }
+    if (cudaMemcpy(Global.gpuData.lnidArrayDevice, lnidArray, 
+		   Global.myMesh->lenum * 8 * sizeof(int32_t), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to copy lnid array\n", Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+
+    if (cudaMemcpy(Global.gpuData.g0_shearArrayDevice, g0_shearArray, 
+		   Global.myMesh->lenum * sizeof(double), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to copy g0 shear array\n", Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+    if (cudaMemcpy(Global.gpuData.g1_shearArrayDevice, g1_shearArray, 
+		   Global.myMesh->lenum * sizeof(double), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to copy g1 shear array\n", Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+    if (cudaMemcpy(Global.gpuData.g0_kappaArrayDevice, g0_kappaArray, 
+		   Global.myMesh->lenum * sizeof(double), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to copy g0 kappa array\n", Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+    if (cudaMemcpy(Global.gpuData.g1_kappaArrayDevice, g1_kappaArray, 
+		   Global.myMesh->lenum * sizeof(double), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to copy g1 kappa array\n", Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+
+    if (cudaMemcpy(Global.gpuData.b_shearArrayDevice, b_shearArray, 
+		   Global.myMesh->lenum * sizeof(double), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to copy b shear array\n", Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+    if (cudaMemcpy(Global.gpuData.a0_shearArrayDevice, a0_shearArray, 
+		   Global.myMesh->lenum * sizeof(double), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to copy a0 shear array\n", Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+    if (cudaMemcpy(Global.gpuData.a1_shearArrayDevice, a1_shearArray, 
+		   Global.myMesh->lenum * sizeof(double), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to copy a1 shear array\n", Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+    if (cudaMemcpy(Global.gpuData.b_kappaArrayDevice, b_kappaArray, 
+		   Global.myMesh->lenum * sizeof(double), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to copy b kappa array\n", Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+    if (cudaMemcpy(Global.gpuData.a0_kappaArrayDevice, a0_kappaArray, 
+		   Global.myMesh->lenum * sizeof(double), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to copy a0 kappa array\n", Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+    if (cudaMemcpy(Global.gpuData.a1_kappaArrayDevice, a1_kappaArray, 
+		   Global.myMesh->lenum * sizeof(double), 
+		   cudaMemcpyHostToDevice) != cudaSuccess) {
+      fprintf(stderr, 
+	      "Thread %d: Failed to copy a1 kappa array\n", Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
+
+    free(c1Array);
+    free(c2Array);
+    free(lnidArray);
+    free(g0_shearArray);
+    free(g1_shearArray);
+    free(g0_kappaArray);
+    free(g1_kappaArray);
+    free(b_shearArray);
+    free(a0_shearArray);
+    free(a1_shearArray);
+    free(b_kappaArray);
+    free(a0_kappaArray);
+    free(a1_kappaArray);
+
+    Global.gpu_spec.numbytespci += 13*(Global.myMesh->lenum * sizeof(double));
 
     if (Global.myID == 0) {
       fprintf(stdout,"GPU Device memory allocation: copy eTable, nTable\n");
     } 
 
-    cudaMemcpy(Global.gpuData.eTableDevice, Global.mySolver->eTable, 
-	       Global.myMesh->lenum * sizeof(e_t), cudaMemcpyHostToDevice);
-    Global.gpu_spec.numbytespci += Global.myMesh->lenum * sizeof(e_t);
+    //cudaMemcpy(Global.gpuData.eTableDevice, Global.mySolver->eTable, 
+    //	       Global.myMesh->lenum * sizeof(e_t), cudaMemcpyHostToDevice);
+    //Global.gpu_spec.numbytespci += Global.myMesh->lenum * sizeof(e_t);
     cudaMemcpy(Global.gpuData.nTableDevice, Global.mySolver->nTable, 
-	       Global.myMesh->nharbored * sizeof(n_t), cudaMemcpyHostToDevice);
+    	       Global.myMesh->nharbored * sizeof(n_t), cudaMemcpyHostToDevice);
     Global.gpu_spec.numbytespci += Global.myMesh->nharbored * sizeof(n_t);
 
     if (Global.myID == 0) {
       fprintf(stdout,"GPU Device memory allocation: initialize convolution\n");
     } 
 
+    /* Initialize displacements */
+    cudaMemset(Global.gpuData.tm1Device, 0, 
+    	       Global.myMesh->nharbored * sizeof(fvector_t));
+    cudaMemset(Global.gpuData.tm2Device, 0, 
+    	       Global.myMesh->nharbored * sizeof(fvector_t));
+
     /* Initialize device convolution */
-    cudaMemcpy(Global.gpuData.conv_shear_1Device, 
-	       Global.mySolver->conv_shear_1, 
-	       8 * Global.myMesh->lenum * sizeof(fvector_t), 
-	       cudaMemcpyHostToDevice);
-    cudaMemcpy(Global.gpuData.conv_shear_2Device, 
-	       Global.mySolver->conv_shear_2, 
-	       8 * Global.myMesh->lenum * sizeof(fvector_t), 
-	       cudaMemcpyHostToDevice);
-    cudaMemcpy(Global.gpuData.conv_kappa_1Device, 
-	       Global.mySolver->conv_kappa_1, 
-	       8 * Global.myMesh->lenum * sizeof(fvector_t), 
-	       cudaMemcpyHostToDevice);
-    cudaMemcpy(Global.gpuData.conv_kappa_2Device, 
-	       Global.mySolver->conv_kappa_2, 
-	       8 * Global.myMesh->lenum * sizeof(fvector_t), 
-	       cudaMemcpyHostToDevice);
-    Global.gpu_spec.numbytespci += 4 * 8 * Global.myMesh->lenum * 
-      sizeof(fvector_t);
+    cudaMemset(Global.gpuData.conv_shear_1Device, 0, 
+	       8 * Global.myMesh->lenum * sizeof(fvector_t));
+    cudaMemset(Global.gpuData.conv_shear_2Device, 0, 
+	       8 * Global.myMesh->lenum * sizeof(fvector_t));
+    cudaMemset(Global.gpuData.conv_kappa_1Device, 0, 
+	       8 * Global.myMesh->lenum * sizeof(fvector_t));
+    cudaMemset(Global.gpuData.conv_kappa_2Device, 0, 
+	       8 * Global.myMesh->lenum * sizeof(fvector_t));
+
+    if (Global.myID == 0) {
+      fprintf(stdout,"GPU Device memory allocation: load constant memory\n");
+    } 
+
+    if (gpu_copy_constant_symbols(Global.myID, 
+				  Global.theK1, Global.theK2) != 0) {
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
 
     /* Copy GPU data to device */
     if (cudaMalloc((void**)&(Global.mySolver->gpuDataDevice), 
-		   sizeof(gpu_data_t)) != cudaSuccess) {
-        fprintf(stderr, "Thread %d: Failed to allocate GPU data memory\n", 
-		Global.myID);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
+    		   sizeof(gpu_data_t)) != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Failed to allocate GPU data memory\n", 
+    		Global.myID);
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
     }    
     cudaMemcpy(Global.mySolver->gpuDataDevice, &Global.gpuData, 
-	       sizeof(gpu_data_t), cudaMemcpyHostToDevice);
+    	       sizeof(gpu_data_t), cudaMemcpyHostToDevice);
     Global.gpu_spec.numbytespci += sizeof(gpu_data_t);
+
+    /* Check for Cuda errors */
+    cudaError_t cerror = cudaGetLastError();
+    if (cerror != cudaSuccess) {
+      fprintf(stderr, "Thread %d: Failed to setup data in GPU memory\n", 
+	      Global.myID, cudaGetErrorString(cerror));
+      MPI_Abort(MPI_COMM_WORLD, ERROR);
+      exit(1);
+    }
 
     /* Save reference to device data in solver */
     Global.mySolver->gpuData = &Global.gpuData;
@@ -3904,28 +4240,43 @@ static void solver_delete()
     }
 
     /* Free device memory */
-    cudaFree(Global.gpuData.elemTableDevice);
-    cudaFree(Global.gpuData.eTableDevice);
+    //cudaFree(Global.gpuData.elemTableDevice);
+    //cudaFree(Global.gpuData.eTableDevice);
     cudaFree(Global.gpuData.nTableDevice);
     cudaFree(Global.gpuData.tm1Device);
     cudaFree(Global.gpuData.tm2Device);
     if ( Param.printStationAccelerations == YES ) {
       cudaFree(Global.gpuData.tm3Device);
-    }
+     }
     cudaFree(Global.gpuData.forceDevice);
     cudaFree(Global.gpuData.conv_shear_1Device);
     cudaFree(Global.gpuData.conv_shear_2Device);
     cudaFree(Global.gpuData.conv_kappa_1Device);
     cudaFree(Global.gpuData.conv_kappa_2Device);
-    cudaFree(Global.gpuData.matPropsDevice);
     cudaFree(Global.mySolver->gpuDataDevice);
+    cudaFree(Global.gpuData.c1ArrayDevice);
+    cudaFree(Global.gpuData.c2ArrayDevice);
+    cudaFree(Global.gpuData.lnidArrayDevice);
+    cudaFree(Global.gpuData.g0_shearArrayDevice);
+    cudaFree(Global.gpuData.g1_shearArrayDevice);
+    cudaFree(Global.gpuData.g0_kappaArrayDevice);
+    cudaFree(Global.gpuData.g1_kappaArrayDevice);
+    cudaFree(Global.gpuData.b_shearArrayDevice);
+    cudaFree(Global.gpuData.a0_shearArrayDevice);
+    cudaFree(Global.gpuData.a1_shearArrayDevice);
+    cudaFree(Global.gpuData.b_kappaArrayDevice);
+    cudaFree(Global.gpuData.a0_kappaArrayDevice);
+    cudaFree(Global.gpuData.a1_kappaArrayDevice);
+    cudaFree(Global.gpuData.shearVectorDevice);
+    cudaFree(Global.gpuData.kappaVectorDevice);
+    //cudaFree(Global.gpuData.matPropsDevice);
 
     free(Global.mySolver->eTable);
     free(Global.mySolver->nTable);
 
-    free(Global.mySolver->tm1);
-    free(Global.mySolver->tm2);
-    free(Global.mySolver->force);
+    cudaFreeHost(Global.mySolver->tm1);
+    cudaFreeHost(Global.mySolver->tm2);
+    cudaFreeHost(Global.mySolver->force);
 
     free(Global.mySolver->conv_shear_1);
     free(Global.mySolver->conv_shear_2);
@@ -4182,24 +4533,33 @@ static void solver_output_stations( int step )
 }
 
 
-static void solver_load_gpu(mysolver_t *solver)
+static void solver_load_gpu(mysolver_t *solver, mesh_t *mesh)
 {
+  fvector_t *tmp;
 
+  /* Swap displacements to prepare for new time step */
+  tmp = solver->gpuData->tm2Device;
+  solver->gpuData->tm2Device = solver->gpuData->tm1Device;
+  solver->gpuData->tm1Device = tmp;
+
+  /* Update data structure on device */
+  cudaMemcpy(solver->gpuDataDevice, solver->gpuData, 
+  	     sizeof(gpu_data_t), cudaMemcpyHostToDevice);
+  solver->gpu_spec->numbytespci += sizeof(gpu_data_t);
+
+  /* Copy displacements */
   cudaMemcpy(solver->gpuData->tm1Device, solver->tm1, 
   	     solver->gpuData->nharbored * sizeof(fvector_t), 
   	     cudaMemcpyHostToDevice);
-  cudaMemcpy(solver->gpuData->tm2Device, solver->tm2, 
-  	     solver->gpuData->nharbored * sizeof(fvector_t), 
-  	     cudaMemcpyHostToDevice);
-  solver->gpu_spec->numbytespci += 2 * solver->gpuData->nharbored * 
+  solver->gpu_spec->numbytespci += solver->gpuData->nharbored * 
     sizeof(fvector_t);
-  if ( Param.printStationAccelerations == YES ) {
-    cudaMemcpy(solver->gpuData->tm3Device, solver->tm3, 
-	       solver->gpuData->nharbored * sizeof(fvector_t), 
-	       cudaMemcpyHostToDevice);
-    solver->gpu_spec->numbytespci += solver->gpuData->nharbored * 
-      sizeof(fvector_t);
-  }  
+
+  /* Calculate convolutions so that computation overlaps I/O */
+  if (Param.theTypeOfDamping == BKT) {
+    calc_conv_gpu(Global.myID, Global.myMesh, Global.mySolver, 
+    		  Param.theFreq, Param.theDeltaT, Param.theDeltaTSquared);
+    //cudaDeviceSynchronize();
+  }
 
   return;
 }
@@ -4309,7 +4669,7 @@ solver_compute_force_damping( mysolver_t *solver,
 	else if(Param.theTypeOfDamping == BKT)
 	{
 	        //calc_conv_cpu(Global.myMesh, Global.mySolver, Param.theFreq, Param.theDeltaT, Param.theDeltaTSquared);
-	        calc_conv_gpu(Global.myID, Global.myMesh, Global.mySolver, Param.theFreq, Param.theDeltaT, Param.theDeltaTSquared);
+	        //calc_conv_gpu(Global.myID, Global.myMesh, Global.mySolver, Param.theFreq, Param.theDeltaT, Param.theDeltaTSquared);
 		//addforce_conv(myMesh, mySolver, theFreq, theDeltaT, theDeltaTSquared);
 		//constant_Q_addforce_cpu(Global.myMesh, Global.mySolver, Param.theFreq, Param.theDeltaT, Param.theDeltaTSquared);
 		constant_Q_addforce_gpu(Global.myID, Global.myMesh, Global.mySolver, Param.theFreq, Param.theDeltaT, Param.theDeltaTSquared);
@@ -4434,44 +4794,43 @@ solver_compute_displacement_cpu( mysolver_t* solver, mesh_t* mesh )
 static void
 solver_compute_displacement_gpu( int32_t myID, mysolver_t* solver, mesh_t* mesh )
 {
-    Timer_Start( "Compute new displacement" );
+  Timer_Start( "Compute new displacement" );
+  /* Copy working data to device */
+  cudaMemcpy(solver->gpuData->forceDevice, solver->force, 
+	     mesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
+  solver->gpu_spec->numbytespci += mesh->nharbored * sizeof(fvector_t);
+  
+  int blocksize = gpu_get_blocksize(solver->gpu_spec,
+				    (char *)kernelDispCalc, 0);
+  int gridsize = (mesh->nharbored / blocksize) + 1;
+  cudaGetLastError();
+  kernelDispCalc<<<gridsize, blocksize>>>(solver->gpuDataDevice, 
+					  Param.printStationAccelerations);
 
-    /* Copy working data to device */
-    cudaMemcpy(solver->gpuData->forceDevice, solver->force, 
-	       mesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
-    solver->gpu_spec->numbytespci += mesh->nharbored * sizeof(fvector_t);
-
-    int blocksize = gpu_get_blocksize(solver->gpu_spec,
-				      (char *)kernelDispCalc, 0);
-    int gridsize = (mesh->nharbored / blocksize) + 1;
-    cudaGetLastError();
-    kernelDispCalc<<<gridsize, blocksize>>>(solver->gpuDataDevice, 
-					    Param.printStationAccelerations);
-
-    cudaError_t cerror = cudaGetLastError();
-    if (cerror != cudaSuccess) {
-      fprintf(stderr, "Thread %d: Calc damping conv kernel - %s\n", myID, 
+  cudaError_t cerror = cudaGetLastError();
+  if (cerror != cudaSuccess) {
+    fprintf(stderr, "Thread %d: Calc damping conv kernel - %s\n", myID, 
 	      cudaGetErrorString(cerror));
-      MPI_Abort(MPI_COMM_WORLD, ERROR);
-      exit(1);
-    }
+    MPI_Abort(MPI_COMM_WORLD, ERROR);
+    exit(1);
+  }
 
-    /* Copy working data from device */
-    cudaMemcpy(solver->tm2, solver->gpuData->tm2Device, 
+  /* Copy working data from device */
+  cudaMemcpy(solver->tm2, solver->gpuData->tm2Device, 
 	       mesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
-    solver->gpu_spec->numbytespci += mesh->nharbored * sizeof(fvector_t);
-    if ( Param.printStationAccelerations == YES ) {
-      cudaMemcpy(solver->tm3, solver->gpuData->tm3Device, 
+  solver->gpu_spec->numbytespci += mesh->nharbored * sizeof(fvector_t);
+  if ( Param.printStationAccelerations == YES ) {
+    cudaMemcpy(solver->tm3, solver->gpuData->tm3Device, 
 		 mesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
-      solver->gpu_spec->numbytespci += mesh->nharbored * sizeof(fvector_t);
-    }
+    solver->gpu_spec->numbytespci += mesh->nharbored * sizeof(fvector_t);
+  }
 
-    /* zero out the force vector for all nodes */
-    memset( solver->force, 0, sizeof(fvector_t) * mesh->nharbored );
-    cudaMemset(solver->gpuData->forceDevice, 0, 
-    	       mesh->nharbored * sizeof(fvector_t));
+  /* zero out the force vector for all nodes */
+  memset( solver->force, 0, sizeof(fvector_t) * mesh->nharbored );
+  //cudaMemset(solver->gpuData->forceDevice, 0, 
+  //	       mesh->nharbored * sizeof(fvector_t));
 
-    Timer_Stop( "Compute new displacement" );
+  Timer_Stop( "Compute new displacement" );
 }
 
 
@@ -4551,11 +4910,11 @@ static void solver_run_collect_timers( void )
      * this is NOT best and worst single step times
      */
     if( Timer_Exists("Print Planes") ) {
-        Timer_Reduce("Print Planes",   (TimerKind)(MAX | MIN), comm_solver);
+        Timer_Reduce("Print Planes",   (TimerKind)(MAX | MIN | AVERAGE), comm_solver);
     }
 
     if( Timer_Exists("Print Stations") ) {
-        Timer_Reduce("Print Stations", (TimerKind)(MAX | MIN), comm_solver);
+        Timer_Reduce("Print Stations", (TimerKind)(MAX | MIN | AVERAGE), comm_solver);
     }
 
     if ( Timer_Exists("Compute Non-linear Entities") ) {
@@ -4635,6 +4994,10 @@ static void solver_run()
         Global.mySolver->tm2 = Global.mySolver->tm1;
         Global.mySolver->tm1 = tmpvector;
 
+        Timer_Start( "GPU Memory Copy" );
+	solver_load_gpu(Global.mySolver, Global.myMesh);
+        Timer_Stop( "GPU Memory Copy" );
+
         Timer_Start( "Solver I/O" );
         solver_write_checkpoint( step, startingStep );
         solver_update_status( step, startingStep );
@@ -4645,10 +5008,6 @@ static void solver_run()
         solver_read_source_forces( step );
         solver_read_drm_displacements( step , Param.theDeltaT ,Param.theTotalSteps );
         Timer_Stop( "Solver I/O" );
-
-        Timer_Start( "GPU Memory Copy" );
-	solver_load_gpu(Global.mySolver);
-        Timer_Stop( "GPU Memory Copy" );
 
         Timer_Start( "Compute Physics" );
         solver_nonlinear_state( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2, step );
@@ -7910,7 +8269,7 @@ int main( int argc, char** argv )
     Timer_Start("Solver Stats Print");
     solver_printstat( Global.mySolver );
     Timer_Stop("Solver Stats Print");
-    Timer_Reduce("Solver Stats Print", (TimerKind)(MAX | MIN), comm_solver);
+    Timer_Reduce("Solver Stats Print", (TimerKind)(MAX | MIN | AVERAGE), comm_solver);
 
     /* Initialize nonlinear solver analysis structures */
     if ( Param.includeNonlinearAnalysis == YES ) {

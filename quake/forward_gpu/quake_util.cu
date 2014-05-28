@@ -91,24 +91,24 @@ int32_t imin(int32_t x, int32_t y)
  * \return 1 when there is at least one "non-zero" component;
  *         0 when all the components are "zero".
  */
-int vector_is_all_zero( const fvector_t* v )
-{
-    /*
-     * For scalability studies, uncomment the immediate return.
-     */
-
-    /* return 1; */
-
-    int i;
-
-    for (i = 0; i < 3; i++) {
-        if (fabs( v->f[i] ) > UNDERFLOW_CAP) {
-            return 1;
-        }
-    }
-
-    return 0;
-}
+//int vector_is_all_zero( const fvector_t* v )
+//{
+//    /*
+//     * For scalability studies, uncomment the immediate return.
+//     */
+//
+//    /* return 1; */
+//
+//    int i;
+//
+//    for (i = 0; i < 3; i++) {
+//        if (fabs( v->f[i] ) > UNDERFLOW_CAP) {
+//            return 1;
+//        }
+//    }
+//
+//    return 0;
+//}
 
 
 /**

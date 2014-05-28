@@ -133,7 +133,8 @@ void stiffness_init(int32_t myID, mesh_t *myMesh, mysolver_t* mySolver)
 
     /* Dynamically calculate optimum block size for each kernel */
     calcForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
-    					   (char *)kernelStiffnessCalcLocal, 0);
+    					   (char *)kernelStiffnessCalcLocal, 
+					   0);
 
     return;
 }
@@ -299,10 +300,10 @@ void compute_addforce_effective_gpu( int32_t myID,
        elements will exit immediately */
     int blocksize = calcForceBlockSize;
     int gridsize = (myMesh->lenum / blocksize) + 1;
+    int sharedmem = 0;
+
     cudaGetLastError();
-    kernelStiffnessCalcLocal<<<gridsize, blocksize>>>(mySolver->gpuDataDevice,
-    						      myLinearElementsCount, 
-    						      myLinearElementsMapperDevice);
+    kernelStiffnessCalcLocal<<<gridsize, blocksize, sharedmem>>>(myMesh->lenum, mySolver->gpuDataDevice, myLinearElementsCount, myLinearElementsMapperDevice);
 
     cudaError_t cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {

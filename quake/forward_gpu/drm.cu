@@ -34,6 +34,7 @@
 #include "quake_util.h"
 #include "buildings.h"
 
+#include "kernel.h"
 
 #define  NONE -1
 #define  MAX(a, b) (((a)>(b)) ? (a) : (b))

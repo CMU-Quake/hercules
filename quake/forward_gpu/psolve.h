@@ -298,20 +298,36 @@ typedef struct gpu_data_t {
     int32_t      nharbored; // Number of harbored nodes
     int32_t      lenum; // Number of elements
 
-    elem_t*      elemTableDevice; // GPU copy of elemTable data structure
-    e_t*         eTableDevice; // GPU copy of eTable data structure
+    //elem_t*      elemTableDevice; // GPU copy of elemTable data structure
+    //e_t*         eTableDevice; // GPU copy of eTable data structure
     n_t*         nTableDevice; // GPU copy of nTable data structure
     fvector_t*   tm1Device; // GPU nodal tm1 displacements
     fvector_t*   tm2Device; // GPU nodal tm2 displacements
     fvector_t*   tm3Device; // GPU nodal tm3 displacements
     fvector_t*   forceDevice; // GPU nodal forces
 
-    fvector_t* conv_shear_1Device;  /* Approximate Convolution Calculation */
-    fvector_t* conv_shear_2Device;
-    fvector_t* conv_kappa_1Device;
-    fvector_t* conv_kappa_2Device;
+    fvector_t*   conv_shear_1Device;  /* Approximate Convolution Calculation */
+    fvector_t*   conv_shear_2Device;
+    fvector_t*   conv_kappa_1Device;
+    fvector_t*   conv_kappa_2Device;
 
-    edata_t*     matPropsDevice;
+    double*      c1ArrayDevice;
+    double*      c2ArrayDevice;
+    int32_t*     lnidArrayDevice;
+    double*      g0_shearArrayDevice;
+    double*      g1_shearArrayDevice;
+    double*      g0_kappaArrayDevice;
+    double*      g1_kappaArrayDevice;
+    double*      b_shearArrayDevice;
+    double*      a0_shearArrayDevice;
+    double*      a1_shearArrayDevice;
+    double*      b_kappaArrayDevice;
+    double*      a0_kappaArrayDevice;
+    double*      a1_kappaArrayDevice;
+
+    fvector_t*   shearVectorDevice;
+    fvector_t*   kappaVectorDevice;
+    //edata_t*     matPropsDevice;
 } gpu_data_t;
 
 
@@ -355,7 +371,6 @@ struct mysolver_t {
     gpu_spec_t*  gpu_spec; // GPU specifications
     gpu_data_t*  gpuData;
     gpu_data_t*  gpuDataDevice;
-
 };
 
 typedef struct mysolver_t mysolver_t;
