@@ -28,14 +28,6 @@
 #include "kernel.h"
 
 
-/* Flag for determining if blocksizes have been calculated */
-static int damping_have_blocksize = 0;
-
-/* Kernel block sizes */
-static int damping_calcconv_blocksize = 0;
-static int damping_calclocal_blocksize = 0;
-
-
 void damping_addforce(mesh_t *myMesh, mysolver_t *mySolver, fmatrix_t (*theK1)[8], fmatrix_t (*theK2)[8]){
 
     fvector_t localForce[8];
@@ -121,21 +113,12 @@ void calc_conv_gpu(int32_t myID, mesh_t *myMesh, mysolver_t *mySolver, double th
 {
     double rmax = 2. * M_PI * theFreq * theDeltaT;
   
-    if (!damping_have_blocksize) {
-      damping_calcconv_blocksize = gpu_get_blocksize(mySolver->gpu_spec,
-				      (char *)kernelDampingCalcConv, 0);
-      if (myID == 0) {
-	fprintf(stdout, "DEBUG: calcconv blocksize: %d\n", 
-	      damping_calcconv_blocksize);
-      }
-    }
-    int blocksize = damping_calcconv_blocksize;
-    /* Number of threads is lenum * 2 convolutions/element * 8 values/conv */
-    int gridsize = (myMesh->lenum / blocksize) + 1;
+    int blocksize = mySolver->gpu_kernel[CUDA_KERNEL_DAMPING_CONV].blocksize;
+    int gridsize = mySolver->gpu_kernel[CUDA_KERNEL_DAMPING_CONV].gridsize;
+    int sharedmem = mySolver->gpu_kernel[CUDA_KERNEL_DAMPING_CONV].sharedmem;
+
     cudaGetLastError();
-    kernelDampingCalcConv<<<gridsize, blocksize>>>(myMesh->lenum, 
-						   mySolver->gpuDataDevice, 
-						   rmax);
+    kernelDampingCalcConv<<<gridsize, blocksize, sharedmem, mySolver->streams[CUDA_STREAM_MAIN]>>>(myMesh->lenum, myMesh->lenum*8, mySolver->gpuDataDevice, rmax);
 
     cudaError_t cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {
@@ -285,29 +268,13 @@ void constant_Q_addforce_gpu(int myID, mesh_t *myMesh, mysolver_t *mySolver, dou
 
 	/* theAddForceETime -= MPI_Wtime(); */
 
-    /* Copy working data to device */
-    cudaMemcpy(mySolver->gpuData->forceDevice, mySolver->force, 
-    	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
-    mySolver->gpu_spec->numbytespci += myMesh->nharbored * sizeof(fvector_t);
+    int blocksize = mySolver->gpu_kernel[CUDA_KERNEL_DAMPING_FORCE].blocksize;
+    int gridsize = mySolver->gpu_kernel[CUDA_KERNEL_DAMPING_FORCE].gridsize;
+    int sharedmem = mySolver->gpu_kernel[CUDA_KERNEL_DAMPING_FORCE].sharedmem;
 
-    /* Each thread saves a component of a convolution vector in shared mem */
-    if (!damping_have_blocksize) {
-      damping_calclocal_blocksize = gpu_get_blocksize(mySolver->gpu_spec,
-					 (char *)kernelDampingCalcLocal, 
-						      0);
-      damping_have_blocksize = 1;
-      if (myID == 0) {
-	fprintf(stdout, "DEBUG: calclocal blocksize: %d\n", 
-	      damping_calclocal_blocksize);
-      }
-    }
-    int blocksize = damping_calclocal_blocksize;
-    /* Number of threads is lenum * 8 components/element */
-    int gridsize = (myMesh->lenum / blocksize) + 1;
-    int sharedmem = 0;
     cudaGetLastError();
 
-    kernelDampingCalcLocal<<<gridsize, blocksize, sharedmem>>>(myMesh->lenum, mySolver->gpuDataDevice, rmax);
+    kernelDampingCalcLocal<<<gridsize, blocksize, sharedmem, mySolver->streams[CUDA_STREAM_MAIN]>>>(myMesh->lenum, mySolver->gpuDataDevice);
 
     cudaError_t cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {
@@ -321,10 +288,8 @@ void constant_Q_addforce_gpu(int myID, mesh_t *myMesh, mysolver_t *mySolver, dou
 
     mySolver->gpu_spec->numbytes += kernel_mem_per_thread(FLOP_DAMPING_KERNEL) * myMesh->lenum;
 
-    /* Copy working data back to host */
-    cudaMemcpy(mySolver->force, mySolver->gpuData->forceDevice,
-    	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
-    mySolver->gpu_spec->numbytespci += myMesh->nharbored * sizeof(fvector_t);
+    /* Uncomment for timing tests */
+    //cudaStreamSynchronize(mySolver->streams[CUDA_STREAM_MAIN]);
 
     return;
 }

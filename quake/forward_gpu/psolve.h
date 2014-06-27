@@ -52,7 +52,29 @@
 # endif /* DEBUG */
 #endif /* DO_DEBUG */
 
-/* GPU specifications */
+/* Maximum simultaneous CUDA streams */
+#define MAX_CUDA_STREAM       2
+#define CUDA_STREAM_MAIN      0
+#define CUDA_STREAM_SECONDARY 1
+
+/* Maximum number of kernels */
+#define MAX_CUDA_KERNEL             4
+#define CUDA_KERNEL_STIFFNESS_FORCE 0
+#define CUDA_KERNEL_DAMPING_CONV    1
+#define CUDA_KERNEL_DAMPING_FORCE   2
+#define CUDA_KERNEL_DISPLACEMENT    3
+
+/* Kernel names */
+#define CUDA_KERNEL_NAME_STIFFNESS_FORCE       "kernelStiffnessCalcLocal"
+#define CUDA_KERNEL_NAME_DAMPING_CONV          "kernelDampingCalcConv"
+#define CUDA_KERNEL_NAME_DAMPING_FORCE         "kernelDampingCalcLocal"
+#define CUDA_KERNEL_NAME_DISPLACEMENT          "kernelDispCalc"
+
+/* Maximum simultaneous CUDA events */
+#define MAX_CUDA_EVENT             1
+#define CUDA_EVENT_FORCE_WAIT      0
+
+/* GPU device specifications */
 typedef struct {
   int32_t device;
   int32_t max_threads;
@@ -70,6 +92,16 @@ typedef struct {
   int64_t numflops;
   int64_t numbytes;
 } gpu_spec_t;
+
+
+/* GPU kernel specifications */
+typedef struct {
+  char name[32];
+  char *handle;
+  int gridsize;
+  int blocksize;
+  int sharedmem;
+} gpu_kernel_t;
 
 
 extern MPI_Comm comm_solver;
@@ -300,7 +332,7 @@ typedef struct gpu_data_t {
 
     //elem_t*      elemTableDevice; // GPU copy of elemTable data structure
     //e_t*         eTableDevice; // GPU copy of eTable data structure
-    n_t*         nTableDevice; // GPU copy of nTable data structure
+    //n_t*         nTableDevice; // GPU copy of nTable data structure
     fvector_t*   tm1Device; // GPU nodal tm1 displacements
     fvector_t*   tm2Device; // GPU nodal tm2 displacements
     fvector_t*   tm3Device; // GPU nodal tm3 displacements
@@ -325,9 +357,14 @@ typedef struct gpu_data_t {
     double*      a0_kappaArrayDevice;
     double*      a1_kappaArrayDevice;
 
+    solver_float *mass_simpleArrayDevice;
+    solver_float *mass2_minusaMArrayDevice[3];
+    solver_float *mass_minusaMArrayDevice[3];
+
     fvector_t*   shearVectorDevice;
     fvector_t*   kappaVectorDevice;
     //edata_t*     matPropsDevice;
+
 } gpu_data_t;
 
 
@@ -368,9 +405,13 @@ struct mysolver_t {
     fvector_t* conv_kappa_2;
 
     /* GPU device data structures - should be declared in a separate struct */
-    gpu_spec_t*  gpu_spec; // GPU specifications
+    gpu_spec_t*  gpu_spec; // GPU device specifications
+    gpu_kernel_t*  gpu_kernel; // GPU kernel specifications
     gpu_data_t*  gpuData;
     gpu_data_t*  gpuDataDevice;
+
+    cudaStream_t streams[MAX_CUDA_STREAM]; // Streams asynchronous operation
+    cudaEvent_t  events[MAX_CUDA_EVENT];   // Events for asynch operation
 };
 
 typedef struct mysolver_t mysolver_t;

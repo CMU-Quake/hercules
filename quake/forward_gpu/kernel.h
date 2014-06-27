@@ -26,16 +26,17 @@
 
 
 /* Kernel identifiers for FLOP counts */
-#define FLOP_MAX_KERNEL        3
+#define FLOP_MAX_KERNEL        4
 #define FLOP_STIFFNESS_KERNEL  0
 #define FLOP_CALCCONV_KERNEL   1
 #define FLOP_DAMPING_KERNEL    2
+#define FLOP_DISPLACEMENT      3
 
 
 /* Debug and utility functions */
 int64_t kernel_flops_per_thread(int kid);
 int64_t kernel_mem_per_thread(int kid);
-int dumpRegisterCounts();
+int32_t gpu_get_reg_count(char* kernel);
 int32_t gpu_get_blocksize(gpu_spec_t *gpuSpecs, char* kernel, 
 			  int32_t memPerThread);
 int gpu_copy_constant_symbols(int myID, fmatrix_t (*theK1)[8], 
@@ -48,15 +49,20 @@ __global__  void kernelStiffnessCalcLocal(int32_t lenum,
 					  int32_t*  myLinearElementsMapperDevice);
 
 __global__  void kernelDampingCalcConv(int32_t lenum,
+				       int32_t numcomp,
 				       gpu_data_t *gpuData,
 				       double rmax);
 
 __global__  void kernelDampingCalcLocal(int32_t lenum, 
-					gpu_data_t *gpuData,
-					double rmax);
+					gpu_data_t *gpuData);
 
-__global__  void kernelDispCalc(gpu_data_t* gpuDataDevice,
+__global__  void kernelDispCalc(int32_t nharbored,
+				gpu_data_t* gpuData,
                                 noyesflag_t printAccel);
+
+__global__  void kernelAlignTm2Disp(int32_t lenum,
+				    int32_t numcomp,
+				    gpu_data_t *gpuData);
 
 /* Physics functions used on both host and device */
 __host__ __device__ int vector_is_zero( const fvector_t* v );

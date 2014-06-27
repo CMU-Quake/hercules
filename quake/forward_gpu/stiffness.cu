@@ -42,8 +42,6 @@ static int32_t    myLinearElementsCount;
 static int32_t   *myLinearElementsMapper;
 static int32_t   *myLinearElementsMapperDevice;
 
-static int calcForceBlockSize;
-
 
 /* -------------------------------------------------------------------------- */
 /*          Initialization of parameters for nonlinear compatibility          */
@@ -130,11 +128,6 @@ void stiffness_init(int32_t myID, mesh_t *myMesh, mysolver_t* mySolver)
         exit(1);
     }
     mySolver->gpu_spec->numbytespci += myLinearElementsCount * sizeof(int32_t);
-
-    /* Dynamically calculate optimum block size for each kernel */
-    calcForceBlockSize = gpu_get_blocksize(mySolver->gpu_spec,
-    					   (char *)kernelStiffnessCalcLocal, 
-					   0);
 
     return;
 }
@@ -291,19 +284,15 @@ void compute_addforce_effective_gpu( int32_t myID,
 				     mesh_t* myMesh, 
 				     mysolver_t* mySolver )
 {
-    /* Copy working data to device */
-    cudaMemcpy(mySolver->gpuData->forceDevice, mySolver->force, 
-	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyHostToDevice);
-    mySolver->gpu_spec->numbytespci += myMesh->nharbored * sizeof(fvector_t);
 
     /* Note that this executes for all elements. Threads for non-linear
        elements will exit immediately */
-    int blocksize = calcForceBlockSize;
-    int gridsize = (myMesh->lenum / blocksize) + 1;
-    int sharedmem = 0;
+    int blocksize = mySolver->gpu_kernel[CUDA_KERNEL_STIFFNESS_FORCE].blocksize;
+    int gridsize = mySolver->gpu_kernel[CUDA_KERNEL_STIFFNESS_FORCE].gridsize;
+    int sharedmem = mySolver->gpu_kernel[CUDA_KERNEL_STIFFNESS_FORCE].sharedmem;
 
     cudaGetLastError();
-    kernelStiffnessCalcLocal<<<gridsize, blocksize, sharedmem>>>(myMesh->lenum, mySolver->gpuDataDevice, myLinearElementsCount, myLinearElementsMapperDevice);
+    kernelStiffnessCalcLocal<<<gridsize, blocksize, sharedmem, mySolver->streams[CUDA_STREAM_MAIN]>>>(myMesh->lenum, mySolver->gpuDataDevice, myLinearElementsCount, myLinearElementsMapperDevice);
 
     cudaError_t cerror = cudaGetLastError();
     if (cerror != cudaSuccess) {
@@ -317,10 +306,8 @@ void compute_addforce_effective_gpu( int32_t myID,
 
     mySolver->gpu_spec->numbytes += kernel_mem_per_thread(FLOP_STIFFNESS_KERNEL) * myMesh->lenum;
 
-    /* Copy working data back to host */
-    cudaMemcpy(mySolver->force, mySolver->gpuData->forceDevice,
-    	       myMesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost);
-    mySolver->gpu_spec->numbytespci += myMesh->nharbored * sizeof(fvector_t);
+    /* Uncomment for timing tests */
+    //cudaStreamSynchronize(mySolver->streams[CUDA_STREAM_MAIN]);
 
     return;
 }
