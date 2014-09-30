@@ -15,8 +15,17 @@ Julio Lopez		Parallel I/O for bulk wavefield and mesh output
 
 Ricardo Taborda		Non-linear formulation.  Initial version of
 			non-linear.{c,h}.  Extensive contributions to psolve.c
+			Initial version of buildings and derivated changes
+			to octor/meshing.
+			
+Yigit Isbiliroglu	Extensive additions to the buildings module
+			Implementation of DRM.
 			
 Haydar Karaoglu		New decomposition method.  Contributions to psolve.c
+			Implementation of BK attenuation.
+			Quadratic elements and acoustic formualtion (beta)
+			
+Patrick Small		Implementation of GPGPU/Cuda.
 
 John Urbanic		Plane output routines. Initial version of plane.{c,h}
 			Changes to geometrics.c
