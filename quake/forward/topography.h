@@ -88,13 +88,4 @@ int8_t    topo_maxLevel();
 int find_topoAirOct              ( tick_t xTick, tick_t yTick, tick_t zTick,  double  ticksize );
 
 
-/* ERASE LATER THESE FUNCTIONS, ARE JUST FOR A QUICK CHECKING*/
-void topo_DRM_init ( mesh_t *myMesh, mysolver_t *mySolver);
-
-void compute_addforce_topoDRM ( mesh_t     *myMesh,
-                                mysolver_t *mySolver,
-                                double      theDeltaT,
-                                int         step,
-                                fmatrix_t (*theK1)[8], fmatrix_t (*theK2)[8]);
-
 #endif /* TOPOGRAPHY_H_ */

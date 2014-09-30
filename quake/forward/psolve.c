@@ -4161,7 +4161,6 @@ solver_compute_force_topography( mysolver_t *solver,
 {
     if ( Param.includeTopography == YES ) {
         Timer_Start( "Compute addforces Topography" );
-//        compute_addforce_topo( mesh, solver, deltaT2 );
         compute_addforce_topoEffective( mesh, solver, deltaT2 );
         Timer_Stop( "Compute addforces Topography" );
     }
@@ -4457,11 +4456,6 @@ static void solver_run()
         solver_compute_force_damping( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2 );
         solver_compute_force_gravity( Global.mySolver, Global.myMesh, step );
         solver_compute_force_nonlinear( Global.mySolver, Global.myMesh, Param.theDeltaTSquared );
-
-        /* ------------------ */
-        /* TODO: erase this later*/
-        //compute_addforce_topoDRM ( Global.myMesh,Global.mySolver, Param.theDeltaT, step, Global.theK1, Global.theK2);
-        /*----------*/
 
         Timer_Stop( "Compute Physics" );
 
@@ -7756,12 +7750,6 @@ int main( int argc, char** argv )
         }
         nonlinear_stats(Global.myID, Global.theGroupSize);
     }
-
-    if ( Param.includeTopography == YES ) {
-    	/*TODO: this is a test. Erase later. Dorian */
-    	//topo_DRM_init( Global.myMesh, Global.mySolver);
-    }
-
     
     Timer_Start("Source Init");
     source_init(Param.parameters_input_file);
