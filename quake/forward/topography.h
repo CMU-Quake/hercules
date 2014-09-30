@@ -46,7 +46,7 @@ typedef struct toposolver_t {
 } toposolver_t;
 
 typedef enum {
-  FLAT = 0, FULL
+  SQD = 0, FULL
 } etreetype_t;
 
 typedef struct topostation_t {

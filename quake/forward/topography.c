@@ -882,12 +882,12 @@ topography_initparameters ( const char *parametersin )
 
     if ( strcasecmp(etree_model, "full") == 0 ) {
         etreetype = FULL;
-    } else if ( strcasecmp(etree_model, "flat") == 0 ) {
-        etreetype = FLAT;
+    } else if ( strcasecmp(etree_model, "sqd") == 0 ) {
+        etreetype = SQD;
     } else {
         fprintf(stderr,
                 "Illegal etree_type model for topography analysis"
-                "(Flat, Full): %s\n", etree_model);
+                "(Sqd, Full): %s\n", etree_model);
         return -1;
     }
 

@@ -1374,11 +1374,25 @@ setrec( octant_t* leaf, double ticksize, void* data )
 		z_m = Global.theZForMeshOrigin
 		    + (leaf->lz +  points[i_z] * halfticks) * ticksize;
 
-		/* Shift the domain if topography with flat etree is considered */
-		if ( ( Param.includeTopography == YES ) && ( get_theetree_type() == FLAT )  ) {
-                    z_m -=  get_thebase_topo() ;
-                    if ( z_m < 0 )
-                    	z_m = 0;
+		/* Shift the domain if topography with squashed etree is considered */
+		if ( ( Param.includeTopography == YES ) && ( get_theetree_type() == SQD )  ) {
+                    z_m -=   point_elevation ( x_m, y_m ) ;
+                    if ( z_m < 0 ) /* get air properties */
+                    {
+                    	edata_t* airedata = (edata_t*)data;
+                    	get_airprops_topo( airedata );
+                    	g_props.Vp  = airedata->Vp;
+                    	g_props.Vs  = airedata->Vs;
+                    	g_props.rho = airedata->rho;
+
+                		if ( g_props.Vs < g_props_min.Vs ) {
+                		    /* assign minimum value of vs to produce elements
+                		     * that are small enough to rightly represent the model */
+                		    g_props_min = g_props;
+                		}
+
+                		continue;
+                    }
 		}
 
 		/* Shift the domain if buildings are considered */
@@ -7392,25 +7406,23 @@ mesh_correct_properties( etree_t* cvm )
         			}
 
 
-            		if ( ( Param.includeTopography == YES ) && ( get_theetree_type() == FLAT )  ) {
-                                depth_m -=  get_thebase_topo() ;
+            		if ( ( Param.includeTopography == YES ) && ( get_theetree_type() == SQD )  ) {
+                                depth_m -=  point_elevation ( north_m, east_m ) ;
                                 if ( depth_m < 0 )
-                                	depth_m = 0;
-            		}
+                            		continue;
 
+                                if ( depth_m > Param.theDomainZ )
+                                	depth_m = Param.theDomainZ - edata->edgesize * 0.005;
+
+            		}
 
                     res = cvm_query( Global.theCVMEp, east_m, north_m,
                                      depth_m, &g_props );
 
-//                    if (res != 0) {
-//                        fprintf(stderr, "Cannot find the query point: east = %lf, north = %lf, depth = %lf \n",
-//                        		east_m, north_m, depth_m);
-//                        exit(1);
-//                    }
-                    // Dorian: I had to do this because of anomalies found in the AburraValley_Etree.
-                    // Remove this line and uncomment the previous statement to return to the original version
                     if (res != 0) {
-                    	continue;
+                        fprintf(stderr, "Cannot find the query point: east = %lf, north = %lf, depth = %lf \n",
+                        		east_m, north_m, depth_m);
+                        exit(1);
                     }
 
         			vp  += g_props.Vp;
@@ -7425,8 +7437,7 @@ mesh_correct_properties( etree_t* cvm )
         edata->Vs  =  vs;
         edata->rho = rho;
 
-//        fprintf(stderr, "Queried  points: %ld \n",cnt);
-//        fprintf(stdout, "Element: %d, out of: %d, Processor: %d \n",eindex, Global.myMesh->lenum, Global.myID );
+
         if (cnt != 0 ) {
         	edata->Vp  =  vp / cnt;
         	edata->Vs  =  vs / cnt;
@@ -7434,17 +7445,8 @@ mesh_correct_properties( etree_t* cvm )
         }
 
         /* Auxiliary ratios for adjustments */
-        // Dorian: Needed to handle possible air elements inside topography.
-        // This situation could emerge by different readings of the topography surface
-        // between Hercules and the algorithm used for creating the Etree.
-        if ( (edata->Vp==0)||(edata->Vs==0)||(edata->rho==0) ) {
-        	VpVsRatio  = 2.0;  /* values artificially imposed by me */
-        	edata->rho = 2000;
-        } else {
-            VpVsRatio  = edata->Vp  / edata->Vs;
-            RhoVpRatio = edata->rho / edata->Vp;
-        }
-
+        VpVsRatio  = edata->Vp  / edata->Vs;
+        RhoVpRatio = edata->rho / edata->Vp;
 
         /* Adjust material properties according to the element size and
          * softening factor.
