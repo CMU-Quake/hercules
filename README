@@ -1,16 +1,11 @@
 For instructions on how to build, install and execute Hercules, please read
-the file named install.txt in the doc directory.
-
-.Directory content:
+the documentation on the GitHub wiki pages. Some general description of the
+core components in this directory are given next.
 
 --------------------------------------------------------------------------
 octor		- Hercules mesh generator/partitioner/load balancer module
 
 quake		- Hercules solver module
-
-visualize	- Hercules visualization module
-
-ChangeLog	- Description of changes to the source code
 
 user.mk		- User-specified compiler and linker settings. This should
 		  be the only file we need to change.
