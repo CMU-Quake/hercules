@@ -4227,6 +4227,7 @@ solver_compute_displacement( mysolver_t* solver, mesh_t* mesh )
         fvector_t        nodalForce = solver->force[nindex];
         const fvector_t* tm1Disp    = solver->tm1 + nindex;
         fvector_t*       tm2Disp    = solver->tm2 + nindex;
+        fvector_t*       tm3Disp    = solver->tm3 + nindex;
 
         /* total nodal forces */
         nodalForce.f[0] += np->mass2_minusaM[0] * tm1Disp->f[0]
@@ -4248,6 +4249,15 @@ solver_compute_displacement( mysolver_t* solver, mesh_t* mesh )
         /* Dorian. correct Displacement */
          // TODO: Think of a better place for this
         if ( np->mass_simple != 0 ) {
+
+            /* Save tm3 for accelerations */
+            if ( Param.printStationAccelerations == YES ) {
+
+                tm3Disp->f[0] = tm2Disp->f[0];
+                tm3Disp->f[1] = tm2Disp->f[1];
+                tm3Disp->f[2] = tm2Disp->f[2];
+            }
+
         	tm2Disp->f[0] = nodalForce.f[0] / np->mass_simple;
         	tm2Disp->f[1] = nodalForce.f[1] / np->mass_simple;
         	tm2Disp->f[2] = nodalForce.f[2] / np->mass_simple;
@@ -4256,17 +4266,13 @@ solver_compute_displacement( mysolver_t* solver, mesh_t* mesh )
         	tm2Disp->f[0] = 0.0;
         	tm2Disp->f[1] = 0.0;
         	tm2Disp->f[2] = 0.0;
+
+            tm3Disp->f[0] = 0.0;
+            tm3Disp->f[1] = 0.0;
+            tm3Disp->f[2] = 0.0;
         }
 
-        /* Save tm3 for accelerations */
-        if ( Param.printStationAccelerations == YES ) {
 
-            fvector_t* tm3Disp = solver->tm3 + nindex;
-
-            tm3Disp->f[0] = tm2Disp->f[0];
-            tm3Disp->f[1] = tm2Disp->f[1];
-            tm3Disp->f[2] = tm2Disp->f[2];
-        }
 
 
     } /* for (nindex ...): all my harbored nodes */
@@ -4439,7 +4445,8 @@ static void solver_run()
         Timer_Start( "Solver I/O" );
         solver_write_checkpoint( step, startingStep );
         solver_update_status( step, startingStep );
-        solver_output_wavefield( step );
+        // Todo Dorian. Ask Ricardo about this file (disp.out), it gets really big at high frequencies, and it is not clear its purpose.
+        //solver_output_wavefield( step );
         solver_output_planes( Global.mySolver, Global.myID, step );
         solver_output_stations( step );
         solver_output_drm_nodes( Global.mySolver, step, Param.theTotalSteps );
