@@ -1117,10 +1117,10 @@ layer_prop( double east_m, double north_m, double depth_m, cvmpayload_t* payload
 		bb = abs(Del3_SL);
 
 	/* este es h1 para discretizacion en los tres estratos  */
-	double h1 = H + Del2 - ( aa + bb );
+	//double h1 = H + Del2 - ( aa + bb );
 
 	/* este es h1 para discretizacion SOLO en el primer estrato  */
-	//double h1 = H + Del1 - ( aa );
+	double h1 = H + Del1 - ( aa );
 
 
 	z0 = Pelev;
@@ -2856,7 +2856,7 @@ void topography_stations_init( mesh_t    *myMesh,
     int32_t     iStation=0;
     vector3D_t  point;
     octant_t   *octant;
-    int32_t     lnid0;
+    int32_t     lnid0, count=0;
     elem_t     *elemp;
 
     int topoStations_count = 0;
@@ -2938,14 +2938,17 @@ void topography_stations_init( mesh_t    *myMesh,
                 		                   myTopoStations[iStation].local_coord,
                 		                   xo, yo, zo, ecp->h );
 
+                ++count;
+
                 break;
             }
 
         } /* for all my elements */
 
-        fprintf(stdout,"Topographic Stations count = %d",topoStations_count);
-
     } /* for all my stations */
+
+
+    fprintf(stdout,"Topographic Stations count = %d",count);
 
 }
 

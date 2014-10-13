@@ -4428,7 +4428,7 @@ static void solver_run()
         Timer_Start( "Solver I/O" );
         solver_write_checkpoint( step, startingStep );
         solver_update_status( step, startingStep );
-        solver_output_wavefield( step );
+//        solver_output_wavefield( step );
         solver_output_planes( Global.mySolver, Global.myID, step );
         solver_output_stations( step );
         solver_output_drm_nodes( Global.mySolver, step, Param.theTotalSteps );
