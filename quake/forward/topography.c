@@ -220,7 +220,7 @@ void cross_product (vector3D_t v1, vector3D_t v2, vector3D_t *v3)
 /* Note: zp and zo are measured with respect to the local z axis of the topography. i.e: m.a.s.l values  */
 double point_to_plane( double xp, double yp, double zp, double xo, double yo, double h, double zcoords[4] )
 {
-	double x1, y1, z1, mag;
+	double x1, y1, z1, mag, dist;
 	vector3D_t V1, V2, V3, V4, N;
 
 	V1.x[0] = h;
@@ -239,7 +239,7 @@ double point_to_plane( double xp, double yp, double zp, double xo, double yo, do
 	y1 = yp - yo;
 	z1 = zp - zcoords[0];
 
-	if ( x1 / y1 > 1) {
+	if ( x1 > y1 ) {
 		cross_product ( V3, V1,  &V4);
 	}
 	else
@@ -248,13 +248,26 @@ double point_to_plane( double xp, double yp, double zp, double xo, double yo, do
 	}
 
 	mag     = magnitude(V4);
+
+	/*  Sanity check   */
+	if ( mag == 0 ) {
+
+        fprintf(stderr,"Error: Found zero magnitude at \n "
+                "point_to_plane fnc\n");
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+	}
+
 	N.x[0]  = V4.x[0] / mag;
 	N.x[1]  = V4.x[1] / mag;
 	N.x[2]  = V4.x[2] / mag;
 
-	return ( N.x[0] * x1 + N.x[1] * y1 + N.x[2] * z1 ); /* positive: outside surface;
+
+	dist = ( N.x[0] * x1 + N.x[1] * y1 + N.x[2] * z1 ); /* positive: outside surface;
 	                                                       zero    : on surface
 	                                                       negative: within surface */
+
+	return dist;
 
 }
 
@@ -279,6 +292,19 @@ double interp_z( double xp, double yp, double xo, double yo, double h, double zc
 	x1 = xp - xo;
 	y1 = yp - yo;
 
+	if ( y1 == 0 )
+		return zcoords[0] + ( zcoords[3] - zcoords[0] ) * x1 / h;
+
+	if ( y1 == h )
+		return zcoords[1] + ( zcoords[2] - zcoords[1] ) * x1 / h;
+
+	if ( x1 == 0 )
+		return zcoords[0] + ( zcoords[1] - zcoords[0] ) * y1 / h;
+
+	if ( x1 == h )
+		return zcoords[3] + ( zcoords[2] - zcoords[3] ) * y1 / h;
+
+
 	if ( x1 / y1 > 1) {
 		cross_product ( V3, V1,  &V4);
 	}
@@ -292,6 +318,15 @@ double interp_z( double xp, double yp, double xo, double yo, double h, double zc
 	N.x[1]  = V4.x[1] / mag;
 	N.x[2]  = V4.x[2] / mag;
 
+	/*  Sanity check   */
+	if ( N.x[2] == 0 ) {
+
+        fprintf(stderr,"Thread 1: Topography module interp_z fnc: "
+                "Zero found when interpolating elevation\n");
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+	}
+
 	return zcoords[0] - ( N.x[0] * x1 + N.x[1] * y1) / N.x[2];
 
 }
@@ -301,7 +336,7 @@ double interp_z( double xp, double yp, double xo, double yo, double h, double zc
 double point_elevation ( double xo, double yo ) {
 
 	int i, j;
-	double xp, yp, x_o, y_o, remi, remj, mesh_cz[4], zp;
+	double xp, yp, x_o, y_o, remi, remj, mesh_cz[4] = { 0 }, zp;
 
 	xp = xo;
 	yp = yo;
@@ -320,6 +355,15 @@ double point_elevation ( double xo, double yo ) {
 		mesh_cz[2] =  theTopoInfo [ np_ew * ( i + 1 ) + j + 1 ];
 		mesh_cz[3] =  theTopoInfo [ np_ew * ( i + 1 ) + j ];
 
+		/*  Sanity check   */
+		if ( (mesh_cz[0] == NAN) || (mesh_cz[1] == NAN) || (mesh_cz[2] == NAN) || (mesh_cz[3] == NAN) ) {
+
+	        fprintf(stderr,"Thread 1: Topography module point_elevation fnc: "
+	                "NAN found when computing point elevation\n");
+	        MPI_Abort(MPI_COMM_WORLD, ERROR);
+	        exit(1);
+		}
+
 		zp = thebase_zcoord - interp_z( xp, yp, x_o*So, y_o*So, So, mesh_cz );
 	}
 
@@ -336,7 +380,7 @@ double point_elevation ( double xo, double yo ) {
 double point_PlaneDist ( double xp, double yp, double zp ) {
 
 	int i, j;
-	double x_o, y_o, remi, remj, mesh_cz[4];
+	double x_o, y_o, remi, remj, mesh_cz[4]= { 0 }, dist;
 
 	zp = thebase_zcoord - zp; /* sea level elevation  */
 
@@ -351,7 +395,24 @@ double point_PlaneDist ( double xp, double yp, double zp ) {
 	mesh_cz[2] =  theTopoInfo [ np_ew * ( i + 1 ) + j + 1 ];
 	mesh_cz[3] =  theTopoInfo [ np_ew * ( i + 1 ) + j ];
 
-	return	point_to_plane( xp, yp, zp, x_o*So, y_o*So, So, mesh_cz );
+	if ( (i == 0) || (j == 0) || (i == np_ns - 1 ) || (j == np_ew - 1) ) {
+
+		dist = zp - ( thebase_zcoord - point_elevation(xp,yp) );
+	    return dist;
+	}
+
+	if ( (mesh_cz[0] == mesh_cz[1]) && (mesh_cz[1] == mesh_cz[2]) && (mesh_cz[2] == mesh_cz[3] ) ) {
+
+		// double po=90;
+		//fprintf(stdout,"elv1=%f, elev2=%f, elev3=%f, elev4=%f, xp=%f, yp=%f, zp=%f, i=%d, j=%d \n", mesh_cz[0], mesh_cz[1], mesh_cz[2], mesh_cz[3], xp, yp, zp, i, j );
+
+	}
+
+
+	dist = point_to_plane( xp, yp, zp, x_o*So, y_o*So, So, mesh_cz );
+//	fprintf(stdout,"dist=%f \n", dist );
+
+	return dist;
 
 }
 
@@ -425,12 +486,20 @@ void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_to
 
 	double   xo, yo, zo, xp, yp, zp, esize, emin, dist, fact_air=2.0, fact_mat=1.0;
 	int      far_air_flag=0, near_air_flag=0, near_mat_flag=0, far_mat_flag=0;
-	int      i, j, k, np=5;
+	int      i, j, k, np=3;
 
 	xo = leaf->lx * ticksize;
 	yo = leaf->ly * ticksize;
 	zo = leaf->lz * ticksize;
 	esize  = (double)edata->edgesize;
+
+	double po=0;
+
+//	if ( (xo==60000) && (yo==20000) && (zo==20000) )
+//		po=90;
+
+	if ( (xo==38125) && (yo==66562.5) && (zo==2500) && (esize==312.5))
+		po=90;
 
 	emin = ( (tick_t)1 << (PIXELLEVEL - theMaxoctlevel) ) * ticksize;
 	double Del = esize / (np - 1);
@@ -531,13 +600,14 @@ void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_to
 
 
 /* Returns the real volume held by the tetrahedral elements */
-void TetrVolume ( double xo, double yo, double zo, double esize, double So,
+void TetrVolume ( double xo, double yo, double zo, double esize,
 		         double VolTetr[5]) {
 
 	int i, j, m;
 	double GP56, NGp=56;
 	double TETRACOOR, TETRACOORSYMM;
 	double xm, ym, zm, zt;
+
 
 	/* point coordinates for the five internal tetrahedral */
 	double MCx[5][4], MCy[5][4], MCz[5][4];
@@ -620,13 +690,23 @@ void TetrVolume ( double xo, double yo, double zo, double esize, double So,
             }
 		}
 
-		if (Vpr == 0)
-			Vpr = 0.005; /* Doriam. I am assuming a 0.5% percent of mass within the tetrahedron in cases when the quadrature scheme fails to detect the volume.
-			                This is done to avoid numerical artifacts */
-
 		VolTetr[m] = Vpr; /* percentage of the tetrahedron's volume filled by topography  */
 
 	} /* for each tetrahedra */
+
+	/* Check for empty cube   */
+	/* Todo: Think of a better way to handle empty tetrahedra */
+	if ( (VolTetr[0] == 0) && (VolTetr[1] == 0) && (VolTetr[2] == 0) && (VolTetr[3] == 0) && (VolTetr[4] == 0) ) {
+
+        fprintf(stdout,"Thread 1: TetrVolume: "
+                "Could not find enclosed volume for topographic element: xo=%f, yo=%f, zo=%f, esize=%f \n",xo, yo, zo, esize );
+
+	}
+
+//		for ( i = 0; i < 5; ++i ) {
+//			VolTetr[i] = 0.001;  /* Doriam. I am assuming a 0.5% percent of mass within the tetrahedron in cases when the quadrature scheme fails to detect the volume.
+//		                This is done to avoid numerical artifacts */
+//		}
 
 }
 
@@ -1072,41 +1152,59 @@ void topography_elements_count(int32_t myID, mesh_t *myMesh ) {
     int32_t eindex;
     int32_t count         = 0;
 
+	//FILE  *topoinfo = hu_fopen( "topoElem.txt", "w" );
+
     for (eindex = 0; eindex < myMesh->lenum; eindex++) {
 
-        elem_t     *elemp;
-        edata_t    *edata;
-        node_t     *node0dat;
-        double      Vp, xo, yo, zo, esize, Vol;
-        int32_t	    node0;
+    	elem_t     *elemp;
+    	edata_t    *edata;
+    	node_t     *node0dat;
+    	double      Vp, xo, yo, zo, esize, Vol;
+    	double      aux_vol[5] = { 0 };
+    	int32_t	    node0;
 
-        elemp    = &myMesh->elemTable[eindex]; //Takes the information of the "eindex" element
-        edata    = (edata_t *)elemp->data;
-        node0    = elemp->lnid[0];             //Takes the ID for the zero node in element eindex
-        node0dat = &myMesh->nodeTable[node0];
+    	elemp    = &myMesh->elemTable[eindex]; //Takes the information of the "eindex" element
+    	edata    = (edata_t *)elemp->data;
+    	node0    = elemp->lnid[0];             //Takes the ID for the zero node in element eindex
+    	node0dat = &myMesh->nodeTable[node0];
 
-        /* get element Vp */
-        Vp       = (double)edata->Vp;
+    	/* get element Vp */
+    	Vp       = (double)edata->Vp;
 
-        /* get coordinates of element zero node */
-		xo = (node0dat->x)*(myMesh->ticksize);
-		yo = (node0dat->y)*(myMesh->ticksize);
-		zo = (node0dat->z)*(myMesh->ticksize);
+    	/* get coordinates of element zero node */
+    	xo = (node0dat->x)*(myMesh->ticksize);
+    	yo = (node0dat->y)*(myMesh->ticksize);
+    	zo = (node0dat->z)*(myMesh->ticksize);
 
-        /* get element size */
-		esize = edata->edgesize;
-		Vol   = esize * esize *esize;
+    	/* get element size */
+    	esize = edata->edgesize;
+    	Vol   = esize * esize *esize;
 
-		if ( ( Vp != -1 ) ) {
-			if ( ( topo_crossings ( xo, yo, zo, esize ) == 1 ) && (
-				 ( xo != 0.0 ) &&
-			     ( xo + esize != theDomainLong_ns ) &&
-			     ( yo != 0.0 ) &&
-			     ( yo + esize != theDomainLong_ew ) ) ) {
-				count++;
-			}
-		}
+    	if ( ( Vp != -1 ) && ( topo_crossings ( xo, yo, zo, esize ) == 1 ) ) {
+
+    		/* Check for enclosed volume   */
+    		TetrVolume ( xo, yo, zo, esize, aux_vol );
+    		if ( ( aux_vol[0]==0 ) && ( aux_vol[1]==0 ) && ( aux_vol[2]==0 ) && ( aux_vol[3]==0 ) && ( aux_vol[4]==0 ) ) { /* small enclosed volume */
+    			get_airprops_topo( edata );  /* consider the element as an  air element */
+    	        // fprintf( topoinfo,"%f     %f     %f     %f     \n", xo, yo, zo, esize );
+    		} else {
+    		count++;}
+    	}
+
     }
+
+   // close(topoinfo);
+
+
+//		if ( ( Vp != -1 ) ) {
+//			if ( ( topo_crossings ( xo, yo, zo, esize ) == 1 ) && (
+//				 ( xo != 0.0 ) &&
+//			     ( xo + esize != theDomainLong_ns ) &&
+//			     ( yo != 0.0 ) &&
+//			     ( yo + esize != theDomainLong_ew ) ) ) {
+//				count++;
+//			}
+//		}
 
     if ( count > myMesh-> lenum ) {
         fprintf(stderr,"Thread %d: topography_elements_count: "
@@ -1133,6 +1231,7 @@ void topography_elements_mapping(int32_t myID, mesh_t *myMesh) {
 		edata_t    *edata;
 		node_t     *node0dat;
 		double      Vp, xo, yo, zo, esize, Vol;
+		double      aux_vol[5] = { 0 };
 		int32_t	    node0;
 
 		elemp    = &myMesh->elemTable[eindex]; //Takes the information of the "eindex" element
@@ -1153,16 +1252,28 @@ void topography_elements_mapping(int32_t myID, mesh_t *myMesh) {
 		esize = edata->edgesize;
 		Vol   = esize * esize *esize;
 
-		if ( ( Vp != -1 ) ) {
-			if ( ( topo_crossings ( xo, yo, zo, esize ) == 1 ) &&
-			     ( ( xo != 0.0 ) &&
-			       ( xo + esize != theDomainLong_ns ) &&
-			       ( yo != 0.0 ) &&
-			       ( yo + esize != theDomainLong_ew ) ) ) {
-				myTopoElementsMapping[count] = eindex;
-				count++;
-			}
-		}
+    	if ( ( Vp != -1 ) && ( topo_crossings ( xo, yo, zo, esize ) == 1 ) ) {
+
+    		myTopoElementsMapping[count] = eindex;
+    		count++;
+//    		/* Check for enclosed volume   */
+//    		TetrVolume ( xo, yo, zo, esize, aux_vol );
+//    		if ( ( aux_vol[0] != 0 ) || ( aux_vol[1] != 0 ) || ( aux_vol[2] != 0 ) || ( aux_vol[3] != 0 ) || ( aux_vol[4] != 0 ) ) { /* small enclosed volume */
+//    			myTopoElementsMapping[count] = eindex;
+//    			count++;
+//    		}
+    	}
+
+//		if ( ( Vp != -1 ) ) {
+//			if ( ( topo_crossings ( xo, yo, zo, esize ) == 1 ) &&
+//			     ( ( xo != 0.0 ) &&
+//			       ( xo + esize != theDomainLong_ns ) &&
+//			       ( yo != 0.0 ) &&
+//			       ( yo + esize != theDomainLong_ew ) ) ) {
+//				myTopoElementsMapping[count] = eindex;
+//				count++;
+//			}
+//		}
 	}
 
 	if ( count != myTopoElementsCount ) {
@@ -1186,7 +1297,7 @@ void topo_solver_init(int32_t myID, mesh_t *myMesh) {
     topography_elements_count   ( myID, myMesh );
     topography_elements_mapping ( myID, myMesh );
 
-    fprintf(stdout, "TopoElem=%d, MyID=%d\n", myTopoElementsCount, myID);
+//    fprintf(stdout, "TopoElem=%d, MyID=%d\n", myTopoElementsCount, myID);
 
     /* Memory allocation for mother structure */
     myTopoSolver = (toposolver_t *)malloc(sizeof(toposolver_t));
@@ -1242,7 +1353,7 @@ void topo_solver_init(int32_t myID, mesh_t *myMesh) {
 
         /* get Tetrahedra volumes using Shunn and Ham quadrature rule */
         if ( theTopoMethod == VT )
-        	TetrVolume ( xo, yo, zo, esize, So, ecp->tetraVol );
+        	TetrVolume ( xo, yo, zo, esize, ecp->tetraVol );
 
     } /* for all elements */
 

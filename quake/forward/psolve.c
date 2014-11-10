@@ -6771,8 +6771,8 @@ void setup_stations_data()
     /* allocate memory if necessary and generate the list of stations per
      * processor */
     if (Param.myNumberOfStations != 0) {
-	monitor_print( "PE=%d local_stations=%d total_station_count=%d\n",
-		       Global.myID, Param.myNumberOfStations, Param.theNumberOfStations );
+//	monitor_print( "PE=%d local_stations=%d total_station_count=%d\n",
+//		       Global.myID, Param.myNumberOfStations, Param.theNumberOfStations );
 
 	XMALLOC_VAR_N( Param.myStations, station_t, Param.myNumberOfStations );
     }
