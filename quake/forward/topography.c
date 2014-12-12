@@ -401,16 +401,15 @@ double point_PlaneDist ( double xp, double yp, double zp ) {
 	    return dist;
 	}
 
-	if ( (mesh_cz[0] == mesh_cz[1]) && (mesh_cz[1] == mesh_cz[2]) && (mesh_cz[2] == mesh_cz[3] ) ) {
+//	if ( (mesh_cz[0] == mesh_cz[1]) && (mesh_cz[1] == mesh_cz[2]) && (mesh_cz[2] == mesh_cz[3] ) ) {
 
 		// double po=90;
 		//fprintf(stdout,"elv1=%f, elev2=%f, elev3=%f, elev4=%f, xp=%f, yp=%f, zp=%f, i=%d, j=%d \n", mesh_cz[0], mesh_cz[1], mesh_cz[2], mesh_cz[3], xp, yp, zp, i, j );
 
-	}
+//	}
 
 
 	dist = point_to_plane( xp, yp, zp, x_o*So, y_o*So, So, mesh_cz );
-//	fprintf(stdout,"dist=%f \n", dist );
 
 	return dist;
 
@@ -696,12 +695,12 @@ void TetrVolume ( double xo, double yo, double zo, double esize,
 
 	/* Check for empty cube   */
 	/* Todo: Think of a better way to handle empty tetrahedra */
-	if ( (VolTetr[0] == 0) && (VolTetr[1] == 0) && (VolTetr[2] == 0) && (VolTetr[3] == 0) && (VolTetr[4] == 0) ) {
-
-        fprintf(stdout,"Thread 1: TetrVolume: "
-                "Could not find enclosed volume for topographic element: xo=%f, yo=%f, zo=%f, esize=%f \n",xo, yo, zo, esize );
-
-	}
+//	if ( (VolTetr[0] == 0) && (VolTetr[1] == 0) && (VolTetr[2] == 0) && (VolTetr[3] == 0) && (VolTetr[4] == 0) ) {
+//
+//        fprintf(stdout,"Thread 1: TetrVolume: "
+//                "Could not find enclosed volume for topographic element: xo=%f, yo=%f, zo=%f, esize=%f \n",xo, yo, zo, esize );
+//
+//	}
 
 //		for ( i = 0; i < 5; ++i ) {
 //			VolTetr[i] = 0.001;  /* Doriam. I am assuming a 0.5% percent of mass within the tetrahedron in cases when the quadrature scheme fails to detect the volume.
@@ -1180,8 +1179,11 @@ void topography_elements_count(int32_t myID, mesh_t *myMesh ) {
     	esize = edata->edgesize;
     	Vol   = esize * esize *esize;
 
-    	if ( ( Vp != -1 ) && ( topo_crossings ( xo, yo, zo, esize ) == 1 ) ) {
-
+    	if ( ( Vp != -1 ) && ( topo_crossings ( xo, yo, zo, esize ) == 1 )  && (
+    							 ( xo != 0.0 ) &&
+    						     ( xo + esize != theDomainLong_ns ) &&
+    						     ( yo != 0.0 ) &&
+    						     ( yo + esize != theDomainLong_ew ) ) ) {
     		/* Check for enclosed volume   */
     		TetrVolume ( xo, yo, zo, esize, aux_vol );
     		if ( ( aux_vol[0]==0 ) && ( aux_vol[1]==0 ) && ( aux_vol[2]==0 ) && ( aux_vol[3]==0 ) && ( aux_vol[4]==0 ) ) { /* small enclosed volume */
@@ -1231,7 +1233,6 @@ void topography_elements_mapping(int32_t myID, mesh_t *myMesh) {
 		edata_t    *edata;
 		node_t     *node0dat;
 		double      Vp, xo, yo, zo, esize, Vol;
-		double      aux_vol[5] = { 0 };
 		int32_t	    node0;
 
 		elemp    = &myMesh->elemTable[eindex]; //Takes the information of the "eindex" element
@@ -1252,7 +1253,11 @@ void topography_elements_mapping(int32_t myID, mesh_t *myMesh) {
 		esize = edata->edgesize;
 		Vol   = esize * esize *esize;
 
-    	if ( ( Vp != -1 ) && ( topo_crossings ( xo, yo, zo, esize ) == 1 ) ) {
+    	if ( ( Vp != -1 ) && ( topo_crossings ( xo, yo, zo, esize ) == 1 ) && (
+				 ( xo != 0.0 ) &&
+			     ( xo + esize != theDomainLong_ns ) &&
+			     ( yo != 0.0 ) &&
+			     ( yo + esize != theDomainLong_ew ) ) ) {
 
     		myTopoElementsMapping[count] = eindex;
     		count++;
