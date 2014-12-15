@@ -62,6 +62,8 @@ int    octant_topolocotaion   (mesh_t *myMesh, int32_t eindex);
 double get_thebase_topo();
 int    BelongstoTopography    (mesh_t *myMesh, int32_t eindex);
 etreetype_t get_theetree_type ();
+topometh_t get_topo_meth();
+
 int    topo_correctproperties ( edata_t *edata );
 
 int    topo_toexpand            ( octant_t *leaf, double    ticksize, edata_t  *edata, double VsFactor );

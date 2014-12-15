@@ -192,6 +192,10 @@ etreetype_t get_theetree_type() {
     return theEtreeType;
 }
 
+topometh_t get_topo_meth() {
+    return theTopoMethod;
+}
+
 int topo_correctproperties ( edata_t *edata ) {
     if ( edata->Vp < 0) {
     	edata->Vs = 1e10;
@@ -491,14 +495,6 @@ void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_to
 	yo = leaf->ly * ticksize;
 	zo = leaf->lz * ticksize;
 	esize  = (double)edata->edgesize;
-
-	double po=0;
-
-//	if ( (xo==60000) && (yo==20000) && (zo==20000) )
-//		po=90;
-
-	if ( (xo==38125) && (yo==66562.5) && (zo==2500) && (esize==312.5))
-		po=90;
 
 	emin = ( (tick_t)1 << (PIXELLEVEL - theMaxoctlevel) ) * ticksize;
 	double Del = esize / (np - 1);

@@ -6610,10 +6610,51 @@ compute_csi_eta_dzeta( octant_t* octant, vector3D_t pointcoords,
         exit(1);
     }
 
-    /* Derive the local coordinate of the source inside the element */
-    localcoords->x[0] =  2*(xGlobal- center_x)/h;
-    localcoords->x[1] =  2*(yGlobal- center_y)/h;
-    localcoords->x[2] =  2*(zGlobal- center_z)/h;
+	localcoords->x[0] =  2*(xGlobal- center_x)/h;
+	localcoords->x[1] =  2*(yGlobal- center_y)/h;
+	localcoords->x[2] =  2*(zGlobal- center_z)/h;
+
+    /* redefine local coordinates and nodes to interpolate if VT is on */
+
+	if ( ( Param.includeTopography == YES ) && ( BelongstoTopography ( Global.myMesh, eindex) )
+		 && (get_topo_meth() == VT ) && (Param.drmImplement == NO) ) {
+		elem_t  *elemp;
+		edata_t *edata;
+
+		elemp  = &Global.myMesh->elemTable[eindex];
+		edata = (edata_t *)elemp->data;
+
+		/* Calculate the element's origin */
+		double xo = Global.myMesh->ticksize * octant->lx;
+		double yo = Global.myMesh->ticksize * octant->ly;
+		double zo = Global.myMesh->ticksize * octant->lz;
+
+/*		Check for air element. This should not happen at this point
+		if ( edata->Vp == -1 ) {
+
+			fprintf(stdout,"Strip on air element: xo=%f, yo=%f, zo=%f, esize=%f \n",xo, yo, zo, h );
+
+//			fprintf(stderr,"Error: Found topography element with Vp=-1 \n "
+//					"compute_csi_eta_dzeta fnc\n");
+//			MPI_Abort(MPI_COMM_WORLD, ERROR);
+//			exit(1);
+		}*/
+
+		double aux[3] = {0};
+
+		compute_tetra_localcoord ( pointcoords, elemp,
+				localNodeID, aux, xo, yo, zo, h );
+
+		localcoords->x[0] = aux[0];
+		localcoords->x[1] = aux[1];
+		localcoords->x[2] = aux[2];
+
+		*(localNodeID + 4)=0;
+		*(localNodeID + 5)=0;
+		*(localNodeID + 6)=0;
+		*(localNodeID + 7)=0;
+
+	}
 
     return 1;
 }
@@ -7718,19 +7759,9 @@ int main( int argc, char** argv )
     Timer_Stop("Mesh Stats Print");
     Timer_Reduce("Mesh Stats Print", MAX | MIN, comm_solver);
 
-    /* Initialize the output planes */
-    if ( Param.theNumberOfPlanes != 0 ) {
-        planes_setup(Global.myID, &Param.thePlanePrintRate, Param.IO_pool_pe_count,
-		     Param.theNumberOfPlanes, Param.parameters_input_file, get_surface_shift(),
-		     Param.theSurfaceCornersLong, Param.theSurfaceCornersLat,
-		     Param.theDomainX, Param.theDomainY, Param.theDomainZ,
-		     Param.planes_input_file);
-    }
-
     if ( Param.theNumberOfStations !=0 ){
         output_stations_init(Param.parameters_input_file);
     }
-
 
     /* Initialize topography solver analysis structures */
     /* must be before solver_init() for proper treatment of the nodal mass */
@@ -7741,6 +7772,17 @@ int main( int argc, char** argv )
         }
 
     }
+
+    /* Initialize the output planes */
+    if ( Param.theNumberOfPlanes != 0 ) {
+        planes_setup(Global.myID, &Param.thePlanePrintRate, Param.IO_pool_pe_count,
+		     Param.theNumberOfPlanes, Param.parameters_input_file, get_surface_shift(),
+		     Param.theSurfaceCornersLong, Param.theSurfaceCornersLat,
+		     Param.theDomainX, Param.theDomainY, Param.theDomainZ,
+		     Param.planes_input_file);
+    }
+
+
 
     /* Initialize the solver, source and output structures */
     solver_init();
