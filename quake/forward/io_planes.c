@@ -562,7 +562,7 @@ static void Old_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 
     			/* Dorian: correct z coordinate if topo-plane */
     			if ( get_thebase_topo() != 0.0  ) {
-    				pointGlobal.x[2] =  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
+    				pointGlobal.x[2] +=  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
     			}
 
     			if (search_point( pointGlobal, &octant ) == 1) {
@@ -666,7 +666,7 @@ static void Old_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 
     			/* Dorian: correct z coordinate if topo-plane */
     			if ( get_thebase_topo() != 0.0 ) {
-    				pointGlobal.x[2] =  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
+    				pointGlobal.x[2] +=  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
     			}
 
     			if (search_point( pointGlobal, &octant) == 1) {
@@ -1002,7 +1002,7 @@ static void New_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 
 			/* Dorian: correct z coordinate if topo-plane */
 			if ( get_thebase_topo() != 0.0  ) {
-				pointGlobal.x[2] =  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
+				pointGlobal.x[2] +=  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
 			}
 
 			if (search_point( pointGlobal, &octant ) == 1) {
@@ -1107,7 +1107,7 @@ static void New_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 
 			/* Dorian: correct z coordinate if topo-plane */
 			if ( get_thebase_topo() != 0.0 ) {
-				pointGlobal.x[2] =  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
+				pointGlobal.x[2] +=  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
 			}
 
 			//TODO: local coordinates must be updated to consider tetrahedra elements

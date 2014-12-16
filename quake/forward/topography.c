@@ -1864,7 +1864,12 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 
 	int i;
 	double eta, psi, gamma;
-	double xp1, yp1, zp1;
+	double xp1, yp1, zp1, tol=-1.0e-5;
+
+//	double po;
+//
+//	if ( point.x[0]==42900.000000 && point.x[1]==49100.000000 && point.x[2]==3700.000000)
+//		po=98;
 
 
 	if ( ( ( xo <  theDomainLong_ns / 2.0  ) && ( yo <  theDomainLong_ew / 2.0 ) ) ||
@@ -1885,8 +1890,8 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 				psi   = yp1 / h;
 				gamma = zp1 / h;
 
-				if ( ( ( 1.0 - eta - psi - gamma ) >=  0 ) &&
-					   ( 1.0 - eta - psi - gamma ) <=  1.0 ) {
+				if ( ( ( 1.0 - eta - psi - gamma ) >=  tol ) &&
+					 ( ( 1.0 - eta - psi - gamma ) <=  1.0 - tol ) && ( eta >= 0 ) && ( psi >= 0 ) && ( gamma >= 0) ) {
 
 					*localCoord       = eta;
 					*(localCoord + 1) = psi;
@@ -1911,8 +1916,8 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 				psi   = -yp1 / h;
 				gamma =  zp1 / h;
 
-				if ( ( ( 1.0 - eta - psi - gamma ) >=  0 ) &&
-					   ( 1.0 - eta - psi - gamma ) <=  1.0 ) {
+				if ( ( ( 1.0 - eta - psi - gamma ) >=  tol ) &&
+					 ( ( 1.0 - eta - psi - gamma ) <=  1.0 - tol ) && ( eta >= 0 ) && ( psi >= 0 ) && ( gamma >= 0) ) {
 
 					*localCoord       = eta;
 					*(localCoord + 1) = psi;
@@ -1937,8 +1942,8 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 				psi   = -yp1 / h;
 				gamma = -zp1 / h;
 
-				if ( ( ( 1.0 - eta - psi - gamma ) >=  0 ) &&
-					   ( 1.0 - eta - psi - gamma ) <=  1.0 ) {
+				if ( ( ( 1.0 - eta - psi - gamma ) >=  tol ) &&
+					 ( ( 1.0 - eta - psi - gamma ) <=  1.0 - tol ) && ( eta >= 0 ) && ( psi >= 0 ) && ( gamma >= 0) ) {
 
 					*localCoord       = eta;
 					*(localCoord + 1) = psi;
@@ -1963,8 +1968,8 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 				psi   =  yp1 / h;
 				gamma = -zp1 / h;
 
-				if ( ( ( 1.0 - eta - psi - gamma ) >=  0 ) &&
-					   ( 1.0 - eta - psi - gamma ) <=  1.0 ) {
+				if ( ( ( 1.0 - eta - psi - gamma ) >=  tol ) &&
+					 ( ( 1.0 - eta - psi - gamma ) <=  1.0 - tol ) && ( eta >= 0 ) && ( psi >= 0 ) && ( gamma >= 0) ) {
 
 					*localCoord       = eta;
 					*(localCoord + 1) = psi;
@@ -1989,8 +1994,8 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 				psi   = ( -xp1 - yp1 + zp1 ) / ( 2.0 * h );
 				gamma = (  xp1 - yp1 - zp1 ) / ( 2.0 * h );
 
-				if ( ( ( 1.0 - eta - psi - gamma ) >=  0 ) &&
-					   ( 1.0 - eta - psi - gamma ) <=  1.0 ) {
+				if ( ( ( 1.0 - eta - psi - gamma ) >=  tol ) &&
+					 ( ( 1.0 - eta - psi - gamma ) <=  1.0 - tol ) && ( eta >= 0 ) && ( psi >= 0 ) && ( gamma >= 0) ) {
 
 					*localCoord       = eta;
 					*(localCoord + 1) = psi;
@@ -2025,8 +2030,8 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 				psi   = yp1 / h;
 				gamma = zp1 / h;
 
-				if ( ( ( 1.0 - eta - psi - gamma ) >=  0 ) &&
-					   ( 1.0 - eta - psi - gamma ) <=  1.0 ) {
+				if ( ( ( 1.0 - eta - psi - gamma ) >=  tol ) &&
+					 ( ( 1.0 - eta - psi - gamma ) <=  1.0 - tol ) && ( eta >= 0 ) && ( psi >= 0 ) && ( gamma >= 0) ) {
 
 					*localCoord       = eta;
 					*(localCoord + 1) = psi;
@@ -2051,8 +2056,8 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 				psi   = ( -xp1 + yp1 - zp1 ) / h;
 				gamma =  zp1 / h;
 
-				if ( ( ( 1.0 - eta - psi - gamma ) >=  0 ) &&
-					   ( 1.0 - eta - psi - gamma ) <=  1.0 ) {
+				if ( ( ( 1.0 - eta - psi - gamma ) >=  tol ) &&
+					 ( ( 1.0 - eta - psi - gamma ) <=  1.0 - tol ) && ( eta >= 0 ) && ( psi >= 0 ) && ( gamma >= 0) ) {
 
 					*localCoord       = eta;
 					*(localCoord + 1) = psi;
@@ -2077,8 +2082,8 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 				psi   =  xp1 / h;
 				gamma = -zp1 / h;
 
-				if ( ( ( 1.0 - eta - psi - gamma ) >=  0 ) &&
-					   ( 1.0 - eta - psi - gamma ) <=  1.0 ) {
+				if ( ( ( 1.0 - eta - psi - gamma ) >=  tol ) &&
+					 ( ( 1.0 - eta - psi - gamma ) <=  1.0 - tol ) && ( eta >= 0 ) && ( psi >= 0 ) && ( gamma >= 0) ) {
 
 					*localCoord       = eta;
 					*(localCoord + 1) = psi;
@@ -2103,8 +2108,8 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 				psi   =  -yp1 / h;
 				gamma =  -zp1 / h;
 
-				if ( ( ( 1.0 - eta - psi - gamma ) >=  0 ) &&
-					   ( 1.0 - eta - psi - gamma ) <=  1.0 ) {
+				if ( ( ( 1.0 - eta - psi - gamma ) >=  tol ) &&
+					 ( ( 1.0 - eta - psi - gamma ) <=  1.0 - tol ) && ( eta >= 0 ) && ( psi >= 0 ) && ( gamma >= 0) ) {
 
 					*localCoord       = eta;
 					*(localCoord + 1) = psi;
@@ -2129,8 +2134,8 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 				psi   = ( -xp1 + yp1 + zp1 ) / ( 2.0 * h );
 				gamma = (  xp1 - yp1 + zp1 ) / ( 2.0 * h );
 
-				if ( ( ( 1.0 - eta - psi - gamma ) >=  0 ) &&
-					   ( 1.0 - eta - psi - gamma ) <=  1.0 ) {
+				if ( ( ( 1.0 - eta - psi - gamma ) >=  tol ) &&
+					 ( ( 1.0 - eta - psi - gamma ) <=  1.0 - tol ) && ( eta >= 0 ) && ( psi >= 0 ) && ( gamma >= 0) ) {
 
 					*localCoord       = eta;
 					*(localCoord + 1) = psi;

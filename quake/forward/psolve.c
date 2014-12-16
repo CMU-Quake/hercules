@@ -6616,6 +6616,8 @@ compute_csi_eta_dzeta( octant_t* octant, vector3D_t pointcoords,
 
     /* redefine local coordinates and nodes to interpolate if VT is on */
 
+	//FILE  *topoinfo = hu_fopen( "topoElem.txt", "w" );
+
 	if ( ( Param.includeTopography == YES ) && ( BelongstoTopography ( Global.myMesh, eindex) )
 		 && (get_topo_meth() == VT ) && (Param.drmImplement == NO) ) {
 		elem_t  *elemp;
@@ -6629,16 +6631,16 @@ compute_csi_eta_dzeta( octant_t* octant, vector3D_t pointcoords,
 		double yo = Global.myMesh->ticksize * octant->ly;
 		double zo = Global.myMesh->ticksize * octant->lz;
 
-/*		Check for air element. This should not happen at this point
-		if ( edata->Vp == -1 ) {
+//		Check for air element. This should not happen at this point
+//		if ( edata->Vp == -1 ) {
 
-			fprintf(stdout,"Strip on air element: xo=%f, yo=%f, zo=%f, esize=%f \n",xo, yo, zo, h );
+//			fprintf(stdout,"Strip on air element: xo=%f, yo=%f, zo=%f, esize=%f \n",xo, yo, zo, h );
 
 //			fprintf(stderr,"Error: Found topography element with Vp=-1 \n "
 //					"compute_csi_eta_dzeta fnc\n");
 //			MPI_Abort(MPI_COMM_WORLD, ERROR);
 //			exit(1);
-		}*/
+//		}
 
 		double aux[3] = {0};
 
@@ -6654,7 +6656,10 @@ compute_csi_eta_dzeta( octant_t* octant, vector3D_t pointcoords,
 		*(localNodeID + 6)=0;
 		*(localNodeID + 7)=0;
 
+
 	}
+
+	//close(topoinfo);
 
     return 1;
 }
