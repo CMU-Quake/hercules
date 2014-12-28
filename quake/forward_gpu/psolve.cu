@@ -60,6 +60,7 @@
 #include "drm.h"
 #include "meshformatlab.h"
 #include "kernel.h"
+#include "myperf_cuda.h"
 
 #include <iostream>
 #include <cuda.h>
@@ -3387,6 +3388,9 @@ static void solver_init()
     /* Initialize the GPU */
     gpu_init(Global.myID);
 
+    /* Initialize performance metrics */
+    perf_init(Global.gpu_spec.device);
+
     /* compute the damping parameters a/zeta and b/zeta */
     compute_setab(Param.theFreq, &Global.theABase, &Global.theBBase);
 
@@ -4469,6 +4473,9 @@ static void solver_delete()
     schedule_delete(Global.mySolver->an_sched);
 
     free(Global.mySolver);
+
+    /* Finalize performance metrics */
+    perf_finalize();
 }
 
 static int
@@ -4778,11 +4785,18 @@ static void solver_load_forces_gpu(mysolver_t *solver, mesh_t *mesh)
 
 static void solver_unload_forces_gpu(mysolver_t *solver, mesh_t *mesh)
 {
-  /* Copy forces back to host */
-  cudaMemcpyAsync(solver->force, solver->gpuData->forceDevice,
-		  mesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost,
-		  solver->streams[CUDA_STREAM_MAIN]);
-  solver->gpu_spec->numbytespci += mesh->nharbored * sizeof(fvector_t);
+
+  /* Only copy forces back if Stiffness-Effective or BKT damping */
+  if ((Param.theTypeOfDamping != BKT) && (Param.theStiffness == EFFECTIVE) ||
+      (Param.theTypeOfDamping == BKT)) {
+    
+    /* Copy forces back to host */
+    cudaMemcpyAsync(solver->force, solver->gpuData->forceDevice,
+		    mesh->nharbored * sizeof(fvector_t), cudaMemcpyDeviceToHost,
+		    solver->streams[CUDA_STREAM_MAIN]);
+    solver->gpu_spec->numbytespci += mesh->nharbored * sizeof(fvector_t);
+
+  }
 
   /* Uncomment for timing tests */
   //cudaStreamSynchronize(solver->streams[CUDA_STREAM_MAIN]);
@@ -4827,10 +4841,12 @@ static void solver_wait_physics_gpu(mysolver_t *solver, mesh_t *mesh)
   /* Wait for the appropriate physics calculation to complete */
   if(Param.theTypeOfDamping != BKT) {
 
-    Timer_Start( "Compute addforces e" );
-    /* Uncomment for timing tests */
-    cudaStreamSynchronize(solver->streams[CUDA_STREAM_MAIN]);
-    Timer_Stop( "Compute addforces e" );
+    if (Param.theStiffness == EFFECTIVE) {
+      Timer_Start( "Compute addforces e" );
+      /* Uncomment for timing tests */
+      cudaStreamSynchronize(solver->streams[CUDA_STREAM_MAIN]);
+      Timer_Stop( "Compute addforces e" );
+    }
 
   } else {
   
@@ -4965,11 +4981,15 @@ solver_compute_force_stiffness( mysolver_t *solver,
 	if(Param.theTypeOfDamping != BKT)
 	{
 		if (Param.theStiffness == EFFECTIVE) {
+		        //perf_flops_gpu_start();
 		        //compute_addforce_effective_cpu( mesh, solver );
 			compute_addforce_effective_gpu( Global.myID, mesh, solver );
+			//perf_flops_gpu_stop();
 		}
 		else if (Param.theStiffness == CONVENTIONAL) {
+		        perf_flops_cpu_start();
 			compute_addforce_conventional( mesh, solver, k1, k2 );
+			perf_flops_cpu_stop();
 		}
 	}
 	Timer_Stop( "Compute addforces e" );
@@ -4987,15 +5007,19 @@ solver_compute_force_damping( mysolver_t *solver,
 
 	if(Param.theTypeOfDamping == RAYLEIGH  || Param.theTypeOfDamping == MASS)
 	{
+                perf_flops_cpu_start();
 		damping_addforce(Global.myMesh, Global.mySolver, Global.theK1, Global.theK2);
+                perf_flops_cpu_stop();
 	}
 	else if(Param.theTypeOfDamping == BKT)
 	{
+	        //perf_flops_gpu_start();
 	        //calc_conv_cpu(Global.myMesh, Global.mySolver, Param.theFreq, Param.theDeltaT, Param.theDeltaTSquared);
 	        calc_conv_gpu(Global.myID, Global.myMesh, Global.mySolver, Param.theFreq, Param.theDeltaT, Param.theDeltaTSquared);
 		//addforce_conv(myMesh, mySolver, theFreq, theDeltaT, theDeltaTSquared);
 		//constant_Q_addforce_cpu(Global.myMesh, Global.mySolver, Param.theFreq, Param.theDeltaT, Param.theDeltaTSquared);
 		constant_Q_addforce_gpu(Global.myID, Global.myMesh, Global.mySolver, Param.theFreq, Param.theDeltaT, Param.theDeltaTSquared);
+		//perf_flops_gpu_stop();
 	}
 	else
 	{}
@@ -5275,6 +5299,9 @@ static void solver_run_collect_timers( void )
     Timer_Reduce("GPU Memory Copy", (TimerKind)(MAX | MIN | AVERAGE), comm_solver);
     Timer_Reduce("Compute Physics", (TimerKind)(MAX | MIN | AVERAGE), comm_solver);
     Timer_Reduce("Communication",   (TimerKind)(MAX | MIN | AVERAGE), comm_solver);
+
+    /* Collect the performance metrics */
+    perf_metrics_collect(comm_solver, "stat-perf.txt");
 }
 
 
@@ -5303,6 +5330,10 @@ static void solver_run()
     }
 
     MPI_Barrier( comm_solver );
+
+    /* Start GPU performance tracking - expensive to start and stop */
+    perf_flops_gpu_start();
+    perf_mpi_start();
 
     //Timer_Start( "GPU Memory Copy" );
     //solver_precalc_gpu(Global.mySolver, Global.myMesh);
@@ -5345,6 +5376,7 @@ static void solver_run()
 
         Timer_Start( "Compute Physics" );
         solver_wait_physics_gpu( Global.mySolver, Global.myMesh);
+	perf_flops_cpu_start();
         solver_nonlinear_state( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2, step );
         solver_compute_force_source( step );
         solver_compute_effective_drm_force( Global.mySolver, Global.myMesh,Global.theK1, Global.theK2, step, Param.theDeltaT );
@@ -5352,14 +5384,17 @@ static void solver_run()
         //solver_compute_force_damping( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2 );
         solver_compute_force_gravity( Global.mySolver, Global.myMesh, step );
         solver_compute_force_nonlinear( Global.mySolver, Global.myMesh, Param.theDeltaTSquared );
+	perf_flops_cpu_stop();
         Timer_Stop( "Compute Physics" );
 
         Timer_Start( "Communication" );
+	//perf_mpi_start();
         HU_COND_GLOBAL_BARRIER( Param.theTimingBarriersFlag );
         solver_send_force_dangling( Global.mySolver );
         solver_adjust_forces( Global.mySolver );
         HU_COND_GLOBAL_BARRIER( Param.theTimingBarriersFlag );
         solver_send_force_anchored( Global.mySolver );
+	//perf_mpi_stop();
         Timer_Stop( "Communication" );
 
         Timer_Start( "GPU Memory Copy" );
@@ -5367,8 +5402,10 @@ static void solver_run()
         Timer_Stop( "GPU Memory Copy" );
 
         Timer_Start( "Compute Physics" );
+	//perf_flops_gpu_start();
         //solver_compute_displacement_cpu( Global.mySolver, Global.myMesh );
         solver_compute_displacement_gpu( Global.myID, Global.mySolver, Global.myMesh );
+	//perf_flops_gpu_stop();
         Timer_Stop( "Compute Physics" );
 
         Timer_Start( "GPU Memory Copy" );
@@ -5377,8 +5414,10 @@ static void solver_run()
 
         Timer_Start( "Compute Physics" );
         solver_wait_disp_gpu( Global.mySolver, Global.myMesh);
+	perf_flops_cpu_start();
         solver_geostatic_fix( step );
         solver_load_fixedbase_displacements( Global.mySolver, step );
+	perf_flops_cpu_stop();
         Timer_Stop( "Compute Physics" );
 
         Timer_Start( "GPU Memory Copy" );
@@ -5395,6 +5434,10 @@ static void solver_run()
 
         solver_loop_hook_bottom( Global.mySolver, Global.myMesh, step );
     } /* for (step = ....): all steps */
+
+    /* Stop GPU performance tracking - expensive to start and stop */
+    perf_mpi_stop();
+    perf_flops_gpu_stop();
 
     solver_drm_close();
     solver_output_wavefield_close();
