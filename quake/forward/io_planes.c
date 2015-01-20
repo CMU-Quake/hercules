@@ -970,15 +970,15 @@ static void New_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 	origin.x[1] = thePlanes[ iPlane ].origincoords.x[1];
 	origin.x[2] = thePlanes[ iPlane ].origincoords.x[2];
 
-	/*Dorian. sanity check for topo-planes "Only horizontal planes are supported" */
-    if ( ( get_thebase_topo() != 0.0  ) &&
-    	 ( ( thePlanes[ iPlane ].dip > 0 ) && ( thePlanes[ iPlane ].dip < 180 ) ) ) {
-        fprintf(stderr,
-                "Old_output_planes_construct_strips: "
-                "Topo-plane must be horizontal IPlane=%d, dip %f\n",iPlane, thePlanes[ iPlane ].dip);
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
-    }
+//	/*Dorian. sanity check for topo-planes "Only horizontal planes are supported" */
+//    if ( ( get_thebase_topo() != 0.0  ) &&
+//    	 ( ( thePlanes[ iPlane ].dip > 0 ) && ( thePlanes[ iPlane ].dip < 180 ) ) ) {
+//        fprintf(stderr,
+//                "Old_output_planes_construct_strips: "
+//                "Topo-plane must be horizontal IPlane=%d, dip %f\n",iPlane, thePlanes[ iPlane ].dip);
+//        MPI_Abort(MPI_COMM_WORLD, ERROR);
+//        exit(1);
+//    }
 
 	/*Find limits of consecutive strips*/
 	onstrip = 0;
@@ -1110,14 +1110,16 @@ static void New_output_planes_construct_strips(int32_t myID, int theNumberOfPlan
 				pointGlobal.x[2] +=  point_elevation ( pointGlobal.x[0], pointGlobal.x[1] );
 			}
 
-			//TODO: local coordinates must be updated to consider tetrahedra elements
-			//      in simulations including topography. However, because planes are used mostly
-			//      to get general features of the wavefields, conventional interpolation based upon
-			//      cubic elements is a fairly good approximation. Dorian.
 			if (search_point( pointGlobal, &octant) == 1) {
-			    compute_csi_eta_dzeta( octant, pointGlobal,
-						   &(thePlanes[ iPlane ].strip[stripnum][elemnum].localcoords),
-						   thePlanes[ iPlane ].strip[stripnum][elemnum].nodestointerpolate);
+				compute_csi_eta_dzeta( octant, pointGlobal,
+						&(thePlanes[ iPlane ].strip[stripnum][elemnum].localcoords),
+						thePlanes[ iPlane ].strip[stripnum][elemnum].nodestointerpolate);
+
+				if ( ( thePlanes[ iPlane ].strip[stripnum][elemnum].nodestointerpolate[4] == 0 ) &&
+					 ( thePlanes[ iPlane ].strip[stripnum][elemnum].nodestointerpolate[5] == 0 ) &&
+					 ( thePlanes[ iPlane ].strip[stripnum][elemnum].nodestointerpolate[6] == 0 ) &&
+					 ( thePlanes[ iPlane ].strip[stripnum][elemnum].nodestointerpolate[7] == 0 ) ) {
+					thePlanes[ iPlane ].strip[stripnum][elemnum].topostrip = 1;}
 			}
 		    }
 	    }
@@ -1168,28 +1170,58 @@ int New_planes_print(int32_t PENum, mysolver_t* mySolver, int theNumberOfPlanes)
 		 elemnum < (thePlanes[iPlane].stripend[iStrip]
 			    -thePlanes[iPlane].stripstart[iStrip]+1);
 		 elemnum++){
-		displacementsX = 0;displacementsY = 0;displacementsZ = 0;
+	    	displacementsX = 0;displacementsY = 0;displacementsZ = 0;
 
-		/* Interpolate the element */
-		for (iPhi = 0; iPhi < 8; iPhi++){
-		    phi[iPhi] = ( 1 + (xi[0][iPhi]) *
-				  (thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[0]) )
-			* ( 1 + (xi[1][iPhi]) *
-			    (thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[1]) )
-			* ( 1 + (xi[2][iPhi]) *
-			    (thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[2]) ) /8;
+	    	if (thePlanes[iPlane].strip[iStrip][elemnum].topostrip==1) {
 
-		    displacementsX += phi[iPhi]*
-			(mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[iPhi] ].f[0]);
-		    displacementsY += phi[iPhi]*
-			(mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[iPhi] ].f[1]);
-		    displacementsZ += phi[iPhi]*
-			(mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[iPhi] ].f[2]);
-		}
+	    		double ux_0  = mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[0] ].f[0];
+	    		double ux_10 = mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[1] ].f[0] - ux_0;
+	    		double ux_20 = mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[2] ].f[0] - ux_0;
+	    		double ux_30 = mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[3] ].f[0] - ux_0;
 
-		planes_stripMPISendBuffer[elemnum*3]     = (double) (displacementsX);
-		planes_stripMPISendBuffer[elemnum*3 + 1] = (double) (displacementsY);
-		planes_stripMPISendBuffer[elemnum*3 + 2] = (double) (displacementsZ);
+	    		double uy_0  = mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[0] ].f[1];
+	    		double uy_10 = mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[1] ].f[1] - uy_0;
+	    		double uy_20 = mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[2] ].f[1] - uy_0;
+	    		double uy_30 = mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[3] ].f[1] - uy_0;
+
+	    		double uz_0  = mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[0] ].f[2];
+	    		double uz_10 = mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[1] ].f[2] - uz_0;
+	    		double uz_20 = mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[2] ].f[2] - uz_0;
+	    		double uz_30 = mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[3] ].f[2] - uz_0;
+
+	    		displacementsX = ux_0 + (thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[0]) * ux_20
+	    			                  + (thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[1]) * ux_10
+	    			                  + (thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[2]) * ux_30;
+
+	    		displacementsY = uy_0 + (thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[0]) * uy_20
+	    			                  + (thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[1]) * uy_10
+	    			                  + (thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[2]) * uy_30;
+
+	    		displacementsZ = uz_0 + (thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[0]) * uz_20
+	    			                  + (thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[1]) * uz_10
+	    			                  + (thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[2]) * uz_30;
+
+	    	} else {
+	    		for (iPhi = 0; iPhi < 8; iPhi++){
+	    			phi[iPhi] = ( 1 + (xi[0][iPhi]) *
+	    					(thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[0]) )
+	    					* ( 1 + (xi[1][iPhi]) *
+	    							(thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[1]) )
+	    							* ( 1 + (xi[2][iPhi]) *
+	    									(thePlanes[iPlane].strip[iStrip][elemnum].localcoords.x[2]) ) /8;
+
+	    			displacementsX += phi[iPhi]*
+	    					(mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[iPhi] ].f[0]);
+	    			displacementsY += phi[iPhi]*
+	    					(mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[iPhi] ].f[1]);
+	    			displacementsZ += phi[iPhi]*
+	    					(mySolver->tm1[ thePlanes[iPlane].strip[iStrip][elemnum].nodestointerpolate[iPhi] ].f[2]);
+	    		}
+	    	}
+
+	    	planes_stripMPISendBuffer[elemnum*3]     = (double) (displacementsX);
+	    	planes_stripMPISendBuffer[elemnum*3 + 1] = (double) (displacementsY);
+	    	planes_stripMPISendBuffer[elemnum*3 + 2] = (double) (displacementsZ);
 
 	    } /*for elemnum*/
 
