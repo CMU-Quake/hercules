@@ -38,19 +38,9 @@ typedef enum {
      * allows one to initially evaluate the levels of deformation and serves
      * for comparisons with the corresponding elastoplastic runs.
      */
-    LINEAR = 0, VONMISES, DRUCKERPRAGER
+    LINEAR = 0, VONMISES, DRUCKERPRAGER, MOHR_COULOMB
 
 } materialmodel_t;
-
-typedef enum {
-    /*
-     * The options for vonMises and DruckerPrager to decide in how to input
-     * the material properties for nonlinear analysis may be in the form of
-     * data for cohesion and friction angle, or data for the coefficients
-     * alpha and k.
-     */
-    COHEFRICTION = 0, ALPHAKAY
-} materialproperties_t;
 
 typedef struct vect1_t {
 	double x;
@@ -111,6 +101,7 @@ typedef struct nlconstants_t {
     double hardmodulus; /* the effective yield stress is defined as : ( k + hardmodulus*ep ) */
     qvect_t u_static;
     double  phi;         /* angle of internal friction */
+    double  dil_angle;   /* angle of internal friction */
     double sigma_z_st;   /* static vertical stress */
     double I1_st;        /* static first invariant    */
     double J2square_st;  /* static second invariant */
@@ -162,9 +153,10 @@ int isThisElementNonLinear(mesh_t *myMesh, int32_t eindex);
 
 double interpolate_property_value(double vsRequest, double *propVector);
 double get_alpha(double vs, double phi);
-double get_kay(double vs, double s_zz, double phi, double zo, double mu);
+double get_kay(double vs, double phi);
 double get_phi(double vs);
 double get_beta(double vs);
+double get_dilatancy(double vs);
 double interp_phi (double vsvp, double li, double lf, double phi_i, double phi_f);
 double get_gamma_eff (double vs30, double zo);
 

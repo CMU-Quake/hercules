@@ -47,7 +47,6 @@ static double                theNonLinVsMin = 0;
 static int32_t               thePropertiesCount;
 static materialmodel_t       theMaterialModel;
 static plasticitytype_t      thePlasticityModel;
-static materialproperties_t  thePropertiesType;
 static noyesflag_t           theApproxGeoState  = NO;
 static double               *theVsLimits;
 static double               *theAlphaCohes;
@@ -162,21 +161,12 @@ double get_alpha(double vs, double phi) {
  * Returns the value of the constant kay for in Drucker-Prager's material
  * model
  */
-double get_kay(double vs, double s_zz, double phi, double zo, double mu) {
+double get_kay(double vs, double phi) {
 
     double k, c;
 
-    switch ( thePropertiesType ) {
-
-        case ALPHAKAY:
-            k     = interpolate_property_value(vs, theKayPhis);
-            break;
-
-        case COHEFRICTION:
-            c     = interpolate_property_value(vs, theAlphaCohes);
-            k     = 6. * c * cos(phi) / ( sqrt(3.0) * ( 3. - sin(phi) ) );
-            break;
-    }
+    c     = interpolate_property_value(vs, theAlphaCohes);
+    k     = 6. * c * cos(phi) / ( sqrt(3.0) * ( 3. - sin(phi) ) );
 
     return k;
 }
@@ -187,24 +177,25 @@ double get_kay(double vs, double s_zz, double phi, double zo, double mu) {
  */
 double get_phi(double vs) {
 
-    double phi, alpha;
+	double phi;
 
-    switch ( thePropertiesType ) {
+	phi   = interpolate_property_value(vs, theKayPhis) * PI / 180.0;
 
-        case ALPHAKAY:
-        	alpha = interpolate_property_value(vs, theAlphaCohes);
-            phi   =  asin ( 3.0 * sqrt(3.0) * alpha / ( 2.0 + alpha * sqrt(3.0) ) );
-            break;
-
-        case COHEFRICTION:
-            phi   = interpolate_property_value(vs, theKayPhis) * PI / 180.0;
-            break;
-
-    }
-
-    return phi;
+	return phi;
 }
 
+/*
+ * Returns the value of the constant phi  in Drucker-Prager's material
+ * model
+ */
+double get_dilatancy(double vs) {
+
+	double dilt;
+
+	dilt   = interpolate_property_value(vs, theBetaDilatancy) * PI / 180.0;
+
+	return dilt;
+}
 
 /*
  * Returns the value of the constant beta (dilatancy angle)  in Drucker-Prager's material
@@ -212,22 +203,12 @@ double get_phi(double vs) {
  */
 double get_beta(double vs) {
 
-    double  beta, dil;
+	double  beta, dil;
 
-    switch ( thePropertiesType ) {
+	dil   = interpolate_property_value(vs, theBetaDilatancy) * PI / 180.0;
+	beta  = 2. * sin(dil) / ( sqrt(3.0) * ( 3. - sin(dil) ) );
 
-        case ALPHAKAY:
-        	beta   = interpolate_property_value(vs, theBetaDilatancy);
-            break;
-
-        case COHEFRICTION:
-            dil   = interpolate_property_value(vs, theBetaDilatancy) * PI / 180.0;
-            beta  = 2. * sin(dil) / ( sqrt(3.0) * ( 3. - sin(dil) ) );
-            break;
-
-    }
-
-    return beta;
+	return beta;
 }
 
 double get_gamma_eff (double vs30, double zo)  {
@@ -293,7 +274,7 @@ void nonlinear_init( int32_t     myID,
                      double      theEndT )
 {
     double  double_message[4];
-    int     int_message[6];
+    int     int_message[5];
 
     /* Capturing data from file --- only done by PE0 */
     if (myID == 0) {
@@ -313,14 +294,13 @@ void nonlinear_init( int32_t     myID,
     double_message[3] = theNonLinVsMin;
 
     int_message[0] = (int)theMaterialModel;
-    int_message[1] = (int)thePropertiesType;
-    int_message[2] = thePropertiesCount;
-    int_message[3] = theGeostaticFinalStep;
-    int_message[4] = (int)thePlasticityModel;
-    int_message[5] = (int)theApproxGeoState;
+    int_message[1] = thePropertiesCount;
+    int_message[2] = theGeostaticFinalStep;
+    int_message[3] = (int)thePlasticityModel;
+    int_message[4] = (int)theApproxGeoState;
 
     MPI_Bcast(double_message, 4, MPI_DOUBLE, 0, comm_solver);
-    MPI_Bcast(int_message,    6, MPI_INT,    0, comm_solver);
+    MPI_Bcast(int_message,    5, MPI_INT,    0, comm_solver);
 
     theNonLinVsCut        = double_message[0];
     theGeostaticLoadingT  = double_message[1];
@@ -328,11 +308,10 @@ void nonlinear_init( int32_t     myID,
     theNonLinVsMin        = double_message[3];
 
     theMaterialModel      = int_message[0];
-    thePropertiesType     = int_message[1];
-    thePropertiesCount    = int_message[2];
-    theGeostaticFinalStep = int_message[3];
-    thePlasticityModel    = int_message[4];
-    theApproxGeoState     = int_message[5];
+    thePropertiesCount    = int_message[1];
+    theGeostaticFinalStep = int_message[2];
+    thePlasticityModel    = int_message[3];
+    theApproxGeoState     = int_message[4];
 
     /* allocate table of properties for all other PEs */
 
@@ -369,11 +348,9 @@ int32_t nonlinear_initparameters ( const char *parametersin,
     double   nonlin_vscut, nonlin_vsbott, geostatic_loading_t, geostatic_cushion_t,
             *auxiliar;
     char     material_model[64],
-             material_properties[64],
              plasticity_type[64], approx_geostatic_state[64];
 
     materialmodel_t      materialmodel;
-    materialproperties_t materialproperties;
     plasticitytype_t     plasticitytype;
     noyesflag_t          approxgeostatic = -1;
 
@@ -390,7 +367,6 @@ int32_t nonlinear_initparameters ( const char *parametersin,
          (parsetext(fp, "geostatic_loading_time_sec",   'd', &geostatic_loading_t    ) != 0) ||
          (parsetext(fp, "geostatic_cushion_time_sec",   'd', &geostatic_cushion_t    ) != 0) ||
          (parsetext(fp, "material_model",               's', &material_model         ) != 0) ||
-         (parsetext(fp, "material_properties_type",     's', &material_properties    ) != 0) ||
          (parsetext(fp, "approximate_geostatic_state",  's', &approx_geostatic_state ) != 0) ||
          (parsetext(fp, "material_plasticity_type",     's', &plasticity_type        ) != 0) ||
          (parsetext(fp, "material_properties_count",    'i', &properties_count       ) != 0) )
@@ -430,18 +406,6 @@ int32_t nonlinear_initparameters ( const char *parametersin,
         fprintf(stderr,
                 "Illegal material model for nonlinear analysis"
                 "(linear, vonMises, DruckerPrager): %s\n", material_model);
-        return -1;
-    }
-
-    if ( strcasecmp(material_properties,            "cohefriction") == 0 ) {
-        materialproperties = COHEFRICTION;
-    } else if ( strcasecmp(material_properties,         "alphakay") == 0 ) {
-        materialproperties = ALPHAKAY;
-    } else {
-        fprintf(stderr,
-                "Illegal material properties type for nonlinear "
-                "analysis (cohefriction, alphakay): %s\n",
-                material_properties);
         return -1;
     }
 
@@ -490,7 +454,6 @@ int32_t nonlinear_initparameters ( const char *parametersin,
     theGeostaticCushionT  = geostatic_cushion_t;
     theGeostaticFinalStep = (int)( (geostatic_loading_t + geostatic_cushion_t) / theDeltaT );
     theMaterialModel      = materialmodel;
-    thePropertiesType     = materialproperties;
     thePropertiesCount    = properties_count;
     thePlasticityModel    = plasticitytype;
     theApproxGeoState     = approxgeostatic;
@@ -846,16 +809,12 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
                 ecp->alpha = 0.;
                 ecp->beta  = 0.;
                 ecp->phi   = get_phi(elementVs);
-                ecp->k     = get_kay(elementVs, S_zz, ecp->phi, zo, mu);
+                ecp->k     = get_kay(elementVs, ecp->phi);
                 phi        = ecp->phi;
-                Ko         = ( 1.0 - sin(phi) );
-                if ( ecp->k == 0 ) {
-                	ecp->k = ( 1. + Ko ) * sin(phi) * S_zz / 2.0; /* shear strength for cohesionless soil (Hartzell - Bonilla 2004)   */
-                }
                 break;
             case DRUCKERPRAGER:
                 ecp->phi   = get_phi(elementVs);
-                ecp->k     = get_kay(elementVs, S_zz, ecp->phi, zo, mu);
+                ecp->k     = get_kay(elementVs, ecp->phi);
                 ecp->alpha = get_alpha(elementVs, ecp->phi);
                 ecp->beta  = get_beta(elementVs);
             	break;
@@ -873,18 +832,12 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
             ecp->dLambda[i] = 0.;
         }
 
-        if ( ( thePropertiesType == ALPHAKAY ) || ( thePropertiesType == COHEFRICTION ) ) {
-        	ecp->strainrate  =
-            interpolate_property_value(elementVs, theStrainRates  );
-        	ecp->sensitivity =
-            interpolate_property_value(elementVs, theSensitivities );
-        	ecp->hardmodulus =
-            interpolate_property_value(elementVs, theHardeningModulus );
-        } else {
-        	ecp->strainrate  = 0.;
-        	ecp->sensitivity = 0.;
-        	ecp->hardmodulus = 0.;
-        }
+        ecp->strainrate  =
+        		interpolate_property_value(elementVs, theStrainRates  );
+        ecp->sensitivity =
+        		interpolate_property_value(elementVs, theSensitivities );
+        ecp->hardmodulus =
+        		interpolate_property_value(elementVs, theHardeningModulus );
 
         if ( theApproxGeoState == NO ) {
             ecp->I1_st        =  -1.;
