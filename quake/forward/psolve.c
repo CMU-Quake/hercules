@@ -4037,7 +4037,7 @@ static void solver_nonlinear_state( mysolver_t *solver,
     if ( Param.includeNonlinearAnalysis == YES ) {
         Timer_Start( "Compute Non-linear Entities" );
         compute_nonlinear_state ( mesh, solver, Param.theNumberOfStations,
-                                  Param.myNumberOfStations, Param.myStations, Param.theDeltaT );
+                                  Param.myNumberOfStations, Param.myStations, Param.theDeltaT, step );
         if ( get_geostatic_total_time() > 0 ) {
             compute_bottom_reactions( mesh, solver, k1, k2, step, Param.theDeltaT );
         }

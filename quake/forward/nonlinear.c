@@ -48,12 +48,14 @@ static int32_t               thePropertiesCount;
 static materialmodel_t       theMaterialModel;
 static plasticitytype_t      thePlasticityModel;
 static materialproperties_t  thePropertiesType;
+static noyesflag_t           theApproxGeoState  = NO;
 static double               *theVsLimits;
 static double               *theAlphaCohes;
 static double               *theKayPhis;
 static double               *theStrainRates;
 static double               *theSensitivities;
 static double               *theHardeningModulus;
+static double               *theBetaDilatancy;
 static double                theGeostaticLoadingT = 0;
 static double                theGeostaticCushionT = 0;
 static int                   theGeostaticFinalStep;
@@ -87,11 +89,14 @@ int isThisElementNonLinear(mesh_t *myMesh, int32_t eindex) {
     elemp = &myMesh->elemTable[eindex];
     edata = (edata_t *)elemp->data;
 
-    if ( ( edata->Vs <= theNonLinVsCut ) && ( edata->Vs >= theNonLinVsMin ) )  {
-        return YES;
-    }
+//    int32_t lnid0 = myMesh->elemTable[eindex].lnid[0];
+//    double  zo    = myMesh->ticksize*myMesh->nodeTable[lnid0].z;
 
-    return NO;
+    if ( ( edata->Vs <= theNonLinVsCut ) && ( edata->Vs >= theNonLinVsMin ) )
+    	return YES;
+
+
+return NO;
 }
 
 /*
@@ -139,24 +144,15 @@ double interpolate_property_value(double vsRequest, double *propVector)
  * Returns the value of the constant alpha for Drucker-Prager's material
  * model
  */
-double get_alpha(double vs) {
+double get_alpha(double vs, double phi) {
 
     double alpha;
-    double phi;
-
-    switch ( thePropertiesType ) {
-
-        case ALPHAKAY:
-            alpha = interpolate_property_value(vs, theAlphaCohes);
-            break;
-
-        case COHEFRICTION:
-            phi   = interpolate_property_value(vs, theKayPhis) * PI / 180.0;
-            alpha = 2 * sin(phi) / ( sqrt(3.0) * ( 3 - sin(phi) ) );
-            break;
-
-        default:
-            alpha = 0;
+    alpha = 2. * sin(phi) / ( sqrt(3.0) * ( 3. - sin(phi) ) );
+    if ( alpha > 0.40 ) {
+    	fprintf(stderr,"Illegal alpha= %f "
+    			"Friction angle larger that 50deg\n", alpha);
+    	MPI_Abort(MPI_COMM_WORLD, ERROR);
+    	exit(1);
     }
 
     return alpha;
@@ -166,10 +162,9 @@ double get_alpha(double vs) {
  * Returns the value of the constant kay for in Drucker-Prager's material
  * model
  */
-double get_kay(double vs) {
+double get_kay(double vs, double s_zz, double phi, double zo, double mu) {
 
-    double k;
-    double c, phi;
+    double k, c;
 
     switch ( thePropertiesType ) {
 
@@ -179,20 +174,118 @@ double get_kay(double vs) {
 
         case COHEFRICTION:
             c     = interpolate_property_value(vs, theAlphaCohes);
-            phi   = interpolate_property_value(vs, theKayPhis) * PI / 180.0;
-            k     = 6 * c * cos(phi) / ( sqrt(3.0) * ( 3 - sin(phi) ) );
+            k     = 6. * c * cos(phi) / ( sqrt(3.0) * ( 3. - sin(phi) ) );
             break;
-
-        default:
-            k     = 0;
     }
 
     return k;
 }
 
+/*
+ * Returns the value of the constant phi  in Drucker-Prager's material
+ * model
+ */
+double get_phi(double vs) {
+
+    double phi, alpha;
+
+    switch ( thePropertiesType ) {
+
+        case ALPHAKAY:
+        	alpha = interpolate_property_value(vs, theAlphaCohes);
+            phi   =  asin ( 3.0 * sqrt(3.0) * alpha / ( 2.0 + alpha * sqrt(3.0) ) );
+            break;
+
+        case COHEFRICTION:
+            phi   = interpolate_property_value(vs, theKayPhis) * PI / 180.0;
+            break;
+
+    }
+
+    return phi;
+}
+
+
+/*
+ * Returns the value of the constant beta (dilatancy angle)  in Drucker-Prager's material
+ * model.
+ */
+double get_beta(double vs) {
+
+    double  beta, dil;
+
+    switch ( thePropertiesType ) {
+
+        case ALPHAKAY:
+        	beta   = interpolate_property_value(vs, theBetaDilatancy);
+            break;
+
+        case COHEFRICTION:
+            dil   = interpolate_property_value(vs, theBetaDilatancy) * PI / 180.0;
+            beta  = 2. * sin(dil) / ( sqrt(3.0) * ( 3. - sin(dil) ) );
+            break;
+
+    }
+
+    return beta;
+}
+
+double get_gamma_eff (double vs30, double zo)  {
+
+	double gamma_eff=0;
+
+	if ( ( vs30 >= 760 ) && ( vs30 <= 1500 ) )  { /* Site class B "Rock"  */
+		if ( ( zo >= 0 ) && ( zo <= 6.096 ) ) {
+			gamma_eff = pow(10.0,-1.73) / 100.0;
+		} else if ( ( zo > 6.096 ) && ( zo <= 15.24 ) )   {
+			gamma_eff = pow(10.0,-1.66) / 100.0;
+		} else if ( ( zo > 15.24 ) && ( zo <= 36.576 ) )  {
+			gamma_eff = pow(10.0,-1.58) / 100.0;
+		} else if ( ( zo > 36.576 ) && ( zo <= 76.20 ) )  {
+			gamma_eff = pow(10.0,-1.45) / 100.0;
+		} else if ( ( zo > 76.20 ) && ( zo <= 152.40 ) )  {
+			gamma_eff = pow(10.0,-1.39) / 100.0;
+		} else if ( ( zo > 152.40 ) && ( zo <= 304.80 ) ) {
+			gamma_eff = pow(10.0,-1.317) / 100.0;
+		} else { /* This should not happen */
+	    	fprintf(stderr, "nonlinear error for site class B. Attempting to get gamma_eff for vs30= %f at z= %f \n", vs30, zo);
+	    	MPI_Abort(MPI_COMM_WORLD, ERROR);
+	    	exit(1);
+	    }
+	} else if ( ( vs30 >= 200 ) && ( vs30 < 760 ) ) { /* Site class C & D "Sand"  */
+
+		if ( ( zo >= 0 ) && ( zo <= 6.096 ) ) {
+			gamma_eff = pow(10.0,-1.49) / 100.0;
+		} else if ( ( zo > 6.096 ) && ( zo <= 15.24 ) )   {
+			gamma_eff = pow(10.0,-1.29) / 100.0;
+		} else if ( ( zo > 15.24 ) && ( zo <= 36.576 ) )  {
+			gamma_eff = pow(10.0,-1.14) / 100.0;
+		} else if ( ( zo > 36.576 ) && ( zo <= 76.20 ) )  {
+			gamma_eff = pow(10.0,-1.00) / 100.0;
+		} else if ( ( zo > 76.20 ) && ( zo <= 152.40 ) )  {
+			gamma_eff = pow(10.0,-0.87) / 100.0;
+		} else if ( ( zo > 152.40 ) && ( zo <= 304.80 ) ) {
+			gamma_eff = pow(10.0,-0.7) / 100.0;
+		} else { /* This should not happen */
+	    	fprintf(stderr, "nonlinear error for site class C and D.  Attempting to get gamma_eff for vs30= %f at z= %f \n", vs30, zo);
+	    	MPI_Abort(MPI_COMM_WORLD, ERROR);
+	    	exit(1);
+	    }
+	} else {
+
+			fprintf(stderr, "nonlinear error attempting to get gamma_eff - vs30: %f or z= %f are out of range \n", vs30, zo);
+			MPI_Abort(MPI_COMM_WORLD, ERROR);
+			exit(1);
+	}
+
+return gamma_eff;
+}
+
 /* -------------------------------------------------------------------------- */
 /*       Initialization of parameters, structures and memory allocations      */
 /* -------------------------------------------------------------------------- */
+
+
 
 void nonlinear_init( int32_t     myID,
                      const char *parametersin,
@@ -200,7 +293,7 @@ void nonlinear_init( int32_t     myID,
                      double      theEndT )
 {
     double  double_message[4];
-    int     int_message[5];
+    int     int_message[6];
 
     /* Capturing data from file --- only done by PE0 */
     if (myID == 0) {
@@ -223,11 +316,11 @@ void nonlinear_init( int32_t     myID,
     int_message[1] = (int)thePropertiesType;
     int_message[2] = thePropertiesCount;
     int_message[3] = theGeostaticFinalStep;
-    int_message[4] = thePlasticityModel;
-
+    int_message[4] = (int)thePlasticityModel;
+    int_message[5] = (int)theApproxGeoState;
 
     MPI_Bcast(double_message, 4, MPI_DOUBLE, 0, comm_solver);
-    MPI_Bcast(int_message,    5, MPI_INT,    0, comm_solver);
+    MPI_Bcast(int_message,    6, MPI_INT,    0, comm_solver);
 
     theNonLinVsCut        = double_message[0];
     theGeostaticLoadingT  = double_message[1];
@@ -239,6 +332,7 @@ void nonlinear_init( int32_t     myID,
     thePropertiesCount    = int_message[2];
     theGeostaticFinalStep = int_message[3];
     thePlasticityModel    = int_message[4];
+    theApproxGeoState     = int_message[5];
 
     /* allocate table of properties for all other PEs */
 
@@ -249,6 +343,7 @@ void nonlinear_init( int32_t     myID,
         theStrainRates      = (double*)malloc(sizeof(double) * thePropertiesCount);
         theSensitivities    = (double*)malloc(sizeof(double) * thePropertiesCount);
         theHardeningModulus = (double*)malloc(sizeof(double) * thePropertiesCount);
+        theBetaDilatancy    = (double*)malloc(sizeof(double) * thePropertiesCount);
     }
 
     /* Broadcast table of properties */
@@ -258,6 +353,7 @@ void nonlinear_init( int32_t     myID,
     MPI_Bcast(theStrainRates,      thePropertiesCount, MPI_DOUBLE, 0, comm_solver);
     MPI_Bcast(theSensitivities,    thePropertiesCount, MPI_DOUBLE, 0, comm_solver);
     MPI_Bcast(theHardeningModulus, thePropertiesCount, MPI_DOUBLE, 0, comm_solver);
+    MPI_Bcast(theBetaDilatancy,    thePropertiesCount, MPI_DOUBLE, 0, comm_solver);
 }
 
 /*
@@ -274,12 +370,12 @@ int32_t nonlinear_initparameters ( const char *parametersin,
             *auxiliar;
     char     material_model[64],
              material_properties[64],
-             plasticity_type[64];
+             plasticity_type[64], approx_geostatic_state[64];
 
     materialmodel_t      materialmodel;
     materialproperties_t materialproperties;
     plasticitytype_t     plasticitytype;
-
+    noyesflag_t          approxgeostatic = -1;
 
     /* Opens numericalin file */
     if ((fp = fopen(parametersin, "r")) == NULL) {
@@ -289,14 +385,15 @@ int32_t nonlinear_initparameters ( const char *parametersin,
 
     /* Parses parameters.in to capture nonlinear single-value parameters */
 
-    if ( (parsetext(fp, "nonlinear_shear_velocity_cut", 'd', &nonlin_vscut        ) != 0) ||
-         (parsetext(fp, "nonlinear_shear_velocity_min", 'd', &nonlin_vsbott        ) != 0) ||
-         (parsetext(fp, "geostatic_loading_time_sec",   'd', &geostatic_loading_t ) != 0) ||
-         (parsetext(fp, "geostatic_cushion_time_sec",   'd', &geostatic_cushion_t ) != 0) ||
-         (parsetext(fp, "material_model",               's', &material_model      ) != 0) ||
-         (parsetext(fp, "material_properties_type",     's', &material_properties ) != 0) ||
-         (parsetext(fp, "material_plasticity_type",     's', &plasticity_type     ) != 0) ||
-         (parsetext(fp, "material_properties_count",    'i', &properties_count    ) != 0) )
+    if ( (parsetext(fp, "nonlinear_shear_velocity_cut", 'd', &nonlin_vscut           ) != 0) ||
+         (parsetext(fp, "nonlinear_shear_velocity_min", 'd', &nonlin_vsbott          ) != 0) ||
+         (parsetext(fp, "geostatic_loading_time_sec",   'd', &geostatic_loading_t    ) != 0) ||
+         (parsetext(fp, "geostatic_cushion_time_sec",   'd', &geostatic_cushion_t    ) != 0) ||
+         (parsetext(fp, "material_model",               's', &material_model         ) != 0) ||
+         (parsetext(fp, "material_properties_type",     's', &material_properties    ) != 0) ||
+         (parsetext(fp, "approximate_geostatic_state",  's', &approx_geostatic_state ) != 0) ||
+         (parsetext(fp, "material_plasticity_type",     's', &plasticity_type        ) != 0) ||
+         (parsetext(fp, "material_properties_count",    'i', &properties_count       ) != 0) )
     {
         fprintf(stderr, "Error parsing nonlinear parameters from %s\n", parametersin);
         return -1;
@@ -328,16 +425,17 @@ int32_t nonlinear_initparameters ( const char *parametersin,
         materialmodel = VONMISES;
     } else if ( strcasecmp(material_model, "DruckerPrager") == 0 ) {
         materialmodel = DRUCKERPRAGER;
-    } else {
+    }
+    else {
         fprintf(stderr,
                 "Illegal material model for nonlinear analysis"
                 "(linear, vonMises, DruckerPrager): %s\n", material_model);
         return -1;
     }
 
-    if ( strcasecmp(material_properties, "cohefriction") == 0 ) {
+    if ( strcasecmp(material_properties,            "cohefriction") == 0 ) {
         materialproperties = COHEFRICTION;
-    } else if ( strcasecmp(material_properties, "alphakay") == 0 ) {
+    } else if ( strcasecmp(material_properties,         "alphakay") == 0 ) {
         materialproperties = ALPHAKAY;
     } else {
         fprintf(stderr,
@@ -346,6 +444,7 @@ int32_t nonlinear_initparameters ( const char *parametersin,
                 material_properties);
         return -1;
     }
+
 
     if (properties_count < 1) {
         fprintf(stderr, "Illegal material properties count %d\n", properties_count);
@@ -364,9 +463,27 @@ int32_t nonlinear_initparameters ( const char *parametersin,
         return -1;
     }
 
+    if ( strcasecmp(approx_geostatic_state, "yes") == 0 ) {
+        approxgeostatic = YES;
+    } else if ( strcasecmp(approx_geostatic_state, "no") == 0 ) {
+    	approxgeostatic = NO;
+    } else {
+        fprintf(stderr,
+        		":Unknown response for considering an "
+                "approximate geostatic state (yes or no): %s\n",
+                approx_geostatic_state );
+        return -1;
+    }
+
+    if ( ( (geostatic_loading_t > 0) || (geostatic_cushion_t > 0) ) &&
+         ( approxgeostatic == YES ) ) {
+        fprintf(stderr, "Approximate geostatic-state must be set to (no) when geostatic loading/cushion time > 0. %s\n",
+        		approx_geostatic_state);
+        return -1;
+    }
+
 
     /* Initialize the static global variables */
-
     theNonLinVsCut        = nonlin_vscut;
     theNonLinVsMin        = nonlin_vsbott;
     theGeostaticLoadingT  = geostatic_loading_t;
@@ -376,28 +493,30 @@ int32_t nonlinear_initparameters ( const char *parametersin,
     thePropertiesType     = materialproperties;
     thePropertiesCount    = properties_count;
     thePlasticityModel    = plasticitytype;
+    theApproxGeoState     = approxgeostatic;
 
-    auxiliar             = (double*)malloc( sizeof(double) * thePropertiesCount * 6 );
+    auxiliar             = (double*)malloc( sizeof(double) * thePropertiesCount * 7 );
     theVsLimits          = (double*)malloc( sizeof(double) * thePropertiesCount );
     theAlphaCohes        = (double*)malloc( sizeof(double) * thePropertiesCount );
     theKayPhis           = (double*)malloc( sizeof(double) * thePropertiesCount );
     theStrainRates       = (double*)malloc( sizeof(double) * thePropertiesCount );
     theSensitivities     = (double*)malloc( sizeof(double) * thePropertiesCount );
     theHardeningModulus  = (double*)malloc( sizeof(double) * thePropertiesCount );
+    theBetaDilatancy     = (double*)malloc( sizeof(double) * thePropertiesCount );
 
-
-    if ( parsedarray( fp, "material_properties_list", thePropertiesCount * 6, auxiliar ) != 0) {
+    if ( parsedarray( fp, "material_properties_list", thePropertiesCount * 7, auxiliar ) != 0) {
         fprintf(stderr, "Error parsing nonlinear material properties list from %s\n", parametersin);
         return -1;
     }
 
     for ( row = 0; row < thePropertiesCount; row++) {
-        theVsLimits[row]          = auxiliar[ row * 6     ];
-        theAlphaCohes[row]        = auxiliar[ row * 6 + 1 ];
-        theKayPhis[row]           = auxiliar[ row * 6 + 2 ];
-        theStrainRates[row]       = auxiliar[ row * 6 + 3 ];
-        theSensitivities[row]     = auxiliar[ row * 6 + 4 ];
-        theHardeningModulus[row]  = auxiliar[ row * 6 + 5 ];
+        theVsLimits[row]          = auxiliar[ row * 7     ];
+        theAlphaCohes[row]        = auxiliar[ row * 7 + 1 ];
+        theKayPhis[row]           = auxiliar[ row * 7 + 2 ];
+        theStrainRates[row]       = auxiliar[ row * 7 + 3 ];
+        theSensitivities[row]     = auxiliar[ row * 7 + 4 ];
+        theHardeningModulus[row]  = auxiliar[ row * 7 + 5 ];
+        theBetaDilatancy[row]     = auxiliar[ row * 7 + 6 ];
     }
 
     return 0;
@@ -686,7 +805,7 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
         edata_t    *edata;
         nlconstants_t *ecp;
         double      mu, lambda;
-        double      elementVs;
+        double      elementVs, elementVp, S_zz, Ko, phi;
 
         eindex = myNonlinElementsMapping[nl_eindex];
 
@@ -694,9 +813,13 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
         edata = (edata_t *)elemp->data;
         ecp   = myNonlinSolver->constants + nl_eindex;
 
+        int32_t lnid0 = elemp->lnid[0];
+        double  zo    = myMesh->ticksize * myMesh->nodeTable[lnid0].z;
+
         /* get element Vs */
 
-        elementVs = (double)edata->Vs;
+        elementVs   = (double)edata->Vs;
+        elementVp   = (double)edata->Vp;
 
         /* Calculate the lame constants and store in element */
 
@@ -704,24 +827,38 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
         ecp->lambda = lambda;
         ecp->mu     = mu;
 
+        /* Calculate the vertical stress as a homogeneous half-space */
+        ecp->sigma_z_st = edata->rho * 9.80 * ( zo + edata->edgesize / 2.0 );
+        S_zz            = ecp->sigma_z_st;
+
         /* Calculate the yield function constants */
 
         switch (theMaterialModel) {
 
             case LINEAR:
-                ecp->alpha = 0;
-                ecp->k     = 0;
+                ecp->alpha = 0.;
+                ecp->k     = 0.;
+                ecp->phi   = 0.;
+                ecp->beta  = 0.;
                 break;
 
             case VONMISES:
-                ecp->alpha = 0;
-                ecp->k     = get_kay(elementVs);
+                ecp->alpha = 0.;
+                ecp->beta  = 0.;
+                ecp->phi   = get_phi(elementVs);
+                ecp->k     = get_kay(elementVs, S_zz, ecp->phi, zo, mu);
+                phi        = ecp->phi;
+                Ko         = ( 1.0 - sin(phi) );
+                if ( ecp->k == 0 ) {
+                	ecp->k = ( 1. + Ko ) * sin(phi) * S_zz / 2.0; /* shear strength for cohesionless soil (Hartzell - Bonilla 2004)   */
+                }
                 break;
-
             case DRUCKERPRAGER:
-                ecp->alpha = get_alpha(elementVs);
-                ecp->k     = get_kay(elementVs);
-                break;
+                ecp->phi   = get_phi(elementVs);
+                ecp->k     = get_kay(elementVs, S_zz, ecp->phi, zo, mu);
+                ecp->alpha = get_alpha(elementVs, ecp->phi);
+                ecp->beta  = get_beta(elementVs);
+            	break;
 
             default:
                 fprintf(stderr, "Thread %d: nonlinear_solver_init:\n"
@@ -732,16 +869,30 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
         }
 
         for (i = 0; i < 8; i++) {
-            ecp->fs[i]     = 0;
-            ecp->dLambda[i] = 0;
+            ecp->fs[i]     =  0.;
+            ecp->dLambda[i] = 0.;
         }
 
-        ecp->strainrate  =
+        if ( ( thePropertiesType == ALPHAKAY ) || ( thePropertiesType == COHEFRICTION ) ) {
+        	ecp->strainrate  =
             interpolate_property_value(elementVs, theStrainRates  );
-        ecp->sensitivity =
+        	ecp->sensitivity =
             interpolate_property_value(elementVs, theSensitivities );
-        ecp->hardmodulus =
+        	ecp->hardmodulus =
             interpolate_property_value(elementVs, theHardeningModulus );
+        } else {
+        	ecp->strainrate  = 0.;
+        	ecp->sensitivity = 0.;
+        	ecp->hardmodulus = 0.;
+        }
+
+        if ( theApproxGeoState == NO ) {
+            ecp->I1_st        =  -1.;
+            ecp->J2square_st  =   0.;
+        } else {
+            ecp->I1_st        = -S_zz * ( 3.0 - 2.0 * sin ( ecp->phi ) );
+            ecp->J2square_st  =  S_zz * S_zz * sin ( ecp->phi ) * sin ( ecp->phi ) / 3.0;
+        }
 
 
     } /* for all elements */
@@ -845,24 +996,24 @@ tensor_t init_tensor() {
 
     tensor_t tensor;
 
-    tensor.xx = 0;
-    tensor.yy = 0;
-    tensor.zz = 0;
-    tensor.xy = 0;
-    tensor.yz = 0;
-    tensor.xz = 0;
+    tensor.xx = 0.0;
+    tensor.yy = 0.0;
+    tensor.zz = 0.0;
+    tensor.xy = 0.0;
+    tensor.yz = 0.0;
+    tensor.xz = 0.0;
 
     return tensor;
 }
 
 void init_tensorptr(tensor_t *tensor) {
 
-    tensor->xx = 0;
-    tensor->yy = 0;
-    tensor->zz = 0;
-    tensor->xy = 0;
-    tensor->yz = 0;
-    tensor->xz = 0;
+    tensor->xx = 0.0;
+    tensor->yy = 0.0;
+    tensor->zz = 0.0;
+    tensor->xy = 0.0;
+    tensor->yz = 0.0;
+    tensor->xz = 0.0;
 
     return;
 }
@@ -988,23 +1139,24 @@ tensor_t copy_tensor (tensor_t original) {
     return copy;
 }
 
-double compute_yield_surface_state ( double J2, double I1, double alpha ) {
 
-//    if ( theMaterialModel == VONMISES ) {
-//        return sqrt(J2);
-//    }
-//
-//    if ( theMaterialModel == DRUCKERPRAGER ) {
-        return alpha * I1 + sqrt(J2);
-//    }
-//
-//    return 0;
+double compute_yield_surface_state ( double J2, double I1, double alpha, double I1_st, double J2_st ) {
+	double Yf=0.;
+
+	if ( theMaterialModel == VONMISES ) {
+		Yf = sqrt(J2 + J2_st);
+	} else {
+		Yf = alpha * ( I1 + I1_st ) + sqrt(J2 + J2_st);
+	}
+
+	return Yf;
+
 }
 
-double compute_dLambda ( nlconstants_t constants, double fs, double eff_ps, double J2, double I1 ) {
 
-	/* This function is no longer used and was updated by compute_dLambdaII */
-	double phi_pt, eta_pt, psi_pt, s, c, kappa, A1, B1, C1; /*  variables needed for the plastic strain update*/
+double compute_dLambdaII ( nlconstants_t constants, double fs, double eff_ps, double J2, double I1, double J2_st, double I1_st, double *po) {
+
+	double phi_pt, s, c, kappa, mu, beta, alpha, tanpsi_min, tanpsi, FsT, delta=0; /*  variables needed for the plastic strain update*/
 
 	if ( thePlasticityModel == RATE_DEPENDANT ) {
 		double factor      = fs / constants.k;
@@ -1020,75 +1172,59 @@ double compute_dLambda ( nlconstants_t constants, double fs, double eff_ps, doub
 
 	s      = constants.hardmodulus;
 	c      = constants.k;
-	kappa  = ( constants.lambda + 2 * constants.mu / 3 );
+	mu     = constants.mu;
+	beta   = constants.beta;
+	alpha  = constants.alpha;
 
-	phi_pt = sqrt ( 1/2. + 3 * constants.alpha * constants.alpha );
-	eta_pt = s * phi_pt + 9 * kappa * constants.alpha *  constants.alpha;
-	psi_pt = s * eff_ps + c - constants.alpha * I1;
+	kappa  = ( constants.lambda + 2. * mu / 3. );
+	phi_pt = sqrt ( 1/2. + 3.0 * beta * beta );
 
-	A1 = constants.mu * constants.mu - eta_pt * eta_pt;
-	B1 = 2 * eta_pt * psi_pt + 2 * sqrt( J2 ) * constants.mu;
-	C1 = J2 - psi_pt * psi_pt;
-
-
-	if ( fs > c + s * eff_ps ) {
-
-		if ( ( B1*B1 - 4 * A1 * C1 ) < 0 ) {
-        fprintf(stderr, "Thread compute_dLambda:\n"
-                "\t Illegal value computing plastic strain multiplier\n" );
-        MPI_Abort(MPI_COMM_WORLD, ERROR);
-        exit(1);
-
-		}
-
-		return ( B1 - sqrt ( B1 * B1 - 4 * A1 * C1 ) ) / ( 2 * A1 );
-	}
-	else
-		return 0;
-
-}
-
-
-double compute_dLambdaII ( nlconstants_t constants, double fs, double eff_ps, double J2, double I1 ) {
-
-	double phi_pt, s, c, kappa, FsT; /*  variables needed for the plastic strain update*/
-
-	if ( thePlasticityModel == RATE_DEPENDANT ) {
-		double factor      = fs / constants.k;
-		double strainRate  = constants.strainrate;
-		double sensitivity = constants.sensitivity;
-		double oneOverM    = 1.0 / sensitivity;
-
-		return strainRate * pow(factor, oneOverM);
-	}
-
-	/* Dorian: Rate independent plastic multiplier computation stage. */
-	/* This expression is exact for the Drucker-Prager material model with Linear hardening Rule */
-
-	s      = constants.hardmodulus;
-	c      = constants.k;
-	kappa  = ( constants.lambda + 2 * constants.mu / 3 );
-	phi_pt = sqrt ( 1/2. + 3 * constants.alpha * constants.alpha );
+	tanpsi_min = mu / ( 9.0 * kappa * beta );
+	tanpsi     = sqrt(J2 + J2_st) / ( I1 + I1_st - c / alpha );
 
 	FsT = fs - c - s * eff_ps;
 
-	if (  FsT > 0 )
-		return FsT / ( constants.mu + 9 * kappa * constants.alpha * constants.alpha + s * phi_pt );
+	if ( FsT < 0 )
+		return 0.;
 
-	return 0;
+	if ( theMaterialModel == VONMISES ) {
+
+		delta = FsT / ( constants.mu + s * phi_pt );
+
+	} else if ( ( tanpsi < 0 ) || ( tanpsi > tanpsi_min ) ) {
+
+		delta = FsT / ( constants.mu + 9.0 * kappa * constants.alpha * constants.beta + s * phi_pt );
+
+	} else {
+		FsT = alpha * ( I1 + I1_st ) - c - s * eff_ps;
+		delta = FsT / ( 9.0 * kappa * constants.alpha * constants.beta + s * phi_pt );
+		*po   = ( ( I1 + I1_st ) - 9.0 * kappa * beta * delta ) / 3.0;
+
+
+		/*Sanity Check  */
+		if ( ( *po < 0.0 ) )  {
+		/* this should not happen */
+            fprintf(stderr, "Thread po = %8e in: nonlinear_compute_dLambda:\n"
+                    "\t Negative pressure capacity at the apex of the Drucker-Prager cone \n", *po);
+            MPI_Abort(MPI_COMM_WORLD, ERROR);
+            exit(1);
+
+		}
+	}
+	return delta;
 }
 
 
 
 
 
-tensor_t compute_dfds (tensor_t dev, double J2, double alpha) {
+tensor_t compute_dfds (tensor_t dev, double J2, double beta) {
 
     tensor_t dfds;
 
-    dfds.xx = dev.xx / ( 2.0 * sqrt(J2) ) + alpha;
-    dfds.yy = dev.yy / ( 2.0 * sqrt(J2) ) + alpha;
-    dfds.zz = dev.zz / ( 2.0 * sqrt(J2) ) + alpha;
+    dfds.xx = dev.xx / ( 2.0 * sqrt(J2) ) + beta;
+    dfds.yy = dev.yy / ( 2.0 * sqrt(J2) ) + beta;
+    dfds.zz = dev.zz / ( 2.0 * sqrt(J2) ) + beta;
     dfds.xy = dev.xy / ( 2.0 * sqrt(J2) );
     dfds.yz = dev.yz / ( 2.0 * sqrt(J2) );
     dfds.xz = dev.xz / ( 2.0 * sqrt(J2) );
@@ -1097,10 +1233,17 @@ tensor_t compute_dfds (tensor_t dev, double J2, double alpha) {
 
 }
 
-tensor_t compute_pstrain2 (tensor_t pstrain1, tensor_t dfds, double dLambda,
-                           double dt) {
+tensor_t compute_pstrain2 ( nlconstants_t constants, tensor_t pstrain1, tensor_t tstrain,
+							tensor_t dfds, double dLambda, double dt, double J2, double I1,
+							double J2_st, double I1_st, double po ) {
 
     tensor_t pstrain2;
+    double kappa;
+
+	kappa  = ( constants.lambda + 2.0 * constants.mu / 3.0 );
+
+	if ( dLambda == 0 )
+		return pstrain1;
 
     if ( thePlasticityModel == RATE_DEPENDANT ) {
     	pstrain2.xx = pstrain1.xx + dt * dLambda * dfds.xx;
@@ -1109,15 +1252,23 @@ tensor_t compute_pstrain2 (tensor_t pstrain1, tensor_t dfds, double dLambda,
     	pstrain2.xy = pstrain1.xy + dt * dLambda * dfds.xy;
     	pstrain2.yz = pstrain1.yz + dt * dLambda * dfds.yz;
     	pstrain2.xz = pstrain1.xz + dt * dLambda * dfds.xz;
-    }
-    else {
-    pstrain2.xx = pstrain1.xx +  dLambda * dfds.xx;
-    pstrain2.yy = pstrain1.yy +  dLambda * dfds.yy;
-    pstrain2.zz = pstrain1.zz +  dLambda * dfds.zz;
-    pstrain2.xy = pstrain1.xy +  dLambda * dfds.xy;
-    pstrain2.yz = pstrain1.yz +  dLambda * dfds.yz;
-    pstrain2.xz = pstrain1.xz +  dLambda * dfds.xz;
 
+    } else if ( po >  0.0  ) {
+
+        pstrain2.xx = tstrain.xx -  ( po - I1_st / 3. ) / ( 3.0 * kappa );
+        pstrain2.yy = tstrain.yy -  ( po - I1_st / 3. ) / ( 3.0 * kappa );
+        pstrain2.zz = tstrain.zz -  ( po - I1_st / 3. ) / ( 3.0 * kappa );
+        pstrain2.xy = tstrain.xy;
+        pstrain2.yz = tstrain.yz;
+        pstrain2.xz = tstrain.xz;
+
+    } else {
+    	pstrain2.xx = pstrain1.xx +  dLambda * dfds.xx;
+    	pstrain2.yy = pstrain1.yy +  dLambda * dfds.yy;
+    	pstrain2.zz = pstrain1.zz +  dLambda * dfds.zz;
+        pstrain2.xy = pstrain1.xy +  dLambda * dfds.xy;
+        pstrain2.yz = pstrain1.yz +  dLambda * dfds.yz;
+        pstrain2.xz = pstrain1.xz +  dLambda * dfds.xz;
     }
 
     return pstrain2;
@@ -1236,6 +1387,7 @@ void check_strain_stability ( double dLambda, double dt, mesh_t *myMesh,
 
     return;
 }
+
 
 /* -------------------------------------------------------------------------- */
 /*                   Nonlinear core computational methods                     */
@@ -1577,23 +1729,27 @@ void compute_addforce_nl (mesh_t     *myMesh,
         mu     = ec.mu;
         lambda = ec.lambda;
 
-        if ( theMaterialModel == LINEAR ) {
+//        int kk=0;
+//        if ( (nl_eindex==462) )
+//        	kk=89;
+
+//        if ( theMaterialModel == LINEAR ) {
 
             stresses = myNonlinSolver->stresses[nl_eindex];
 
-        } else {
-
-            qptensors_t tstrains, pstrains, estrains;
-
-            tstrains = myNonlinSolver->strains   [nl_eindex];
-            pstrains = myNonlinSolver->pstrains1[nl_eindex];
-
-            /* compute total strain - plastic strain */
-            estrains = subtrac_qptensors(tstrains, pstrains);
-
-            /* compute the corresponding stress */
-            stresses = compute_qp_stresses(estrains, mu, lambda);
-        }
+//        } else {
+//
+//            qptensors_t tstrains, pstrains, estrains;
+//
+//            tstrains = myNonlinSolver->strains   [nl_eindex];
+//            pstrains = myNonlinSolver->pstrains1[nl_eindex];
+//
+//            /* compute total strain - plastic strain */
+//            estrains = subtrac_qptensors(tstrains, pstrains);
+//
+//            /* compute the corresponding stress */
+//            stresses = compute_qp_stresses(estrains, mu, lambda);
+//        }
 
         /* Clean memory for the local force vector */
         memset(localForce, 0, 8 * sizeof(fvector_t));
@@ -1649,6 +1805,14 @@ void compute_addforce_nl (mesh_t     *myMesh,
             nodalForce->f[1] -= localForce[i].f[1] * theDeltaTSquared;
             nodalForce->f[2] -= localForce[i].f[2] * theDeltaTSquared;
 
+        	if (  ( ( nodalForce->f[0] >=0 ) || ( nodalForce->f[0] < 0 ) ) &&
+        		  ( ( nodalForce->f[1] >=0 ) || ( nodalForce->f[1] < 0 ) ) &&
+        		  ( ( nodalForce->f[2] >=0 ) || ( nodalForce->f[2] < 0 ) ) ) {
+        	} else {
+
+        	}
+
+
         } /* element nodes */
 
     } /* all elements */
@@ -1673,7 +1837,8 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
                                int32_t     theNumberOfStations,
                                int32_t     myNumberOfStations,
                                station_t  *myStations,
-                               double      theDeltaT)
+                               double      theDeltaT,
+                               int         step )
 {
     /* In general, j-index refers to the quadrature point in a loop (0 to 7 for
      * eight points), and i-index refers to the tensor component (0 to 5), with
@@ -1681,8 +1846,9 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
      * also some times used for the number of nodes (8, 0 to 7).
      */
 
-    int     i;
+    int     i,j;
     int32_t eindex, nl_eindex;
+
 
     /* Loop over the number of local elements */
     for (nl_eindex = 0; nl_eindex < myNonlinElementsCount; nl_eindex++) {
@@ -1695,8 +1861,10 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
         double         alpha, k;   /* Drucker-Prager constants      */
         double         mu, lambda; /* Elasticity material constants */
         double		   hrd;        /* Hardening Modulus  */
+        double         beta;       /* Plastic flow rule constant */
         double         XI, QC;
-        double         Fs, I1, oct, J2, Fs2, ept=0;
+        double         Fs = 0., I1 = 0., oct = 0., J2 = 0., Fs2 = 0., ept = 0.;
+        double         I1_st = 0, J2_st = 0;
         fvector_t      u[8];
         qptensors_t   *stresses, *tstrains, *pstrains1, *pstrains2;
         qpvectors_t   *epstr1, *epstr2;
@@ -1716,8 +1884,11 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
         mu     = enlcons->mu;
         lambda = enlcons->lambda;
         alpha  = enlcons->alpha;
+        beta   = enlcons->beta;
         k      = enlcons->k;
         hrd    = enlcons->hardmodulus;
+        I1_st  = enlcons->I1_st;
+        J2_st  = enlcons->J2square_st;
 
         /* Capture the current state in the element */
         tstrains  = myNonlinSolver->strains   + nl_eindex;
@@ -1726,7 +1897,6 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
         pstrains2 = myNonlinSolver->pstrains2 + nl_eindex;
         epstr1    = myNonlinSolver->ep1       + nl_eindex;
         epstr2    = myNonlinSolver->ep2       + nl_eindex;
-
 
         /* Capture displacements */
         if ( get_displacements(mySolver, elemp, u) == 0 ) {
@@ -1748,8 +1918,9 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
             tstrains->qp[i] = point_strain(u, lx, ly, lz, h);
 
             /* Calculate stresses */
-            if ( theMaterialModel == LINEAR ) {
+            if ( ( theMaterialModel == LINEAR ) || ( step <= theGeostaticFinalStep ) ){
                 stresses->qp[i]  = point_stress ( tstrains->qp[i], mu, lambda );
+                continue;
             } else {
                 pstrains1->qp[i] = copy_tensor ( pstrains2->qp[i] );     /* strain predictor: equal to the previous strain tens   */
                 estrain          = subtrac_tensors ( tstrains->qp[i], pstrains1->qp[i] ); /* stress predictor   */
@@ -1758,13 +1929,12 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
 
             }
 
-
             /* Stress invariants */
             I1  = tensor_I1 ( stresses->qp[i] );
             oct = tensor_octahedral ( I1 );
             dev = tensor_deviator ( stresses->qp[i], oct );
             J2  = tensor_J2 ( dev );
-            Fs  = compute_yield_surface_state ( J2, I1, alpha ); /* Fs predictor */
+            Fs  = compute_yield_surface_state ( J2, I1, alpha, I1_st, J2_st ); /* Fs predictor */
 
 
             enlcons->avgFs += Fs * 0.125; /* 1/8 = 0.125 is qp contribution */
@@ -1772,33 +1942,23 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
                 enlcons->maxFs = Fs;
             }
 
-            /* Do not compute plasticity for the linear case */
-//            if ( ( theMaterialModel == LINEAR ) || ( J2 == 0 ) ) {
-            if ( ( theMaterialModel == LINEAR ) ) {
-            	continue;
-            }
-
             /* Next plastic strain correction */
-            enlcons->dLambda[i] = compute_dLambdaII ( *enlcons, Fs, ept , J2, I1 );
-            tensor_t dfds       = compute_dfds ( dev, J2, alpha );
-            pstrains2->qp[i]    = compute_pstrain2 ( pstrains1->qp[i], dfds, enlcons->dLambda[i], theDeltaT ); /* real plastic strain */
-        	epstr2->qv[i]       = ept + enlcons->dLambda[i] * sqrt ( 1/2. + 3 * alpha * alpha);
+            double po = 0.;    /* Controls the response at the Apex zone  */
+            enlcons->dLambda[i] = compute_dLambdaII ( *enlcons, Fs, ept, J2, I1, J2_st, I1_st, &po);
+            tensor_t dfds       = compute_dfds ( dev, J2 + J2_st, beta );
+            pstrains2->qp[i]    = compute_pstrain2 ( *enlcons, pstrains1->qp[i], tstrains->qp[i], dfds, enlcons->dLambda[i], theDeltaT, J2, I1, J2_st, I1_st, po ); /* real plastic strain */
+        	epstr2->qv[i]       = ept + enlcons->dLambda[i] * sqrt ( 1/2. + 3.0 * beta * beta);
 
-//            if ( hrd != 0)
-//            	epstr2->qv[i]   = ept + enlcons->dLambda[i] * sqrt ( 1/2. + 3 * alpha * alpha);
-//            else
-//            	epstr2->qv[i]   = 0;
 
-            /* if fs > k the stress and strain tensors must be corrected. Dorian*/
             if ( thePlasticityModel != RATE_DEPENDANT ) {
-            	if ( enlcons->dLambda[i] > 0 ){
+            	if ( enlcons->dLambda[i] != 0 ){
             		estrain          = subtrac_tensors ( tstrains->qp[i], pstrains2->qp[i] );
             		stresses->qp[i]  = point_stress ( estrain, mu, lambda ); /* real stress tensor */
             		I1               = tensor_I1 ( stresses->qp[i] );
             		oct              = tensor_octahedral ( I1 );
             		dev              = tensor_deviator ( stresses->qp[i], oct );
             		J2               = tensor_J2 ( dev );
-            		Fs2              = compute_yield_surface_state ( J2, I1, alpha );  /* final Fs value, must be equal to the value from the hardening function */
+            		Fs2              = compute_yield_surface_state ( J2, I1, alpha, I1_st, J2_st );  /* final Fs value, must be equal to the value from the hardening function */
             	}
             }
 
@@ -1807,9 +1967,6 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
             	enlcons->fs[i] = Fs;
             	check_yield_limit ( myMesh, eindex, edata->Vs, Fs, k, i);
             }
-//            check_strain_stability ( enlcons->dLambda[i], theDeltaT, myMesh, eindex, edata->Vs, Fs, k, i );
-
-
 
         } /* for all quadrature points */
 
@@ -2073,7 +2230,7 @@ void nonlinear_stations_init(mesh_t    *myMesh,
         pstrain1 = &(myNonlinStations[iStation].pstrain1);
         pstrain2 = &(myNonlinStations[iStation].pstrain2);
         ep1      = &(myNonlinStations[iStation].ep );
-        *ep1     = 0;
+        *ep1     = 0.;
 
         init_tensorptr(strain);
         init_tensorptr(stress);
@@ -2106,9 +2263,12 @@ void print_nonlinear_stations(mesh_t     *myMesh,
         edata_t       *edata;
         nlconstants_t *constants;
         fvector_t      u[8];
-        double         alpha, lambda, dLambda = 0, mu, k, hrd,  Fs = 0, J2, I1, h, oct;
-        double         bStrain = 0, bStress = 0, *ept, ep=0;
+        double         alpha = 0., beta = 0., lambda = 0., dLambda = 0.,
+        		       mu, k = 0., hrd = 0.,  Fs = 0. , J2 = 0., I1 = 0,
+        		       h, oct = 0.;
+        double         bStrain = 0., bStress = 0., *ept, ep=0.;
         double         lx, ly, lz;
+        double         I1_st = 0., J2_st = 0., po = 0.;
 
         nl_eindex    = myStationsElementIndices[iStation];
         eindex       = myNonlinElementsMapping[nl_eindex];
@@ -2124,8 +2284,11 @@ void print_nonlinear_stations(mesh_t     *myMesh,
         mu     = constants->mu;
         lambda = constants->lambda;
         alpha  = constants->alpha;
+        beta   = constants->beta;
         k      = constants->k;
         hrd    = constants->hardmodulus;
+        I1_st  = constants->I1_st;
+        J2_st  = constants->J2square_st;
 
         /* Capture the current state in the station */
         tstrain  = &(myNonlinStations[iStation].strain);
@@ -2156,7 +2319,7 @@ void print_nonlinear_stations(mesh_t     *myMesh,
         *tstrain = point_strain(u, lx, ly, lz, h);
 
         /* Calculate stresses */
-        if ( theMaterialModel == LINEAR ) {
+        if ( ( theMaterialModel == LINEAR ) || ( step <= theGeostaticFinalStep ) ) {
             *stress = point_stress ( *tstrain, mu, lambda);
         } else {
             *pstrain1 = copy_tensor ( *pstrain2 );
@@ -2170,21 +2333,20 @@ void print_nonlinear_stations(mesh_t     *myMesh,
         dev = tensor_deviator ( *stress, oct );
         J2  = tensor_J2 ( dev );
 
-        Fs  = compute_yield_surface_state ( J2, I1, alpha );
+        Fs  = compute_yield_surface_state ( J2, I1, alpha, I1_st, J2_st );
 
 
         /* Do not compute plasticity for the linear case */
         if ( theMaterialModel != LINEAR ) {
-//            if ( J2 != 0 ) {
                 /* Next plastic strain correction */
-                dLambda       = compute_dLambdaII ( *constants, Fs, *ept, J2, I1 );
-                tensor_t dfds = compute_dfds ( dev, J2, alpha );
-                *pstrain2     = compute_pstrain2 ( *pstrain1, dfds, dLambda, dt );
-                *ept          = ep +  dLambda * sqrt (1/2. + 3 * alpha * alpha );
+                dLambda       = compute_dLambdaII ( *constants, Fs, *ept, J2, I1, J2_st, I1_st, &po);
+                tensor_t dfds = compute_dfds ( dev, J2 + J2_st, beta );
+                *pstrain2     = compute_pstrain2 ( *constants, *pstrain1, *tstrain, dfds, dLambda, dt, J2, I1, J2_st, I1_st, po );
+                *ept          = ep +  dLambda * sqrt (1/2. + 3.0 * beta * beta );
 
 
                 if ( thePlasticityModel != RATE_DEPENDANT ) {
-                	if ( dLambda > 0) {
+                	if ( dLambda != 0) {
 
                 		estrain   = subtrac_tensors ( *tstrain, *pstrain2 );
                 		*stress   = point_stress ( estrain, mu, lambda );
@@ -2192,7 +2354,7 @@ void print_nonlinear_stations(mesh_t     *myMesh,
                 		oct = tensor_octahedral ( I1 );
                 		dev = tensor_deviator ( *stress, oct );
                 		J2  = tensor_J2 ( dev );
-                		Fs  = compute_yield_surface_state ( J2, I1, alpha );  /* final Fs value, must be equal to the value from the hardening function */
+                		Fs  = compute_yield_surface_state ( J2, I1, alpha, I1_st, J2_st );  /* final Fs value, must be equal to the value from the hardening function */
                 	}
 
                 }
@@ -2214,7 +2376,8 @@ NLPRINT:
                     " % 8e % 8e"
                     " % 8e % 8e"
                     " % 8e % 8e"
-                    " % 8e % 8e % 8e",
+                    " % 8e % 8e % 8e"
+            		 " % 8e % 8e % 8e",
 
                     tstrain->xx, stress->xx, // 11 12
                     tstrain->yy, stress->yy, // 13 14
@@ -2223,7 +2386,8 @@ NLPRINT:
                     tstrain->xy, stress->xy, // 19 20
                     tstrain->yz, stress->yz, // 21 22
                     tstrain->xz, stress->xz, // 23 24
-                    dLambda, Fs, k + hrd * (*ept) ); // 25 26 27
+                    dLambda, Fs, k + hrd * (*ept), // 25 26 27
+                    I1+I1_st,J2+J2_st, po );               //  28 29
         }
     } /* for all my stations */
 

@@ -23,7 +23,6 @@
 /* -------------------------------------------------------------------------- */
 /*                        Structures and definitions                          */
 /* -------------------------------------------------------------------------- */
-
 typedef enum {
 
     RATE_DEPENDANT = 0, RATE_INDEPENDANT
@@ -52,6 +51,18 @@ typedef enum {
      */
     COHEFRICTION = 0, ALPHAKAY
 } materialproperties_t;
+
+typedef struct vect1_t {
+	double x;
+	double y;
+	double z;
+} vect1_t;
+
+
+typedef struct qvect_t {
+	 vect1_t qf[8];
+} qvect_t;
+
 
 typedef struct vector_t {
 
@@ -83,17 +94,26 @@ typedef struct qptensors_t {
 
 } qptensors_t;
 
+
+
 typedef struct nlconstants_t {
+
 
     double lambda;
     double mu;
     double alpha;      /* yield function constants */
+    double beta;      /*  plastic potential constant */
     double k;
     double fs[8];      /* F(sigma) */
     double dLambda[8]; /* yield control */
     double strainrate;
     double sensitivity;
     double hardmodulus; /* the effective yield stress is defined as : ( k + hardmodulus*ep ) */
+    qvect_t u_static;
+    double  phi;         /* angle of internal friction */
+    double sigma_z_st;   /* static vertical stress */
+    double I1_st;        /* static first invariant    */
+    double J2square_st;  /* static second invariant */
 
     double maxFs;
     double avgFs;
@@ -134,13 +154,19 @@ typedef struct bottomelement_t {
 /*                                 Utilities                                  */
 /* -------------------------------------------------------------------------- */
 
+
 double get_geostatic_total_time();
+
 
 int isThisElementNonLinear(mesh_t *myMesh, int32_t eindex);
 
 double interpolate_property_value(double vsRequest, double *propVector);
-double get_alpha(double vs);
-double get_kay(double vs);
+double get_alpha(double vs, double phi);
+double get_kay(double vs, double s_zz, double phi, double zo, double mu);
+double get_phi(double vs);
+double get_beta(double vs);
+double interp_phi (double vsvp, double li, double lf, double phi_i, double phi_f);
+double get_gamma_eff (double vs30, double zo);
 
 /* -------------------------------------------------------------------------- */
 /*       Initialization of parameters, structures and memory allocations      */
@@ -194,11 +220,13 @@ tensor_t copy_tensor     ( tensor_t original);
 qptensors_t compute_qp_stresses ( qptensors_t strains, double mu, double lambda);
 qptensors_t subtrac_qptensors   ( qptensors_t A, qptensors_t B);
 
-double   compute_yield_surface_state ( double J2, double I1, double alpha );
-double   compute_dLambdaII           ( nlconstants_t constants, double fs, double eff_ps, double J2, double I1 );
-tensor_t compute_dfds                ( tensor_t dev, double J2, double alpha);
-tensor_t compute_pstrain2            ( tensor_t pstrain1, tensor_t dfds,
-                                       double dLambda, double dt);
+double   compute_yield_surface_state ( double J2, double I1, double alpha, double I1_st, double J2_st );
+double   compute_dLambdaII           ( nlconstants_t constants, double fs, double eff_ps, double J2, double I1, double J2_st, double I1_st, double *po);
+tensor_t compute_dfds                ( tensor_t dev, double J2, double beta);
+tensor_t compute_pstrain2            ( nlconstants_t constants, tensor_t pstrain1, tensor_t tstrain,
+							           tensor_t dfds, double dLambda, double dt, double J2, double I1,
+							           double J2_st, double I1_st, double po );
+
 
 int get_displacements ( mysolver_t *solver, elem_t *elemp, fvector_t *u );
 
@@ -211,6 +239,7 @@ void check_yield_limit      ( mesh_t *myMesh, int32_t eindex, double vs,
 void check_strain_stability ( double dLambda, double dt, mesh_t *myMesh,
                               int32_t eindex, double vs, double fs,
                               double k, int qp);
+void check_nan_displ        (mesh_t *myMesh, int32_t eindex, fvector_t *u, qptensors_t   *stresses, qptensors_t   *pstrains, double h );
 
 /* -------------------------------------------------------------------------- */
 /*                   Nonlinear core computational methods                     */
@@ -237,14 +266,15 @@ void geostatic_displacements_fix( mesh_t     *myMesh,
 
 void compute_addforce_nl ( mesh_t     *myMesh,
                            mysolver_t *mySolver,
-                           double      theDeltaTSquared );
+                           double      theDeltaTSquared);
 
 void compute_nonlinear_state ( mesh_t     *myMesh,
                                mysolver_t *mySolver,
                                int32_t     theNumberOfStations,
                                int32_t     myNumberOfStations,
                                station_t  *myStations,
-                               double      theDeltaT );
+                               double      theDeltaT,
+                               int         step );
 
 /* -------------------------------------------------------------------------- */
 /*                        Nonlinear Output to Stations                        */
