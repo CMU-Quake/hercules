@@ -31,6 +31,8 @@
 
 #define  QC  qc = 0.577350269189 /* sqrt(3.0)/3.0; */
 
+#define MAX(a, b) ((a)>(b)?(a):(b))
+
 #define  XI  xi[3][8] = { {-1,  1, -1,  1, -1,  1, -1, 1} , \
                           {-1, -1,  1,  1, -1, -1,  1, 1} , \
                           {-1, -1, -1, -1,  1,  1,  1, 1} }
@@ -42,8 +44,6 @@ static int superflag = 0;
 /* -------------------------------------------------------------------------- */
 
 static nlsolver_t           *myNonlinSolver;
-static double                theNonLinVsCut = 0;
-static double                theNonLinVsMin = 0;
 static int32_t               thePropertiesCount;
 static materialmodel_t       theMaterialModel;
 static plasticitytype_t      thePlasticityModel;
@@ -91,9 +91,8 @@ int isThisElementNonLinear(mesh_t *myMesh, int32_t eindex) {
 //    int32_t lnid0 = myMesh->elemTable[eindex].lnid[0];
 //    double  zo    = myMesh->ticksize*myMesh->nodeTable[lnid0].z;
 
-    if ( ( edata->Vs <= theNonLinVsCut ) && ( edata->Vs >= theNonLinVsMin ) )
-    	return YES;
-
+    if ( ( edata->Vs <=  theVsLimits[thePropertiesCount-1] ) && ( edata->Vs >=  theVsLimits[0] ) )
+                	return YES;
 
 return NO;
 }
@@ -158,17 +157,30 @@ double get_alpha(double vs, double phi) {
 }
 
 /*
- * Returns the value of the constant kay for in Drucker-Prager's material
+ * Returns the value of the constant kay in Drucker-Prager's material
  * model
  */
-double get_kay(double vs, double phi) {
+//double get_kay(double vs, double phi) {
+//
+//    double k, c;
+//
+//    c     = interpolate_property_value(vs, theAlphaCohes);
+//    k     = 6. * c * cos(phi) / ( sqrt(3.0) * ( 3. - sin(phi) ) );
+//
+//    return k;
+//}
 
-    double k, c;
+/*
+ * Returns the value of the constant gamma in Drucker-Prager's material
+ * model
+ */
+double get_gamma(double vs, double phi) {
 
-    c     = interpolate_property_value(vs, theAlphaCohes);
-    k     = 6. * c * cos(phi) / ( sqrt(3.0) * ( 3. - sin(phi) ) );
+    double gamma;
 
-    return k;
+    gamma     = 6. * cos(phi) / ( sqrt(3.0) * ( 3. - sin(phi) ) );
+
+    return gamma;
 }
 
 /*
@@ -210,6 +222,23 @@ double get_beta(double vs) {
 
 	return beta;
 }
+
+
+double get_cohesion(double vs) {
+
+	double  coh;
+	coh   = interpolate_property_value(vs, theAlphaCohes);
+	return coh;
+}
+
+double get_hardmod(double vs) {
+
+	double  hrd;
+	hrd   = interpolate_property_value(vs, theHardeningModulus);
+
+	return hrd;
+}
+
 
 double get_gamma_eff (double vs30, double zo)  {
 
@@ -273,7 +302,7 @@ void nonlinear_init( int32_t     myID,
                      double      theDeltaT,
                      double      theEndT )
 {
-    double  double_message[4];
+    double  double_message[2];
     int     int_message[5];
 
     /* Capturing data from file --- only done by PE0 */
@@ -287,11 +316,9 @@ void nonlinear_init( int32_t     myID,
     }
 
     /* Broadcasting data */
+    double_message[0] = theGeostaticLoadingT;
+    double_message[1] = theGeostaticCushionT;
 
-    double_message[0] = theNonLinVsCut;
-    double_message[1] = theGeostaticLoadingT;
-    double_message[2] = theGeostaticCushionT;
-    double_message[3] = theNonLinVsMin;
 
     int_message[0] = (int)theMaterialModel;
     int_message[1] = thePropertiesCount;
@@ -299,13 +326,11 @@ void nonlinear_init( int32_t     myID,
     int_message[3] = (int)thePlasticityModel;
     int_message[4] = (int)theApproxGeoState;
 
-    MPI_Bcast(double_message, 4, MPI_DOUBLE, 0, comm_solver);
+    MPI_Bcast(double_message, 2, MPI_DOUBLE, 0, comm_solver);
     MPI_Bcast(int_message,    5, MPI_INT,    0, comm_solver);
 
-    theNonLinVsCut        = double_message[0];
-    theGeostaticLoadingT  = double_message[1];
-    theGeostaticCushionT  = double_message[2];
-    theNonLinVsMin        = double_message[3];
+    theGeostaticLoadingT  = double_message[0];
+    theGeostaticCushionT  = double_message[1];
 
     theMaterialModel      = int_message[0];
     thePropertiesCount    = int_message[1];
@@ -345,7 +370,7 @@ int32_t nonlinear_initparameters ( const char *parametersin,
     FILE    *fp;
     int32_t  properties_count;
     int      row;
-    double   nonlin_vscut, nonlin_vsbott, geostatic_loading_t, geostatic_cushion_t,
+    double   geostatic_loading_t, geostatic_cushion_t,
             *auxiliar;
     char     material_model[64],
              plasticity_type[64], approx_geostatic_state[64];
@@ -362,9 +387,7 @@ int32_t nonlinear_initparameters ( const char *parametersin,
 
     /* Parses parameters.in to capture nonlinear single-value parameters */
 
-    if ( (parsetext(fp, "nonlinear_shear_velocity_cut", 'd', &nonlin_vscut           ) != 0) ||
-         (parsetext(fp, "nonlinear_shear_velocity_min", 'd', &nonlin_vsbott          ) != 0) ||
-         (parsetext(fp, "geostatic_loading_time_sec",   'd', &geostatic_loading_t    ) != 0) ||
+    if ( (parsetext(fp, "geostatic_loading_time_sec",   'd', &geostatic_loading_t    ) != 0) ||
          (parsetext(fp, "geostatic_cushion_time_sec",   'd', &geostatic_cushion_t    ) != 0) ||
          (parsetext(fp, "material_model",               's', &material_model         ) != 0) ||
          (parsetext(fp, "approximate_geostatic_state",  's', &approx_geostatic_state ) != 0) ||
@@ -376,18 +399,6 @@ int32_t nonlinear_initparameters ( const char *parametersin,
     }
 
     /* Performs sanity checks */
-
-    if (nonlin_vscut < 0) {
-        fprintf(stderr, "Illegal Vs cut value for nonlinear analysis %f\n", nonlin_vscut);
-        return -1;
-    }
-
-    if (nonlin_vsbott < 0) {
-        fprintf(stderr, "Illegal Vs min value for nonlinear analysis %f\n", nonlin_vsbott);
-        return -1;
-    }
-
-
     if ( (geostatic_loading_t < 0) || (geostatic_cushion_t < 0) ||
          (geostatic_loading_t + geostatic_cushion_t > theEndT) ) {
         fprintf(stderr, "Illegal geostatic loading/cushion time %f/%f\n",
@@ -399,6 +410,8 @@ int32_t nonlinear_initparameters ( const char *parametersin,
         materialmodel = LINEAR;
     } else if ( strcasecmp(material_model, "vonMises") == 0 ) {
         materialmodel = VONMISES;
+    }  else if ( strcasecmp(material_model, "MohrCoulomb") == 0 ) {
+        materialmodel = MOHR_COULOMB;
     } else if ( strcasecmp(material_model, "DruckerPrager") == 0 ) {
         materialmodel = DRUCKERPRAGER;
     }
@@ -408,6 +421,7 @@ int32_t nonlinear_initparameters ( const char *parametersin,
                 "(linear, vonMises, DruckerPrager): %s\n", material_model);
         return -1;
     }
+
 
 
     if (properties_count < 1) {
@@ -448,8 +462,6 @@ int32_t nonlinear_initparameters ( const char *parametersin,
 
 
     /* Initialize the static global variables */
-    theNonLinVsCut        = nonlin_vscut;
-    theNonLinVsMin        = nonlin_vsbott;
     theGeostaticLoadingT  = geostatic_loading_t;
     theGeostaticCushionT  = geostatic_cushion_t;
     theGeostaticFinalStep = (int)( (geostatic_loading_t + geostatic_cushion_t) / theDeltaT );
@@ -707,7 +719,6 @@ void nonlinear_stats(int32_t myID, int32_t theGroupSize) {
  */
 void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
 
-    int     i;
     int32_t eindex, nl_eindex;
 
     nonlinear_elements_count(myID, myMesh);
@@ -768,7 +779,7 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
         edata_t    *edata;
         nlconstants_t *ecp;
         double      mu, lambda;
-        double      elementVs, elementVp, S_zz, Ko, phi;
+        double      elementVs, elementVp;
 
         eindex = myNonlinElementsMapping[nl_eindex];
 
@@ -791,11 +802,10 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
         ecp->mu     = mu;
 
         /* Calculate the vertical stress as a homogeneous half-space */
-        ecp->sigma_z_st = edata->rho * 9.80 * ( zo + edata->edgesize / 2.0 );
-        S_zz            = ecp->sigma_z_st;
+        if ( theApproxGeoState == YES )
+        	ecp->sigmaZ_st = edata->rho * 9.80 * ( zo + edata->edgesize / 2.0 );
 
         /* Calculate the yield function constants */
-
         switch (theMaterialModel) {
 
             case LINEAR:
@@ -803,20 +813,44 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
                 ecp->k     = 0.;
                 ecp->phi   = 0.;
                 ecp->beta  = 0.;
+                ecp->h     = 0.;
                 break;
 
             case VONMISES:
+                ecp->c     = get_cohesion(elementVs);
+                ecp->phi   = get_phi(elementVs);
+                ecp->dil_angle = 0.0;
+
                 ecp->alpha = 0.;
                 ecp->beta  = 0.;
-                ecp->phi   = get_phi(elementVs);
-                ecp->k     = get_kay(elementVs, ecp->phi);
-                phi        = ecp->phi;
+                ecp->gamma = get_gamma(elementVs,ecp->phi);
+
+                ecp->k           = ecp->gamma * ecp->c;
+                ecp->h           = get_hardmod(elementVs);
                 break;
             case DRUCKERPRAGER:
-                ecp->phi   = get_phi(elementVs);
-                ecp->k     = get_kay(elementVs, ecp->phi);
+                ecp->c         = get_cohesion(elementVs);
+                ecp->phi       = get_phi(elementVs);
+                ecp->dil_angle = get_dilatancy(elementVs);
+
                 ecp->alpha = get_alpha(elementVs, ecp->phi);
                 ecp->beta  = get_beta(elementVs);
+                ecp->gamma = get_gamma(elementVs,ecp->phi);
+
+                ecp->k     = ecp->gamma * ecp->c;
+                ecp->h     = get_hardmod(elementVs);
+
+            	break;
+            case MOHR_COULOMB:
+                ecp->c     = get_cohesion(elementVs);
+                ecp->phi   = get_phi(elementVs);
+                ecp->dil_angle = get_dilatancy(elementVs);
+
+                ecp->alpha = 0.;
+                ecp->beta  = 0.;
+                ecp->gamma = 0.;
+
+                ecp->h = get_hardmod(elementVs);
             	break;
 
             default:
@@ -827,25 +861,21 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
                 break;
         }
 
-        for (i = 0; i < 8; i++) {
-            ecp->fs[i]     =  0.;
-            ecp->dLambda[i] = 0.;
-        }
 
         ecp->strainrate  =
         		interpolate_property_value(elementVs, theStrainRates  );
         ecp->sensitivity =
         		interpolate_property_value(elementVs, theSensitivities );
-        ecp->hardmodulus =
-        		interpolate_property_value(elementVs, theHardeningModulus );
+//        ecp->hardmodulus =
+//        		interpolate_property_value(elementVs, theHardeningModulus );
 
-        if ( theApproxGeoState == NO ) {
-            ecp->I1_st        =  -1.;
-            ecp->J2square_st  =   0.;
-        } else {
-            ecp->I1_st        = -S_zz * ( 3.0 - 2.0 * sin ( ecp->phi ) );
-            ecp->J2square_st  =  S_zz * S_zz * sin ( ecp->phi ) * sin ( ecp->phi ) / 3.0;
-        }
+//        if ( theApproxGeoState == NO ) {
+//            ecp->I1_st        =  -1.;
+//            ecp->J2square_st  =   0.;
+//        } else {
+//            ecp->I1_st        = -S_zz * ( 3.0 - 2.0 * sin ( ecp->phi ) );
+//            ecp->J2square_st  =  S_zz * S_zz * sin ( ecp->phi ) * sin ( ecp->phi ) / 3.0;
+//        }
 
 
     } /* for all elements */
@@ -1029,6 +1059,29 @@ tensor_t point_stress (tensor_t strain, double mu, double lambda) {
 }
 
 /*
+ * Computes the strain tensor given the stress tensor and the material properties.
+ */
+tensor_t elastic_strains (tensor_t stress, double mu, double kappa) {
+
+    double Skk, e_kk;
+    tensor_t strain, strain_dev;
+
+    Skk = tensor_I1(stress);
+    e_kk = Skk / ( 9.0 * kappa);
+
+    strain_dev =  tensor_deviator( stress, Skk / 3.0 );
+
+    strain.xx = 1./(2. * mu) * strain_dev.xx + e_kk;
+    strain.yy = 1./(2. * mu) * strain_dev.yy + e_kk;
+    strain.zz = 1./(2. * mu) * strain_dev.zz + e_kk;
+    strain.xy = 1./(2. * mu) * strain_dev.xy;
+    strain.xz = 1./(2. * mu) * strain_dev.xz;
+    strain.yz = 1./(2. * mu) * strain_dev.yz;
+
+    return strain;
+}
+
+/*
  * Computes the stress tensors for the quadrature points of an element given
  * the strain tensors.
  */
@@ -1058,6 +1111,60 @@ tensor_t subtrac_tensors(tensor_t A, tensor_t B) {
     C.xy = A.xy - B.xy;
     C.yz = A.yz - B.yz;
     C.xz = A.xz - B.xz;
+
+    return C;
+}
+
+/*
+ * Returns the summation of two tensors.
+ */
+tensor_t add_tensors(tensor_t A, tensor_t B) {
+
+    tensor_t C;
+
+    C.xx = A.xx + B.xx;
+    C.yy = A.yy + B.yy;
+    C.zz = A.zz + B.zz;
+    C.xy = A.xy + B.xy;
+    C.yz = A.yz + B.yz;
+    C.xz = A.xz + B.xz;
+
+    return C;
+}
+
+/*
+ * Returns the ZERO tensor.
+ */
+tensor_t zero_tensor() {
+
+    tensor_t C;
+
+    C.xx = 0.0;
+    C.yy = 0.0;
+    C.zz = 0.0;
+    C.xy = 0.0;
+    C.yz = 0.0;
+    C.xz = 0.0;
+
+    return C;
+}
+
+/*
+ * Returns the approximated self-weight tensor.
+ */
+tensor_t ApproxGravity_tensor(double Szz, double phi, double h, double lz, double rho) {
+
+	double Ko = 1 - sin(phi);
+	double Sigma = -( Szz + 9.8 * rho * h * lz);
+
+    tensor_t C;
+
+    C.xx = Ko * Sigma;
+    C.yy = Ko * Sigma;
+    C.zz = Sigma;
+    C.xy = 0.0;
+    C.yz = 0.0;
+    C.xz = 0.0;
 
     return C;
 }
@@ -1093,16 +1200,29 @@ tensor_t copy_tensor (tensor_t original) {
 }
 
 
-double compute_yield_surface_state ( double J2, double I1, double alpha, double I1_st, double J2_st ) {
+double compute_yield_surface_state ( double J2, double I1, double alpha, double s1, double s3, double phi ) {
 	double Yf=0.;
 
-	if ( theMaterialModel == VONMISES ) {
-		Yf = sqrt(J2 + J2_st);
+	if ( ( theMaterialModel == VONMISES ) || ( theMaterialModel == DRUCKERPRAGER ) ) {
+		Yf = alpha * I1 + sqrt( J2 );
 	} else {
-		Yf = alpha * ( I1 + I1_st ) + sqrt(J2 + J2_st);
+		Yf = s1 - s3 + ( s1 + s3 )*sin(phi);
 	}
 
 	return Yf;
+
+}
+
+double compute_hardening ( double gamma, double c, double h, double ep_bar, double phi ) {
+	double H=0.;
+
+	if ( ( theMaterialModel == VONMISES ) || ( theMaterialModel == DRUCKERPRAGER ) ) {
+		H = gamma * ( c + h * ep_bar);
+	} else {
+		H = 2.0 * ( c + h * ep_bar) * cos(phi);
+	}
+
+	return H;
 
 }
 
@@ -1123,7 +1243,7 @@ double compute_dLambdaII ( nlconstants_t constants, double fs, double eff_ps, do
 	/* Dorian: Rate independent plastic multiplier computation stage. */
 	/* This expression is exact for the Drucker-Prager material model with Linear hardening Rule */
 
-	s      = constants.hardmodulus;
+	s      = constants.h;
 	c      = constants.k;
 	mu     = constants.mu;
 	beta   = constants.beta;
@@ -1168,9 +1288,217 @@ double compute_dLambdaII ( nlconstants_t constants, double fs, double eff_ps, do
 }
 
 
+void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, double ep_barn, tensor_t sigma0, double dt,
+		tensor_t *epl, tensor_t *sigma, double *ep_bar, double *fs) {
+	/* INPUTS:
+	 * constants: Material constants
+	 * e_n      : Total strain tensor
+	 * ep       : Plastic strain tensor at t-1. Used to compute the predictor state
+	 * ep_barn  : equivalent plastic strain at t-1. Used to compute the predictor hardening function
+	 * sigma0   : Approximated self-weight tensor.
+	 * dt       : Time step
+	 *
+	 * OUTPUTS:
+	 * fs       : Updated yield function value
+	 * epl      : Updated plastic strain
+	 * sigma    : Updated stress tensor
+	 * ep_bar   : Updated equivalent hardening variable
+	 */
+
+	double phi_pt, c, h, kappa, mu, beta, alpha, gamma, phi, dil, Fs_pr, Lambda, dLambda=0.0,
+			Tol_sigma = 5e-10, cond1, cond2; /*  variables needed for the plastic strain update */
+
+	h      = constants.h;
+	c      = constants.c;
+
+	phi = constants.phi;
+	dil = constants.dil_angle;
+
+	mu     = constants.mu;
+	Lambda = constants.lambda;
+	kappa  = constants.lambda + 2.0 * mu / 3.0;
+
+	beta   = constants.beta;
+	alpha  = constants.alpha;
+	gamma  = constants.gamma;
+
+	phi_pt = gamma / (3.0*beta);
+
+	/* ---------      get the stress predictor tensor      ---------*/
+	tensor_t estrain     = subtrac_tensors ( e_n, ep );             /* strain predictor   */
+	tensor_t stresses    = point_stress ( estrain, mu, Lambda );    /* stress predictor   */
+	tensor_t sigma_trial = add_tensors(stresses,sigma0);            /* stress predictor TOTAL  */
+
+	/* compute the invariants of the stress predictor*/
+	double   I1_pr   = tensor_I1 ( sigma_trial );
+	double   oct_pr  = tensor_octahedral ( I1_pr );
+	tensor_t dev_pr  = tensor_deviator ( sigma_trial, oct_pr );
+	double   J2_pr   = tensor_J2 ( dev_pr );
+	tensor_t dfds_pr = compute_dfds ( dev_pr, J2_pr, beta );
+
+
+	if ( ( theMaterialModel == VONMISES ) || ( theMaterialModel == DRUCKERPRAGER ) ){
+
+		Fs_pr = compute_yield_surface_state ( J2_pr, I1_pr, alpha, 0, 0, 0) - compute_hardening(gamma,c,h,ep_barn,phi); /* Fs predictor */
+
+		if ( Fs_pr < 0.0 ) {
+			*epl    = copy_tensor(ep);
+			*sigma  = copy_tensor(stresses); /* return stresses without self-weight  */
+			*ep_bar = ep_barn;
+			*fs     = Fs_pr;
+			return;
+		}
+
+		dLambda = Fs_pr / ( mu + 9.0 * kappa * alpha * beta + h * gamma * gamma );
+
+		/* Updated plastic strains */
+		epl->xx = ep.xx +  dLambda * dfds_pr.xx;
+		epl->yy = ep.yy +  dLambda * dfds_pr.yy;
+		epl->zz = ep.zz +  dLambda * dfds_pr.zz;
+		epl->xy = ep.xy +  dLambda * dfds_pr.xy;
+		epl->yz = ep.yz +  dLambda * dfds_pr.yz;
+		epl->xz = ep.xz +  dLambda * dfds_pr.xz;
+
+		/* Updated stresses */
+		estrain     = subtrac_tensors ( e_n, *epl );
+		stresses    = point_stress ( estrain, mu, Lambda );
+		*sigma      = subtrac_tensors ( stresses, sigma0 );
+
+		/* updated invariants*/
+		double I1     = tensor_I1 ( stresses );
+		double oct    = tensor_octahedral ( I1 );
+		tensor_t dev  = tensor_deviator ( stresses, oct );
+		double J2     = tensor_J2 ( dev );
+
+		/* Updated equivalent plastic strain */
+		*ep_bar = ep_barn + dLambda * gamma;
+
+		/* Updated yield function value  */
+		*fs = compute_yield_surface_state ( J2, I1, alpha, 0, 0, 0);
+
+		/* check for apex zone in DP model */
+		if (  theMaterialModel == DRUCKERPRAGER  ){
+
+			double Imin = I1_pr - 9.0 * kappa * beta / mu * sqrt(J2_pr);
+			double Imax = I1_pr + sqrt(J2_pr)/alpha;
+
+			if ( (I1 < Imin) || (I1 > Imax) || (sqrt(J2_pr) - mu * dLambda < 0.0) ) { /*return to the apex  */
+
+				double dep_bar = (  compute_yield_surface_state ( 0.0, I1_pr, alpha, 0, 0, 0 ) - compute_hardening(gamma,c,h,ep_barn,phi) ) / ( 9.0 * kappa * alpha * beta / gamma + h * gamma );
+
+				/* Updated equivalent plastic strain */
+				*ep_bar = ep_barn + dep_bar;
+
+				double Skk = I1_pr - 9.0 * kappa * beta / gamma * dep_bar;
+
+				/* Updated stresses:
+				 * It must be isotropic at the apex*/
+				stresses.xx    = Skk/3.0;
+				stresses.yy    = Skk/3.0;
+				stresses.zz    = Skk/3.0;
+				stresses.xy    = 0.0;
+				stresses.xz    = 0.0;
+				stresses.yz    = 0.0;
+				*sigma      = subtrac_tensors ( stresses, sigma0 ); /* Sigma is still isotropic since sigma0 is isotropic */
+
+				double Skk_rlt = tensor_I1 ( *sigma );  /* Relative trace. */
+
+				/* Updated strains */
+				estrain.xx = Skk_rlt / (3.0 * kappa);
+				estrain.yy = Skk_rlt / (3.0 * kappa);
+				estrain.zz = Skk_rlt / (3.0 * kappa);
+				estrain.xy = 0.0;
+				estrain.xz = 0.0;
+				estrain.yz = 0.0;
+
+				*epl  = subtrac_tensors ( e_n, estrain );
+
+				*fs = alpha * Skk;
+			}
+		}
+
+	} else { /* Must be MohrCoulomb soil */
+
+		/* Spectral decomposition of the sigma_trial tensor*/
+		vect1_t n1, n2, n3, sigma_ppal_trial;
+		int edge;
+
+		specDecomp(stresses, &n1, &n2, &n3, &sigma_ppal_trial); /* eig_values.x > eig_values.y > eig_values.z   */
+
+		Fs_pr = compute_yield_surface_state ( 0.0, 0.0, 0.0, sigma_ppal_trial.x, sigma_ppal_trial.z, phi) - compute_hardening(gamma,c,h,ep_barn,phi); /* Fs predictor */
+
+		if ( Fs_pr < 0.0 ) {
+			*epl    = copy_tensor(ep);
+			*sigma  = copy_tensor(stresses); /* return stresses without self-weight  */
+			*ep_bar = ep_barn;
+			*fs     = Fs_pr;
+			return;
+		}
+
+		/* check for return to the main plane */
+		vect1_t sigma_ppal;
+		BOX85_l(ep_barn, sigma_ppal_trial, phi, dil, h, c, kappa, mu, &sigma_ppal, ep_bar);
+
+		/* Check validity of return to the main plan */
+		if ( ( sigma_ppal.x <= sigma_ppal.y ) && ( sigma_ppal.y <= sigma_ppal.z ) ) {
+
+			if ( ( 1. - sin(dil) ) * sigma_ppal_trial.x - 2. * sigma_ppal_trial.y + ( 1. + sin(dil) ) * sigma_ppal_trial.z > 0 )
+				edge = 1; /*return to the right edge*/
+			else
+				edge = -1; /*return to the left edge*/
+
+			BOX86_l    (ep_barn, sigma_ppal_trial, phi, dil, h, c, kappa, mu, edge, &sigma_ppal, ep_bar);
+
+			cond1 = sigma_ppal.x - sigma_ppal.y;
+			cond2 = sigma_ppal.y - sigma_ppal.z;
+
+			if ( (cond1 < 0.0 ) || ( abs(cond1) >= Tol_sigma) || (cond2 < 0.0) || (abs(cond2) >= Tol_sigma) ) { /* return to the apex */
+				double p_trial = tensor_I1(stresses)/3.0;
+				BOX87_l(ep_barn, p_trial, phi, dil, h, c, kappa, &sigma_ppal, ep_bar);
+			}
+		}
+
+		/* get updated stress tensor "sigma" */
+		tensor_t stressRecomp = specRecomp(sigma_ppal, n1, n2, n3);
+		*sigma  = subtrac_tensors(stressRecomp,sigma0);
+
+		estrain = elastic_strains (*sigma, mu, kappa);
+		*epl  = subtrac_tensors ( e_n, estrain );
+
+	}
 
 
 
+	//	if ( thePlasticityModel == RATE_DEPENDANT ) { /*TODO: Add implementation for rate dependant material model  */
+	//
+	//		/* Rate dependant material is considered as a Drucker-Prager material   */
+	//
+	//		double factor      = fs / constants.k;
+	//		double strainRate  = constants.strainrate;
+	//		double sensitivity = constants.sensitivity;
+	//		double oneOverM    = 1.0 / sensitivity;
+	//
+	//		dLambda =	strainRate * pow(factor, oneOverM);
+	//
+	//		epl->xx = ep.xx + dt * dLambda * dfds.xx;
+	//		epl->yy = ep.yy + dt * dLambda * dfds.yy;
+	//		epl->zz = ep.zz + dt * dLambda * dfds.zz;
+	//		epl->xy = ep.xy + dt * dLambda * dfds.xy;
+	//		epl->yz = ep.yz + dt * dLambda * dfds.yz;
+	//		epl->xz = ep.xz + dt * dLambda * dfds.xz;
+	//
+	//		estrain   = subtrac_tensors ( e_n, *epl );
+	//		*sigma    = point_stress ( estrain, constants.mu, constants.lambda );
+	//
+	//		*ep_bar   = ep_barn + gamma * dLambda;
+	//
+	//
+	//	}
+
+
+}
+
+/* computes the derivatives of the flow potential for a Drucker-Prager material */
 tensor_t compute_dfds (tensor_t dev, double J2, double beta) {
 
     tensor_t dfds;
@@ -1345,6 +1673,424 @@ void check_strain_stability ( double dLambda, double dt, mesh_t *myMesh,
 /* -------------------------------------------------------------------------- */
 /*                   Nonlinear core computational methods                     */
 /* -------------------------------------------------------------------------- */
+void BOX85_l(double ep_bar_n,vect1_t sigma_ppal_trial,double Phi, double Psi, double H, double c0, double K, double G, vect1_t *sigma_ppal, double *ep_bar_n1) {
+
+/* Return mapping algorithm copied from:
+   EA de Souza Neto, D Peric, D.O (2008). Computational methods for plasticity. Wiley */
+
+	double a, dGamma;
+
+	sigma_ppal->x = 0.0;
+	sigma_ppal->y = 0.0;
+	sigma_ppal->z = 0.0;
+
+	a = ( 4. * G * ( 1. + 1./3. * sin(Psi) * sin(Phi) ) + 4. * K * sin(Phi) * sin(Psi) );
+
+	dGamma = ( sigma_ppal_trial.x - sigma_ppal_trial.z + ( sigma_ppal_trial.x + sigma_ppal_trial.z ) * sin(Phi) - 2. * ( c0 + H * ep_bar_n ) * cos(Phi) ) /
+			 ( 4. * H * cos(Phi) * cos(Phi) +  a );
+
+	sigma_ppal->x = sigma_ppal_trial.x - ( 2. * G * ( 1. + 1./3. * sin(Psi) ) + 2. * K * sin(Psi) ) * dGamma;
+
+	sigma_ppal->y = sigma_ppal_trial.y + ( 4./3. * G - 2. * K ) * sin(Psi) * dGamma;
+
+	sigma_ppal->z = sigma_ppal_trial.z + ( 2. * G * ( 1. - 1./3. * sin(Psi) ) - 2. * K * sin(Psi) ) * dGamma;
+
+	*ep_bar_n1 = ep_bar_n + 2.0 * cos(Phi) * dGamma;
+
+}
+
+void BOX86_l(double ep_bar_n,vect1_t sigma_ppal_trial,double Phi, double Psi, double H, double c0, double K, double G, double id, vect1_t *sigma_ppal, double *ep_bar_n1) {
+
+	/* Return mapping algorithm copied from:
+	   EA de Souza Neto, D Peric, D.O (2008). Computational methods for plasticity. Wiley */
+
+	double aux, phi_a_bar, phi_b_bar, a, b, a11, b11, dGamma[2]={0}, sum_dGamma;
+
+	sigma_ppal->x = 0.0;
+	sigma_ppal->y = 0.0;
+	sigma_ppal->z = 0.0;
+
+    aux = 2. * cos(Phi) * ( c0 + H * ep_bar_n );
+
+    phi_a_bar = sigma_ppal_trial.x - sigma_ppal_trial.z + ( sigma_ppal_trial.x + sigma_ppal_trial.z ) * sin(Phi) - aux;
+
+    a = 4. * G * ( 1. + 1. / 3. * sin(Phi) * sin(Psi) ) + 4. * K * sin(Phi) * sin(Psi);
+
+    if ( id == 1 ) {
+        b = 2. * G * ( 1. + sin(Phi) + sin(Psi) - (1./3.) * sin(Phi) * sin(Psi) ) + 4. * K * sin(Phi) * sin(Psi);
+        phi_b_bar = sigma_ppal_trial.x - sigma_ppal_trial.y + ( sigma_ppal_trial.x + sigma_ppal_trial.y ) * sin(Phi) - aux;
+    } else {
+        b = 2. * G * ( 1. - sin(Phi) - sin(Psi) - (1./3.) * sin(Phi) * sin(Psi) ) + 4. * K * sin(Phi) * sin(Psi);
+        phi_b_bar = sigma_ppal_trial.y - sigma_ppal_trial.z + ( sigma_ppal_trial.y + sigma_ppal_trial.z ) * sin(Phi) - aux;
+    }
+
+    a11 = ( a + 4. * H * ( cos(Phi) * cos(Phi) ) );
+    b11 = ( b + 4. * H * ( cos(Phi) * cos(Phi) ) );
+
+    dGamma[0] = 1. / ( a11 * a11 - b11 * b11 ) * ( a11 * phi_a_bar - b11 * phi_b_bar );
+    dGamma[1] = 1. / ( a11 * a11 - b11 * b11 ) * ( a11 * phi_b_bar - b11 * phi_a_bar );
+    sum_dGamma    = dGamma[0] + dGamma[1];
+
+   *ep_bar_n1 = ep_bar_n + 2. * cos(Phi) * sum_dGamma;
+
+   if ( id == 1 ) {
+    sigma_ppal->x = sigma_ppal_trial.x - ( 2. * G * ( 1. + (1./3.) * sin(Psi) ) + 2. * K * sin(Psi) ) * (sum_dGamma);
+    sigma_ppal->y = sigma_ppal_trial.y + ( 4. * G / 3. - 2. * K ) * sin(Psi) * dGamma[0] + ( 2. * G * ( 1. - (1./3.) * sin(Psi) ) - 2.* K * sin(Psi) ) * dGamma[1];
+    sigma_ppal->z = sigma_ppal_trial.z + ( 2. * G * ( 1. - (1./3.) * sin(Psi) ) - 2. * K * sin(Psi) ) * dGamma[0] + ( ( 4. * G / 3. ) - 2. * K ) * sin(Psi) * dGamma[1];
+   } else {
+    sigma_ppal->x = sigma_ppal_trial.x - ( 2. * G * ( 1. + (1./3.) * sin(Psi) ) + 2. * K * sin(Psi) ) * dGamma[0] + ( ( 4. * G / 3.) - 2. * K ) * sin(Psi) * dGamma[1];
+    sigma_ppal->y = sigma_ppal_trial.y + ( 4. * G / 3. - 2. * K ) * sin(Psi) * dGamma[0] - ( 2. * G * ( 1. + (1./3.) * sin(Psi) ) + 2. * K * sin(Psi) ) * dGamma[1];
+    sigma_ppal->z = sigma_ppal_trial.z + ( 2. * G * ( 1.- (1./3.) * sin(Psi) ) - 2. * K * sin(Psi) ) * sum_dGamma;
+   }
+
+}
+
+void BOX87_l(double ep_bar_n,double p_trial,double Phi, double Psi, double H, double c0, double K, vect1_t *sigma_ppal, double *ep_bar_n1) {
+
+	/* Return mapping algorithm copied from:
+	   EA de Souza Neto, D Peric, D.O (2008). Computational methods for plasticity. Wiley */
+	double omega, dep_bar, cot_phi, p;
+
+	sigma_ppal->x = 0.0;
+	sigma_ppal->y = 0.0;
+	sigma_ppal->z = 0.0;
+
+	omega = sin(Psi)/cos(Phi);
+	cot_phi = cos(Phi) / sin (Phi);
+
+	dep_bar = ( p_trial - ( c0 + H * ep_bar_n ) * cot_phi ) / ( H * cot_phi + omega * K); /*Here we deviate from the original formulation in
+	                                                                                        order be able to use zero dilatancy  */
+	*ep_bar_n1 = ep_bar_n + dep_bar;
+	p = p_trial - K * omega * dep_bar;
+
+	sigma_ppal->x = p;
+	sigma_ppal->y = p;
+	sigma_ppal->z = p;
+
+}
+
+tensor_t specRecomp(vect1_t eig_val, vect1_t n1, vect1_t n2, vect1_t n3) {
+	tensor_t stress = zero_tensor();
+
+	/* from first eigen_vector */
+	stress.xx += eig_val.x * ( n1.x * n1.x);
+	stress.yy += eig_val.x * ( n1.y * n1.y);
+	stress.zz += eig_val.x * ( n1.z * n1.z);
+	stress.xy += eig_val.x * ( n1.x * n1.y);
+	stress.xz += eig_val.x * ( n1.x * n1.z);
+	stress.yz += eig_val.x * ( n1.y * n1.z);
+
+	/* from 2nd eigen_vector */
+	stress.xx += eig_val.y * ( n2.x * n2.x);
+	stress.yy += eig_val.y * ( n2.y * n2.y);
+	stress.zz += eig_val.y * ( n2.z * n2.z);
+	stress.xy += eig_val.y * ( n2.x * n2.y);
+	stress.xz += eig_val.y * ( n2.x * n2.z);
+	stress.yz += eig_val.y * ( n2.y * n2.z);
+
+	/* from 3rd eigen_vector */
+	stress.xx += eig_val.z * ( n3.x * n3.x);
+	stress.yy += eig_val.z * ( n3.y * n3.y);
+	stress.zz += eig_val.z * ( n3.z * n3.z);
+	stress.xy += eig_val.z * ( n3.x * n3.y);
+	stress.xz += eig_val.z * ( n3.x * n3.z);
+	stress.yz += eig_val.z * ( n3.y * n3.z);
+
+	return stress;
+
+}
+
+
+
+/*      Computes the spectral decomposition of a 3x3 symmetric matrix         */
+/* -------------------------------------------------------------------------- */
+/* Eigen decomposition code for symmetric 3x3 matrices, copied from the public
+ domain Java Matrix library JAMA. */
+// #define MAX(a, b) ((a)>(b)?(a):(b))
+
+double hypot2(double x, double y) {
+    return sqrt(x*x+y*y);
+}
+
+// Symmetric Householder reduction to tridiagonal form.
+
+void tred2(double V[3][3], double *d, double *e) {
+
+    int n=3;
+    //  This is derived from the Algol procedures tred2 by
+    //  Bowdler, Martin, Reinsch, and Wilkinson, Handbook for
+    //  Auto. Comp., Vol.ii-Linear Algebra, and the corresponding
+    //  Fortran subroutine in EISPACK.
+
+    for (int j = 0; j < n; j++) {
+        d[j] = V[n-1][j];
+    }
+
+    // Householder reduction to tridiagonal form.
+
+    for (int i = n-1; i > 0; i--) {
+
+        // Scale to avoid under/overflow.
+
+        double scale = 0.0;
+        double h = 0.0;
+        for (int k = 0; k < i; k++) {
+            scale = scale + fabs(d[k]);
+        }
+        if (scale == 0.0) {
+            e[i] = d[i-1];
+            for (int j = 0; j < i; j++) {
+                d[j] = V[i-1][j];
+                V[i][j] = 0.0;
+                V[j][i] = 0.0;
+            }
+        } else {
+
+            // Generate Householder vector.
+
+            for (int k = 0; k < i; k++) {
+                d[k] /= scale;
+                h += d[k] * d[k];
+            }
+            double f = d[i-1];
+            double g = sqrt(h);
+            if (f > 0) {
+                g = -g;
+            }
+            e[i] = scale * g;
+            h = h - f * g;
+            d[i-1] = f - g;
+            for (int j = 0; j < i; j++) {
+                e[j] = 0.0;
+            }
+
+            // Apply similarity transformation to remaining columns.
+
+            for (int j = 0; j < i; j++) {
+                f = d[j];
+                V[j][i] = f;
+                g = e[j] + V[j][j] * f;
+                for (int k = j+1; k <= i-1; k++) {
+                    g += V[k][j] * d[k];
+                    e[k] += V[k][j] * f;
+                }
+                e[j] = g;
+            }
+            f = 0.0;
+            for (int j = 0; j < i; j++) {
+                e[j] /= h;
+                f += e[j] * d[j];
+            }
+            double hh = f / (h + h);
+            for (int j = 0; j < i; j++) {
+                e[j] -= hh * d[j];
+            }
+            for (int j = 0; j < i; j++) {
+                f = d[j];
+                g = e[j];
+                for (int k = j; k <= i-1; k++) {
+                    V[k][j] -= (f * e[k] + g * d[k]);
+                }
+                d[j] = V[i-1][j];
+                V[i][j] = 0.0;
+            }
+        }
+        d[i] = h;
+    }
+
+    // Accumulate transformations.
+
+    for (int i = 0; i < n-1; i++) {
+        V[n-1][i] = V[i][i];
+        V[i][i] = 1.0;
+        double h = d[i+1];
+        if (h != 0.0) {
+            for (int k = 0; k <= i; k++) {
+                d[k] = V[k][i+1] / h;
+            }
+            for (int j = 0; j <= i; j++) {
+                double g = 0.0;
+                for (int k = 0; k <= i; k++) {
+                    g += V[k][i+1] * V[k][j];
+                }
+                for (int k = 0; k <= i; k++) {
+                    V[k][j] -= g * d[k];
+                }
+            }
+        }
+        for (int k = 0; k <= i; k++) {
+            V[k][i+1] = 0.0;
+        }
+    }
+    for (int j = 0; j < n; j++) {
+        d[j] = V[n-1][j];
+        V[n-1][j] = 0.0;
+    }
+    V[n-1][n-1] = 1.0;
+    e[0] = 0.0;
+
+}
+
+
+
+void tql2(double V[3][3], double* d, double* e) {
+
+    //  This is derived from the Algol procedures tql2, by
+    //  Bowdler, Martin, Reinsch, and Wilkinson, Handbook for
+    //  Auto. Comp., Vol.ii-Linear Algebra, and the corresponding
+    //  Fortran subroutine in EISPACK.
+    int n=3;
+
+
+    for (int i = 1; i < n; i++) {
+        e[i-1] = e[i];
+    }
+    e[n-1] = 0.0;
+
+    double f = 0.0;
+    double tst1 = 0.0;
+    double eps = pow(2.0,-52.0);
+    for (int l = 0; l < n; l++) {
+
+        // Find small subdiagonal element
+
+        tst1 = MAX(tst1,fabs(d[l]) + fabs(e[l]));
+        int m = l;
+        while (m < n) {
+            if (fabs(e[m]) <= eps*tst1) {
+                break;
+            }
+            m++;
+        }
+
+        // If m == l, d[l] is an eigenvalue,
+        // otherwise, iterate.
+
+        if (m > l) {
+            int iter = 0;
+            do {
+                iter = iter + 1;  // (Could check iteration count here.)
+
+                // Compute implicit shift
+
+                double g = d[l];
+                double p = (d[l+1] - g) / (2.0 * e[l]);
+                double r = hypot2(p,1.0);
+                if (p < 0) {
+                    r = -r;
+                }
+                d[l] = e[l] / (p + r);
+                d[l+1] = e[l] * (p + r);
+                double dl1 = d[l+1];
+                double h = g - d[l];
+                for (int i = l+2; i < n; i++) {
+                    d[i] -= h;
+                }
+                f = f + h;
+
+                // Implicit QL transformation.
+
+                p = d[m];
+                double c = 1.0;
+                double c2 = c;
+                double c3 = c;
+                double el1 = e[l+1];
+                double s = 0.0;
+                double s2 = 0.0;
+                for (int i = m-1; i >= l; i--) {
+                    c3 = c2;
+                    c2 = c;
+                    s2 = s;
+                    g = c * e[i];
+                    h = c * p;
+                    r = hypot2(p,e[i]);
+                    e[i+1] = s * r;
+                    s = e[i] / r;
+                    c = p / r;
+                    p = c * d[i] - s * g;
+                    d[i+1] = h + s * (c * g + s * d[i]);
+
+                    // Accumulate transformation.
+
+                    for (int k = 0; k < n; k++) {
+                        h = V[k][i+1];
+                        V[k][i+1] = s * V[k][i] + c * h;
+                        V[k][i] = c * V[k][i] - s * h;
+                    }
+                }
+                p = -s * s2 * c3 * el1 * e[l] / dl1;
+                e[l] = s * p;
+                d[l] = c * p;
+
+                // Check for convergence.
+
+            } while (fabs(e[l]) > eps*tst1);
+        }
+        d[l] = d[l] + f;
+        e[l] = 0.0;
+    }
+
+    // Sort eigenvalues and corresponding vectors.
+
+    for (int i = 0; i < n-1; i++) {
+        int k = i;
+        double p = d[i];
+        for (int j = i+1; j < n; j++) {
+            if (d[j] < p) {
+                k = j;
+                p = d[j];
+            }
+        }
+        if (k != i) {
+            d[k] = d[i];
+            d[i] = p;
+            for (int j = 0; j < n; j++) {
+                p = V[j][i];
+                V[j][i] = V[j][k];
+                V[j][k] = p;
+            }
+        }
+    }
+}
+
+
+void  specDecomp(tensor_t sigma, vect1_t *n1, vect1_t *n2, vect1_t *n3, vect1_t *eig_values){
+  double V[3][3], d[3], e[3];
+
+    V[0][0] = sigma.xx;
+    V[0][1] = sigma.xy;
+    V[0][2] = sigma.xz;
+    V[1][0] = sigma.xy;
+    V[1][1] = sigma.yy;
+    V[1][2] = sigma.yz;
+    V[2][0] = sigma.xz;
+    V[2][1] = sigma.yz;
+    V[2][2] = sigma.zz;
+
+    tred2(V, d, e);
+    tql2(V, d, e);
+
+    eig_values->x = d[2];
+    eig_values->y = d[1];
+    eig_values->z = d[0];
+
+    n3->x = V[0][0];
+    n3->y = V[1][0];
+    n3->z = V[2][0];
+
+    n2->x = V[0][1];
+    n2->y = V[1][1];
+    n2->z = V[2][1];
+
+    n1->x = V[0][2];
+    n1->y = V[1][2];
+    n1->z = V[2][2];
+
+}
+
+/* -------------------------------------------------------------------------- */
+/* -------------------------------------------------------------------------- */
+
 
 double smooth_rise_factor(int32_t step, double dt) {
 
@@ -1799,7 +2545,7 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
      * also some times used for the number of nodes (8, 0 to 7).
      */
 
-    int     i,j;
+    int     i;
     int32_t eindex, nl_eindex;
 
 
@@ -1839,9 +2585,8 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
         alpha  = enlcons->alpha;
         beta   = enlcons->beta;
         k      = enlcons->k;
-        hrd    = enlcons->hardmodulus;
-        I1_st  = enlcons->I1_st;
-        J2_st  = enlcons->J2square_st;
+        hrd    = enlcons->h;
+
 
         /* Capture the current state in the element */
         tstrains  = myNonlinSolver->strains   + nl_eindex;
@@ -1867,7 +2612,7 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
             double ly = xi[1][i] * qc ;
             double lz = xi[2][i] * qc ;
 
-            /* Calculate strains */
+            /* Calculate total strains */
             tstrains->qp[i] = point_strain(u, lx, ly, lz, h);
 
             /* Calculate stresses */
@@ -1875,19 +2620,32 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
                 stresses->qp[i]  = point_stress ( tstrains->qp[i], mu, lambda );
                 continue;
             } else {
-                pstrains1->qp[i] = copy_tensor ( pstrains2->qp[i] );     /* strain predictor: equal to the previous strain tens   */
+                pstrains1->qp[i] = copy_tensor ( pstrains2->qp[i] );     /* plastic strain predictor: equal to the previous plastic strain tensor   */
                 estrain          = subtrac_tensors ( tstrains->qp[i], pstrains1->qp[i] ); /* stress predictor   */
                 stresses->qp[i]  = point_stress ( estrain, mu, lambda );
                 ept              = epstr2->qv[i];
 
             }
 
-            /* Stress invariants */
+            tensor_t sigma0;
+            if ( theApproxGeoState == YES )
+            	sigma0 = ApproxGravity_tensor(enlcons->sigmaZ_st, enlcons->phi, h, lz, edata->rho);
+            else
+            	sigma0 = zero_tensor();
+
+            tensor_t    updated_stresses;
+            /* material_update ( *enlcons,  tstrains->qp[i], pstrains1->qp[i], epstr2->qv[i], sigma0, theDeltaT,
+            		&pstrains2->qp[i], &stresses->qp[i], &epstr2->qv[i], &Fs2); */
+
+            material_update ( *enlcons,  tstrains->qp[i], pstrains1->qp[i], epstr2->qv[i], sigma0, theDeltaT,
+            		&pstrains2->qp[i], &updated_stresses, &epstr2->qv[i], &Fs2);
+
+            /* Stress predictor invariants */
             I1  = tensor_I1 ( stresses->qp[i] );
             oct = tensor_octahedral ( I1 );
             dev = tensor_deviator ( stresses->qp[i], oct );
             J2  = tensor_J2 ( dev );
-            Fs  = compute_yield_surface_state ( J2, I1, alpha, I1_st, J2_st ); /* Fs predictor */
+            Fs  = compute_yield_surface_state ( J2, I1, alpha, 0.0, 0.0, 0.0 ); /* Fs predictor */
 
 
             enlcons->avgFs += Fs * 0.125; /* 1/8 = 0.125 is qp contribution */
@@ -1911,7 +2669,7 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
             		oct              = tensor_octahedral ( I1 );
             		dev              = tensor_deviator ( stresses->qp[i], oct );
             		J2               = tensor_J2 ( dev );
-            		Fs2              = compute_yield_surface_state ( J2, I1, alpha, I1_st, J2_st );  /* final Fs value, must be equal to the value from the hardening function */
+            		Fs2              = compute_yield_surface_state ( J2, I1, alpha, 0.0, 0.0, 0.0 );  /* final Fs value, must be equal to the value from the hardening function */
             	}
             }
 
@@ -2239,9 +2997,8 @@ void print_nonlinear_stations(mesh_t     *myMesh,
         alpha  = constants->alpha;
         beta   = constants->beta;
         k      = constants->k;
-        hrd    = constants->hardmodulus;
-        I1_st  = constants->I1_st;
-        J2_st  = constants->J2square_st;
+        hrd    = constants->h;
+
 
         /* Capture the current state in the station */
         tstrain  = &(myNonlinStations[iStation].strain);
@@ -2286,7 +3043,7 @@ void print_nonlinear_stations(mesh_t     *myMesh,
         dev = tensor_deviator ( *stress, oct );
         J2  = tensor_J2 ( dev );
 
-        Fs  = compute_yield_surface_state ( J2, I1, alpha, I1_st, J2_st );
+        Fs  = compute_yield_surface_state ( J2, I1, alpha, 0.0, 0.0, 0.0 );
 
 
         /* Do not compute plasticity for the linear case */
@@ -2307,7 +3064,7 @@ void print_nonlinear_stations(mesh_t     *myMesh,
                 		oct = tensor_octahedral ( I1 );
                 		dev = tensor_deviator ( *stress, oct );
                 		J2  = tensor_J2 ( dev );
-                		Fs  = compute_yield_surface_state ( J2, I1, alpha, I1_st, J2_st );  /* final Fs value, must be equal to the value from the hardening function */
+                		Fs  = compute_yield_surface_state ( J2, I1, alpha, 0.0, 0.0, 0.0 );  /* final Fs value, must be equal to the value from the hardening function */
                 	}
 
                 }

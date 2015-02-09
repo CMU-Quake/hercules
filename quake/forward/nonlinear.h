@@ -88,23 +88,26 @@ typedef struct qptensors_t {
 
 typedef struct nlconstants_t {
 
-
     double lambda;
     double mu;
-    double alpha;      /* yield function constants */
-    double beta;      /*  plastic potential constant */
+
+    double alpha;        /*  yield function constants in Drucker-Prager model*/
+    double beta;         /*  constant of the plastic potential flow law */
+    double gamma;        /*  hardening function multiplier in Drucker-Prager model */
+
+    double c;           /* soil cohesion */
+    double phi;         /* angle of internal friction */
+    double dil_angle;   /* angle of dilatancy */
+
     double k;
-    double fs[8];      /* F(sigma) */
-    double dLambda[8]; /* yield control */
+    double h;  /* variable used for the hardening function definition. In Drucker-Prager or Vonmises H = gamma(c + h*ep)  */
+                         /*                                            In MohrCoulomb                H =     2(c + h*ep)cos(phi)  */
+    double fs[8];        /* F(sigma) */
+    double dLambda[8];   /* yield control */
     double strainrate;
     double sensitivity;
-    double hardmodulus; /* the effective yield stress is defined as : ( k + hardmodulus*ep ) */
-    qvect_t u_static;
-    double  phi;         /* angle of internal friction */
-    double  dil_angle;   /* angle of internal friction */
-    double sigma_z_st;   /* static vertical stress */
-    double I1_st;        /* static first invariant    */
-    double J2square_st;  /* static second invariant */
+
+    double sigmaZ_st;   /* static vertical stress */
 
     double maxFs;
     double avgFs;
@@ -152,11 +155,18 @@ double get_geostatic_total_time();
 int isThisElementNonLinear(mesh_t *myMesh, int32_t eindex);
 
 double interpolate_property_value(double vsRequest, double *propVector);
-double get_alpha(double vs, double phi);
-double get_kay(double vs, double phi);
+
+double get_cohesion(double vs);
 double get_phi(double vs);
-double get_beta(double vs);
 double get_dilatancy(double vs);
+
+double get_alpha(double vs, double phi);
+double get_beta(double vs);
+double get_gamma(double vs, double phi);
+
+double get_hardmod(double vs);
+
+
 double interp_phi (double vsvp, double li, double lf, double phi_i, double phi_f);
 double get_gamma_eff (double vs30, double zo);
 
@@ -206,18 +216,29 @@ void     init_tensorptr  ( tensor_t *tensor );
 tensor_t point_strain    ( fvector_t *u, double lx, double ly, double lz,
                            double h);
 tensor_t point_stress    ( tensor_t strain, double mu, double lambda);
+tensor_t elastic_strains (tensor_t stress, double mu, double kappa);
+
 tensor_t subtrac_tensors ( tensor_t A, tensor_t B);
 tensor_t copy_tensor     ( tensor_t original);
+tensor_t add_tensors     (tensor_t A, tensor_t B);
+tensor_t zero_tensor     ();
 
 qptensors_t compute_qp_stresses ( qptensors_t strains, double mu, double lambda);
 qptensors_t subtrac_qptensors   ( qptensors_t A, qptensors_t B);
 
-double   compute_yield_surface_state ( double J2, double I1, double alpha, double I1_st, double J2_st );
+double   compute_yield_surface_state ( double J2, double I1, double alpha, double s1, double s3, double phi );
+double   compute_hardening           ( double gamma, double c, double h, double ep_bar, double phi );
+
 double   compute_dLambdaII           ( nlconstants_t constants, double fs, double eff_ps, double J2, double I1, double J2_st, double I1_st, double *po);
 tensor_t compute_dfds                ( tensor_t dev, double J2, double beta);
 tensor_t compute_pstrain2            ( nlconstants_t constants, tensor_t pstrain1, tensor_t tstrain,
 							           tensor_t dfds, double dLambda, double dt, double J2, double I1,
 							           double J2_st, double I1_st, double po );
+
+void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, double ep_barn, tensor_t sigma0, double dt,
+		               tensor_t *epl, tensor_t *sigma, double *ep_bar, double *fs);
+
+tensor_t ApproxGravity_tensor(double Szz, double phi, double h, double lz, double rho);
 
 
 int get_displacements ( mysolver_t *solver, elem_t *elemp, fvector_t *u );
@@ -236,6 +257,15 @@ void check_nan_displ        (mesh_t *myMesh, int32_t eindex, fvector_t *u, qpten
 /* -------------------------------------------------------------------------- */
 /*                   Nonlinear core computational methods                     */
 /* -------------------------------------------------------------------------- */
+
+void     specDecomp(tensor_t sigma, vect1_t *n1, vect1_t *n2, vect1_t *n3, vect1_t *eig_values);
+void     tql2(double V[3][3], double* d, double* e);
+void     tred2(double V[3][3], double *d, double *e);
+void     BOX85_l(double ep_bar_n,vect1_t sigma_ppal_trial,double Phi, double Psi, double H, double c0, double K, double G, vect1_t *sigma_ppal, double *ep_bar_n1);
+void     BOX86_l(double ep_bar_n,vect1_t sigma_ppal_trial,double Phi, double Psi, double H, double c0, double K, double G, double id, vect1_t *sigma_ppal, double *ep_bar_n1);
+void     BOX87_l(double ep_bar_n,double p_trial,double Phi, double Psi, double H, double c0, double K, vect1_t *sigma_ppal, double *ep_bar_n1);
+tensor_t specRecomp(vect1_t eig_val, vect1_t n1, vect1_t n2, vect1_t n3);
+
 
 void compute_addforce_gravity( mesh_t     *myMesh,
                                mysolver_t *mySolver,
