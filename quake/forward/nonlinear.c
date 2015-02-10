@@ -1439,7 +1439,7 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 		vect1_t sigma_ppal;
 		BOX85_l(ep_barn, sigma_ppal_trial, phi, dil, h, c, kappa, mu, &sigma_ppal, ep_bar);
 
-		/* Check validity of return to the main plan */
+		/* Check assumption of returning to the main plan */
 		if ( ( sigma_ppal.x <= sigma_ppal.y ) && ( sigma_ppal.y <= sigma_ppal.z ) ) {
 
 			if ( ( 1. - sin(dil) ) * sigma_ppal_trial.x - 2. * sigma_ppal_trial.y + ( 1. + sin(dil) ) * sigma_ppal_trial.z > 0 )
@@ -2539,149 +2539,99 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
                                double      theDeltaT,
                                int         step )
 {
-    /* In general, j-index refers to the quadrature point in a loop (0 to 7 for
-     * eight points), and i-index refers to the tensor component (0 to 5), with
-     * the following order xx[0], yy[1], zz[2], xy[3], yz[4], xz[5]. i-index is
-     * also some times used for the number of nodes (8, 0 to 7).
-     */
+	/* In general, j-index refers to the quadrature point in a loop (0 to 7 for
+	 * eight points), and i-index refers to the tensor component (0 to 5), with
+	 * the following order xx[0], yy[1], zz[2], xy[3], yz[4], xz[5]. i-index is
+	 * also some times used for the number of nodes (8, 0 to 7).
+	 */
 
-    int     i;
-    int32_t eindex, nl_eindex;
-
-
-    /* Loop over the number of local elements */
-    for (nl_eindex = 0; nl_eindex < myNonlinElementsCount; nl_eindex++) {
-
-        elem_t        *elemp;
-        edata_t       *edata;
-        nlconstants_t *enlcons;
-
-        double         h;          /* Element edge-size in meters   */
-        double         alpha, k;   /* Drucker-Prager constants      */
-        double         mu, lambda; /* Elasticity material constants */
-        double		   hrd;        /* Hardening Modulus  */
-        double         beta;       /* Plastic flow rule constant */
-        double         XI, QC;
-        double         Fs = 0., I1 = 0., oct = 0., J2 = 0., Fs2 = 0., ept = 0.;
-        double         I1_st = 0, J2_st = 0;
-        fvector_t      u[8];
-        qptensors_t   *stresses, *tstrains, *pstrains1, *pstrains2;
-        qpvectors_t   *epstr1, *epstr2;
-
-        /* Capture data from the element and mesh */
-
-        eindex = myNonlinElementsMapping[nl_eindex];
-
-        elemp = &myMesh->elemTable[eindex];
-        edata = (edata_t *)elemp->data;
-        h     = edata->edgesize;
-
-        /* Capture data from the nonlinear element structure */
-
-        enlcons = myNonlinSolver->constants + nl_eindex;
-
-        mu     = enlcons->mu;
-        lambda = enlcons->lambda;
-        alpha  = enlcons->alpha;
-        beta   = enlcons->beta;
-        k      = enlcons->k;
-        hrd    = enlcons->h;
+	int     i;
+	int32_t eindex, nl_eindex;
 
 
-        /* Capture the current state in the element */
-        tstrains  = myNonlinSolver->strains   + nl_eindex;
-        stresses  = myNonlinSolver->stresses  + nl_eindex;
-        pstrains1 = myNonlinSolver->pstrains1 + nl_eindex;
-        pstrains2 = myNonlinSolver->pstrains2 + nl_eindex;
-        epstr1    = myNonlinSolver->ep1       + nl_eindex;
-        epstr2    = myNonlinSolver->ep2       + nl_eindex;
+	/* Loop over the number of local elements */
+	for (nl_eindex = 0; nl_eindex < myNonlinElementsCount; nl_eindex++) {
 
-        /* Capture displacements */
-        if ( get_displacements(mySolver, elemp, u) == 0 ) {
-            /* If all displacements are zero go for next element */
-            continue;
-        }
+		elem_t        *elemp;
+		edata_t       *edata;
+		nlconstants_t *enlcons;
 
-        /* Loop over the quadrature points */
-        for (i = 0; i < 8; i++) {
+		double         h;          /* Element edge-size in meters   */
+		double         alpha, k;   /* Drucker-Prager constants      */
+		double         mu, lambda; /* Elasticity material constants */
+		double		   hrd;        /* Hardening Modulus  */
+		double         beta;       /* Plastic flow rule constant */
+		double         XI, QC;
+		double         Fs = 0.;
+		fvector_t      u[8];
+		qptensors_t   *stresses, *tstrains, *pstrains1, *pstrains2;
+		qpvectors_t   *epstr1, *epstr2;
 
-            tensor_t    estrain, dev;
+		/* Capture data from the element and mesh */
 
-            /* Quadrature point local coordinates */
-            double lx = xi[0][i] * qc ;
-            double ly = xi[1][i] * qc ;
-            double lz = xi[2][i] * qc ;
+		eindex = myNonlinElementsMapping[nl_eindex];
 
-            /* Calculate total strains */
-            tstrains->qp[i] = point_strain(u, lx, ly, lz, h);
+		elemp = &myMesh->elemTable[eindex];
+		edata = (edata_t *)elemp->data;
+		h     = edata->edgesize;
 
-            /* Calculate stresses */
-            if ( ( theMaterialModel == LINEAR ) || ( step <= theGeostaticFinalStep ) ){
-                stresses->qp[i]  = point_stress ( tstrains->qp[i], mu, lambda );
-                continue;
-            } else {
-                pstrains1->qp[i] = copy_tensor ( pstrains2->qp[i] );     /* plastic strain predictor: equal to the previous plastic strain tensor   */
-                estrain          = subtrac_tensors ( tstrains->qp[i], pstrains1->qp[i] ); /* stress predictor   */
-                stresses->qp[i]  = point_stress ( estrain, mu, lambda );
-                ept              = epstr2->qv[i];
+		/* Capture data from the nonlinear element structure */
 
-            }
+		enlcons = myNonlinSolver->constants + nl_eindex;
 
-            tensor_t sigma0;
-            if ( theApproxGeoState == YES )
-            	sigma0 = ApproxGravity_tensor(enlcons->sigmaZ_st, enlcons->phi, h, lz, edata->rho);
-            else
-            	sigma0 = zero_tensor();
-
-            tensor_t    updated_stresses;
-            /* material_update ( *enlcons,  tstrains->qp[i], pstrains1->qp[i], epstr2->qv[i], sigma0, theDeltaT,
-            		&pstrains2->qp[i], &stresses->qp[i], &epstr2->qv[i], &Fs2); */
-
-            material_update ( *enlcons,  tstrains->qp[i], pstrains1->qp[i], epstr2->qv[i], sigma0, theDeltaT,
-            		&pstrains2->qp[i], &updated_stresses, &epstr2->qv[i], &Fs2);
-
-            /* Stress predictor invariants */
-            I1  = tensor_I1 ( stresses->qp[i] );
-            oct = tensor_octahedral ( I1 );
-            dev = tensor_deviator ( stresses->qp[i], oct );
-            J2  = tensor_J2 ( dev );
-            Fs  = compute_yield_surface_state ( J2, I1, alpha, 0.0, 0.0, 0.0 ); /* Fs predictor */
+		mu     = enlcons->mu;
+		lambda = enlcons->lambda;
+		alpha  = enlcons->alpha;
+		beta   = enlcons->beta;
+		k      = enlcons->k;
+		hrd    = enlcons->h;
 
 
-            enlcons->avgFs += Fs * 0.125; /* 1/8 = 0.125 is qp contribution */
-            if ( Fs > enlcons->maxFs ) {
-                enlcons->maxFs = Fs;
-            }
+		/* Capture the current state in the element */
+		tstrains  = myNonlinSolver->strains   + nl_eindex;
+		stresses  = myNonlinSolver->stresses  + nl_eindex;
+		pstrains1 = myNonlinSolver->pstrains1 + nl_eindex;
+		pstrains2 = myNonlinSolver->pstrains2 + nl_eindex;
+		epstr1    = myNonlinSolver->ep1       + nl_eindex;
+		epstr2    = myNonlinSolver->ep2       + nl_eindex;
 
-            /* Next plastic strain correction */
-            double po = 0.;    /* Controls the response at the Apex zone  */
-            enlcons->dLambda[i] = compute_dLambdaII ( *enlcons, Fs, ept, J2, I1, J2_st, I1_st, &po);
-            tensor_t dfds       = compute_dfds ( dev, J2 + J2_st, beta );
-            pstrains2->qp[i]    = compute_pstrain2 ( *enlcons, pstrains1->qp[i], tstrains->qp[i], dfds, enlcons->dLambda[i], theDeltaT, J2, I1, J2_st, I1_st, po ); /* real plastic strain */
-        	epstr2->qv[i]       = ept + enlcons->dLambda[i] * sqrt ( 1/2. + 3.0 * beta * beta);
+		/* Capture displacements */
+		if ( get_displacements(mySolver, elemp, u) == 0 ) {
+			/* If all displacements are zero go for next element */
+			continue;
+		}
 
+		/* Loop over the quadrature points */
+		for (i = 0; i < 8; i++) {
 
-            if ( thePlasticityModel != RATE_DEPENDANT ) {
-            	if ( enlcons->dLambda[i] != 0 ){
-            		estrain          = subtrac_tensors ( tstrains->qp[i], pstrains2->qp[i] );
-            		stresses->qp[i]  = point_stress ( estrain, mu, lambda ); /* real stress tensor */
-            		I1               = tensor_I1 ( stresses->qp[i] );
-            		oct              = tensor_octahedral ( I1 );
-            		dev              = tensor_deviator ( stresses->qp[i], oct );
-            		J2               = tensor_J2 ( dev );
-            		Fs2              = compute_yield_surface_state ( J2, I1, alpha, 0.0, 0.0, 0.0 );  /* final Fs value, must be equal to the value from the hardening function */
-            	}
-            }
+			tensor_t  sigma0;
 
-            /* Storing and checking */
-            if ( thePlasticityModel == RATE_DEPENDANT ) {
-            	enlcons->fs[i] = Fs;
-            	check_yield_limit ( myMesh, eindex, edata->Vs, Fs, k, i);
-            }
+			/* Quadrature point local coordinates */
+			double lx = xi[0][i] * qc ;
+			double ly = xi[1][i] * qc ;
+			double lz = xi[2][i] * qc ;
 
-        } /* for all quadrature points */
+			/* Calculate total strains */
+			tstrains->qp[i] = point_strain(u, lx, ly, lz, h);
 
-    } /* for all nonlinear elements */
+			/* Calculate stresses */
+			if ( ( theMaterialModel == LINEAR ) || ( step <= theGeostaticFinalStep ) ){
+				stresses->qp[i]  = point_stress ( tstrains->qp[i], mu, lambda );
+				continue;
+			} else {
+
+				if ( theApproxGeoState == YES )
+					sigma0 = ApproxGravity_tensor(enlcons->sigmaZ_st, enlcons->phi, h, lz, edata->rho);
+				else
+					sigma0 = zero_tensor();
+
+				material_update ( *enlcons,  tstrains->qp[i], pstrains1->qp[i], epstr1->qv[i], sigma0, theDeltaT,
+						&pstrains2->qp[i], &stresses->qp[i], &epstr2->qv[i], &Fs);
+			}
+
+		} /* for all quadrature points */
+
+	} /* for all nonlinear elements */
 
 }
 
@@ -2967,138 +2917,43 @@ void print_nonlinear_stations(mesh_t     *myMesh,
     int32_t mappingIndex;
 
     for ( iStation = 0; iStation < myNumberOfNonlinStations; iStation++ ) {
+    	tensor_t       *stress, *tstrain;
+    	qptensors_t    *stressF, *tstrainF;
+    	double         bStrain = 0., bStress = 0.;
 
-        vector3D_t     localcoords;
-        tensor_t      *stress, *tstrain, *pstrain1, *pstrain2, estrain, dev;
-        elem_t        *elemp;
-        edata_t       *edata;
-        nlconstants_t *constants;
-        fvector_t      u[8];
-        double         alpha = 0., beta = 0., lambda = 0., dLambda = 0.,
-        		       mu, k = 0., hrd = 0.,  Fs = 0. , J2 = 0., I1 = 0,
-        		       h, oct = 0.;
-        double         bStrain = 0., bStress = 0., *ept, ep=0.;
-        double         lx, ly, lz;
-        double         I1_st = 0., J2_st = 0., po = 0.;
+    	nl_eindex    = myStationsElementIndices[iStation];
+    	eindex       = myNonlinElementsMapping[nl_eindex];
+    	mappingIndex = myNonlinStationsMapping[iStation];
 
-        nl_eindex    = myStationsElementIndices[iStation];
-        eindex       = myNonlinElementsMapping[nl_eindex];
-        mappingIndex = myNonlinStationsMapping[iStation];
+    	/* Capture data from the nonlinear element structure
+    	 * of the first Gauss point*/
+    	tstrainF   = myNonlinSolver->strains   + nl_eindex;
+    	stressF    = myNonlinSolver->stresses  + nl_eindex;
+    	stress     = &(stressF->qp[0]);
+    	tstrain    = &(tstrainF->qp[0]);
 
-        elemp = &myMesh->elemTable[eindex];
-        edata = (edata_t *)elemp->data;
-        h     = edata->edgesize;
+    	bStrain = tstrain->xx + tstrain->yy + tstrain->zz;
+    	bStress = stress->xx + stress->yy + stress->zz;
 
-        /* Capture data from the nonlinear element structure */
-        constants = myNonlinSolver->constants + nl_eindex;
+    	if (step % rate == 0) {
+    		fprintf( myStations[mappingIndex].fpoutputfile,
 
-        mu     = constants->mu;
-        lambda = constants->lambda;
-        alpha  = constants->alpha;
-        beta   = constants->beta;
-        k      = constants->k;
-        hrd    = constants->h;
+    				" % 8e % 8e"
+    				" % 8e % 8e"
+    				" % 8e % 8e"
+    				" % 8e % 8e"
+    				" % 8e % 8e"
+    				" % 8e % 8e"
+    				" % 8e % 8e",
 
-
-        /* Capture the current state in the station */
-        tstrain  = &(myNonlinStations[iStation].strain);
-        stress   = &(myNonlinStations[iStation].stress);
-        pstrain1 = &(myNonlinStations[iStation].pstrain1);
-        pstrain2 = &(myNonlinStations[iStation].pstrain2);
-        ept      = &(myNonlinStations[iStation].ep);
-        ep       = *ept;
-
-        /* Capture displacements */
-        if ( get_displacements(mySolver, elemp, u) == 0 ) {
-            /* If all displacements are zero go directly to printing */
-            goto NLPRINT;
-        }
-
-        /* Capture local coordinates */
-        localcoords = myStations[mappingIndex].localcoords;
-
-        localcoords.x[0] = -1/sqrt(3.);
-        localcoords.x[1] = -1/sqrt(3.);
-        localcoords.x[2] = -1/sqrt(3.);
-
-        lx = localcoords.x[0];
-        ly = localcoords.x[1];
-        lz = localcoords.x[2];
-
-        /* Calculate strains */
-        *tstrain = point_strain(u, lx, ly, lz, h);
-
-        /* Calculate stresses */
-        if ( ( theMaterialModel == LINEAR ) || ( step <= theGeostaticFinalStep ) ) {
-            *stress = point_stress ( *tstrain, mu, lambda);
-        } else {
-            *pstrain1 = copy_tensor ( *pstrain2 );
-            estrain   = subtrac_tensors ( *tstrain, *pstrain1 );
-            *stress   = point_stress ( estrain, mu, lambda );
-        }
-
-        /* Stress invariants */
-        I1  = tensor_I1 ( *stress );
-        oct = tensor_octahedral ( I1 );
-        dev = tensor_deviator ( *stress, oct );
-        J2  = tensor_J2 ( dev );
-
-        Fs  = compute_yield_surface_state ( J2, I1, alpha, 0.0, 0.0, 0.0 );
-
-
-        /* Do not compute plasticity for the linear case */
-        if ( theMaterialModel != LINEAR ) {
-                /* Next plastic strain correction */
-                dLambda       = compute_dLambdaII ( *constants, Fs, *ept, J2, I1, J2_st, I1_st, &po);
-                tensor_t dfds = compute_dfds ( dev, J2 + J2_st, beta );
-                *pstrain2     = compute_pstrain2 ( *constants, *pstrain1, *tstrain, dfds, dLambda, dt, J2, I1, J2_st, I1_st, po );
-                *ept          = ep +  dLambda * sqrt (1/2. + 3.0 * beta * beta );
-
-
-                if ( thePlasticityModel != RATE_DEPENDANT ) {
-                	if ( dLambda != 0) {
-
-                		estrain   = subtrac_tensors ( *tstrain, *pstrain2 );
-                		*stress   = point_stress ( estrain, mu, lambda );
-                		I1  = tensor_I1 ( *stress );
-                		oct = tensor_octahedral ( I1 );
-                		dev = tensor_deviator ( *stress, oct );
-                		J2  = tensor_J2 ( dev );
-                		Fs  = compute_yield_surface_state ( J2, I1, alpha, 0.0, 0.0, 0.0 );  /* final Fs value, must be equal to the value from the hardening function */
-                	}
-
-                }
-
-//            }
-        }
-
-        bStrain = tstrain->xx + tstrain->yy + tstrain->zz;
-        bStress = stress->xx + stress->yy + stress->zz;
-
-NLPRINT:
-        if (step % rate == 0) {
-            fprintf( myStations[mappingIndex].fpoutputfile,
-
-                    " % 8e % 8e"
-                    " % 8e % 8e"
-                    " % 8e % 8e"
-                    " % 8e % 8e"
-                    " % 8e % 8e"
-                    " % 8e % 8e"
-                    " % 8e % 8e"
-                    " % 8e % 8e % 8e"
-            		 " % 8e % 8e % 8e",
-
-                    tstrain->xx, stress->xx, // 11 12
-                    tstrain->yy, stress->yy, // 13 14
-                    tstrain->zz, stress->zz, // 15 16
-                    bStrain,     bStress,    // 17 18
-                    tstrain->xy, stress->xy, // 19 20
-                    tstrain->yz, stress->yz, // 21 22
-                    tstrain->xz, stress->xz, // 23 24
-                    dLambda, Fs, k + hrd * (*ept), // 25 26 27
-                    I1+I1_st,J2+J2_st, po );               //  28 29
-        }
+    				tstrain->xx, stress->xx, // 11 12
+    				tstrain->yy, stress->yy, // 13 14
+    				tstrain->zz, stress->zz, // 15 16
+    				bStrain,     bStress,    // 17 18
+    				tstrain->xy, stress->xy, // 19 20
+    				tstrain->yz, stress->yz, // 21 22
+    				tstrain->xz, stress->xz); // 23 24
+    	}
     } /* for all my stations */
 
 }
