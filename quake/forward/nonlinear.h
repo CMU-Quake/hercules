@@ -124,10 +124,9 @@ typedef struct nlsolver_t {
     qpvectors_t   *ep1;         /* effective plastic strains */
     qpvectors_t   *ep2;
 
-
 } nlsolver_t;
 
-typedef struct nlstation_t {
+/*typedef struct nlstation_t {
 
     tensor_t stress;
     tensor_t strain;
@@ -135,7 +134,7 @@ typedef struct nlstation_t {
     tensor_t pstrain2;
     double   ep;
 
-} nlstation_t;
+} nlstation_t;*/
 
 typedef struct bottomelement_t {
 

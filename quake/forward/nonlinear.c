@@ -59,7 +59,7 @@ static double                theGeostaticLoadingT = 0;
 static double                theGeostaticCushionT = 0;
 static int                   theGeostaticFinalStep;
 static int32_t              *myStationsElementIndices;
-static nlstation_t          *myNonlinStations;
+//static nlstation_t          *myNonlinStations;
 static int32_t              *myNonlinStationsMapping;
 static int32_t               myNumberOfNonlinStations;
 static int32_t               myNonlinElementsCount;
@@ -1227,9 +1227,10 @@ double compute_hardening ( double gamma, double c, double h, double ep_bar, doub
 }
 
 
+/*
 double compute_dLambdaII ( nlconstants_t constants, double fs, double eff_ps, double J2, double I1, double J2_st, double I1_st, double *po) {
 
-	double phi_pt, s, c, kappa, mu, beta, alpha, tanpsi_min, tanpsi, FsT, delta=0; /*  variables needed for the plastic strain update*/
+	double phi_pt, s, c, kappa, mu, beta, alpha, tanpsi_min, tanpsi, FsT, delta=0;   variables needed for the plastic strain update
 
 	if ( thePlasticityModel == RATE_DEPENDANT ) {
 		double factor      = fs / constants.k;
@@ -1240,8 +1241,8 @@ double compute_dLambdaII ( nlconstants_t constants, double fs, double eff_ps, do
 		return strainRate * pow(factor, oneOverM);
 	}
 
-	/* Dorian: Rate independent plastic multiplier computation stage. */
-	/* This expression is exact for the Drucker-Prager material model with Linear hardening Rule */
+	 Dorian: Rate independent plastic multiplier computation stage.
+	 This expression is exact for the Drucker-Prager material model with Linear hardening Rule
 
 	s      = constants.h;
 	c      = constants.k;
@@ -1274,9 +1275,9 @@ double compute_dLambdaII ( nlconstants_t constants, double fs, double eff_ps, do
 		*po   = ( ( I1 + I1_st ) - 9.0 * kappa * beta * delta ) / 3.0;
 
 
-		/*Sanity Check  */
+		Sanity Check
 		if ( ( *po < 0.0 ) )  {
-		/* this should not happen */
+		 this should not happen
             fprintf(stderr, "Thread po = %8e in: nonlinear_compute_dLambda:\n"
                     "\t Negative pressure capacity at the apex of the Drucker-Prager cone \n", *po);
             MPI_Abort(MPI_COMM_WORLD, ERROR);
@@ -1286,6 +1287,7 @@ double compute_dLambdaII ( nlconstants_t constants, double fs, double eff_ps, do
 	}
 	return delta;
 }
+*/
 
 
 void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, double ep_barn, tensor_t sigma0, double dt,
@@ -1374,7 +1376,7 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 		*ep_bar = ep_barn + dLambda * gamma;
 
 		/* Updated yield function value  */
-		*fs = compute_yield_surface_state ( J2, I1, alpha, 0, 0, 0);
+		*fs = compute_yield_surface_state ( J2, I1, alpha, 0, 0, 0) - compute_hardening(gamma,c,h,*ep_bar,phi);
 
 		/* check for apex zone in DP model */
 		if (  theMaterialModel == DRUCKERPRAGER  ){
@@ -1413,7 +1415,7 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 
 				*epl  = subtrac_tensors ( e_n, estrain );
 
-				*fs = alpha * Skk;
+				*fs = alpha * Skk - compute_hardening(gamma,c,h,*ep_bar,phi);
 			}
 		}
 
@@ -1465,6 +1467,8 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 		estrain = elastic_strains (*sigma, mu, kappa);
 		*epl  = subtrac_tensors ( e_n, estrain );
 
+		*fs = compute_yield_surface_state ( 0.0, 0.0, 0.0, sigma_ppal.x, sigma_ppal.z, phi) - compute_hardening(gamma,c,h,*ep_bar,phi);
+
 	}
 
 
@@ -1514,7 +1518,7 @@ tensor_t compute_dfds (tensor_t dev, double J2, double beta) {
 
 }
 
-tensor_t compute_pstrain2 ( nlconstants_t constants, tensor_t pstrain1, tensor_t tstrain,
+/*tensor_t compute_pstrain2 ( nlconstants_t constants, tensor_t pstrain1, tensor_t tstrain,
 							tensor_t dfds, double dLambda, double dt, double J2, double I1,
 							double J2_st, double I1_st, double po ) {
 
@@ -1553,7 +1557,7 @@ tensor_t compute_pstrain2 ( nlconstants_t constants, tensor_t pstrain1, tensor_t
     }
 
     return pstrain2;
-}
+}*/
 
 int get_displacements(mysolver_t *solver, elem_t *elemp, fvector_t *u) {
 
@@ -1816,30 +1820,30 @@ double hypot2(double x, double y) {
 
 void tred2(double V[3][3], double *d, double *e) {
 
-    int n=3;
+    int n=3, j, i, k;
     //  This is derived from the Algol procedures tred2 by
     //  Bowdler, Martin, Reinsch, and Wilkinson, Handbook for
     //  Auto. Comp., Vol.ii-Linear Algebra, and the corresponding
     //  Fortran subroutine in EISPACK.
 
-    for (int j = 0; j < n; j++) {
+    for (j = 0; j < n; j++) {
         d[j] = V[n-1][j];
     }
 
     // Householder reduction to tridiagonal form.
 
-    for (int i = n-1; i > 0; i--) {
+    for (i = n-1; i > 0; i--) {
 
         // Scale to avoid under/overflow.
 
         double scale = 0.0;
         double h = 0.0;
-        for (int k = 0; k < i; k++) {
+        for (k = 0; k < i; k++) {
             scale = scale + fabs(d[k]);
         }
         if (scale == 0.0) {
             e[i] = d[i-1];
-            for (int j = 0; j < i; j++) {
+            for ( j = 0; j < i; j++) {
                 d[j] = V[i-1][j];
                 V[i][j] = 0.0;
                 V[j][i] = 0.0;
@@ -1848,7 +1852,7 @@ void tred2(double V[3][3], double *d, double *e) {
 
             // Generate Householder vector.
 
-            for (int k = 0; k < i; k++) {
+            for (k = 0; k < i; k++) {
                 d[k] /= scale;
                 h += d[k] * d[k];
             }
@@ -1860,35 +1864,35 @@ void tred2(double V[3][3], double *d, double *e) {
             e[i] = scale * g;
             h = h - f * g;
             d[i-1] = f - g;
-            for (int j = 0; j < i; j++) {
+            for ( j = 0; j < i; j++) {
                 e[j] = 0.0;
             }
 
             // Apply similarity transformation to remaining columns.
 
-            for (int j = 0; j < i; j++) {
+            for ( j = 0; j < i; j++) {
                 f = d[j];
                 V[j][i] = f;
                 g = e[j] + V[j][j] * f;
-                for (int k = j+1; k <= i-1; k++) {
+                for ( k = j+1; k <= i-1; k++) {
                     g += V[k][j] * d[k];
                     e[k] += V[k][j] * f;
                 }
                 e[j] = g;
             }
             f = 0.0;
-            for (int j = 0; j < i; j++) {
+            for ( j = 0; j < i; j++) {
                 e[j] /= h;
                 f += e[j] * d[j];
             }
             double hh = f / (h + h);
-            for (int j = 0; j < i; j++) {
+            for ( j = 0; j < i; j++) {
                 e[j] -= hh * d[j];
             }
-            for (int j = 0; j < i; j++) {
+            for ( j = 0; j < i; j++) {
                 f = d[j];
                 g = e[j];
-                for (int k = j; k <= i-1; k++) {
+                for ( k = j; k <= i-1; k++) {
                     V[k][j] -= (f * e[k] + g * d[k]);
                 }
                 d[j] = V[i-1][j];
@@ -1900,29 +1904,29 @@ void tred2(double V[3][3], double *d, double *e) {
 
     // Accumulate transformations.
 
-    for (int i = 0; i < n-1; i++) {
+    for ( i = 0; i < n-1; i++) {
         V[n-1][i] = V[i][i];
         V[i][i] = 1.0;
         double h = d[i+1];
         if (h != 0.0) {
-            for (int k = 0; k <= i; k++) {
+            for ( k = 0; k <= i; k++) {
                 d[k] = V[k][i+1] / h;
             }
-            for (int j = 0; j <= i; j++) {
+            for ( j = 0; j <= i; j++) {
                 double g = 0.0;
-                for (int k = 0; k <= i; k++) {
+                for ( k = 0; k <= i; k++) {
                     g += V[k][i+1] * V[k][j];
                 }
-                for (int k = 0; k <= i; k++) {
+                for ( k = 0; k <= i; k++) {
                     V[k][j] -= g * d[k];
                 }
             }
         }
-        for (int k = 0; k <= i; k++) {
+        for ( k = 0; k <= i; k++) {
             V[k][i+1] = 0.0;
         }
     }
-    for (int j = 0; j < n; j++) {
+    for ( j = 0; j < n; j++) {
         d[j] = V[n-1][j];
         V[n-1][j] = 0.0;
     }
@@ -1939,10 +1943,10 @@ void tql2(double V[3][3], double* d, double* e) {
     //  Bowdler, Martin, Reinsch, and Wilkinson, Handbook for
     //  Auto. Comp., Vol.ii-Linear Algebra, and the corresponding
     //  Fortran subroutine in EISPACK.
-    int n=3;
+    int i, l, k, j,  n=3;
 
 
-    for (int i = 1; i < n; i++) {
+    for ( i = 1; i < n; i++) {
         e[i-1] = e[i];
     }
     e[n-1] = 0.0;
@@ -1950,7 +1954,7 @@ void tql2(double V[3][3], double* d, double* e) {
     double f = 0.0;
     double tst1 = 0.0;
     double eps = pow(2.0,-52.0);
-    for (int l = 0; l < n; l++) {
+    for ( l = 0; l < n; l++) {
 
         // Find small subdiagonal element
 
@@ -1983,7 +1987,7 @@ void tql2(double V[3][3], double* d, double* e) {
                 d[l+1] = e[l] * (p + r);
                 double dl1 = d[l+1];
                 double h = g - d[l];
-                for (int i = l+2; i < n; i++) {
+                for ( i = l+2; i < n; i++) {
                     d[i] -= h;
                 }
                 f = f + h;
@@ -1997,7 +2001,7 @@ void tql2(double V[3][3], double* d, double* e) {
                 double el1 = e[l+1];
                 double s = 0.0;
                 double s2 = 0.0;
-                for (int i = m-1; i >= l; i--) {
+                for ( i = m-1; i >= l; i--) {
                     c3 = c2;
                     c2 = c;
                     s2 = s;
@@ -2012,7 +2016,7 @@ void tql2(double V[3][3], double* d, double* e) {
 
                     // Accumulate transformation.
 
-                    for (int k = 0; k < n; k++) {
+                    for ( k = 0; k < n; k++) {
                         h = V[k][i+1];
                         V[k][i+1] = s * V[k][i] + c * h;
                         V[k][i] = c * V[k][i] - s * h;
@@ -2032,10 +2036,10 @@ void tql2(double V[3][3], double* d, double* e) {
 
     // Sort eigenvalues and corresponding vectors.
 
-    for (int i = 0; i < n-1; i++) {
-        int k = i;
+    for ( i = 0; i < n-1; i++) {
+         k = i;
         double p = d[i];
-        for (int j = i+1; j < n; j++) {
+        for ( j = i+1; j < n; j++) {
             if (d[j] < p) {
                 k = j;
                 p = d[j];
@@ -2044,7 +2048,7 @@ void tql2(double V[3][3], double* d, double* e) {
         if (k != i) {
             d[k] = d[i];
             d[i] = p;
-            for (int j = 0; j < n; j++) {
+            for ( j = 0; j < n; j++) {
                 p = V[j][i];
                 V[j][i] = V[j][k];
                 V[j][k] = p;
@@ -2562,7 +2566,6 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
 		double		   hrd;        /* Hardening Modulus  */
 		double         beta;       /* Plastic flow rule constant */
 		double         XI, QC;
-		double         Fs = 0.;
 		fvector_t      u[8];
 		qptensors_t   *stresses, *tstrains, *pstrains1, *pstrains2;
 		qpvectors_t   *epstr1, *epstr2;
@@ -2626,13 +2629,10 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
 					sigma0 = zero_tensor();
 
 				material_update ( *enlcons,  tstrains->qp[i], pstrains1->qp[i], epstr1->qv[i], sigma0, theDeltaT,
-						&pstrains2->qp[i], &stresses->qp[i], &epstr2->qv[i], &Fs);
+						&pstrains2->qp[i], &stresses->qp[i], &epstr2->qv[i], &enlcons->fs[i]);
 			}
-
 		} /* for all quadrature points */
-
 	} /* for all nonlinear elements */
-
 }
 
 /* -------------------------------------------------------------------------- */
@@ -2822,7 +2822,7 @@ void nonlinear_stations_init(mesh_t    *myMesh,
 
     XMALLOC_VAR_N( myStationsElementIndices, int32_t, myNumberOfNonlinStations);
     XMALLOC_VAR_N( myNonlinStationsMapping, int32_t, myNumberOfNonlinStations);
-    XMALLOC_VAR_N( myNonlinStations, nlstation_t, myNumberOfNonlinStations);
+ //   XMALLOC_VAR_N( myNonlinStations, nlstation_t, myNumberOfNonlinStations);
 
     int32_t nlStationsCount = 0;
     for (iStation = 0; iStation < myNumberOfStations; iStation++) {
@@ -2881,7 +2881,7 @@ void nonlinear_stations_init(mesh_t    *myMesh,
 
     } /* for all my stations */
 
-    for ( iStation = 0; iStation < myNumberOfNonlinStations; iStation++ ) {
+/*    for ( iStation = 0; iStation < myNumberOfNonlinStations; iStation++ ) {
 
         tensor_t *stress, *strain, *pstrain1, *pstrain2;
         double   *ep1;
@@ -2898,7 +2898,7 @@ void nonlinear_stations_init(mesh_t    *myMesh,
         init_tensorptr(pstrain1);
         init_tensorptr(pstrain2);
 
-    }
+    }*/
 
 }
 
@@ -2919,18 +2919,19 @@ void print_nonlinear_stations(mesh_t     *myMesh,
     for ( iStation = 0; iStation < myNumberOfNonlinStations; iStation++ ) {
     	tensor_t       *stress, *tstrain;
     	qptensors_t    *stressF, *tstrainF;
-    	double         bStrain = 0., bStress = 0.;
+    	double         bStrain = 0., bStress = 0., Fy;
 
     	nl_eindex    = myStationsElementIndices[iStation];
     	eindex       = myNonlinElementsMapping[nl_eindex];
     	mappingIndex = myNonlinStationsMapping[iStation];
 
     	/* Capture data from the nonlinear element structure
-    	 * of the first Gauss point*/
+    	 * corresponding to the first Gauss point*/
     	tstrainF   = myNonlinSolver->strains   + nl_eindex;
     	stressF    = myNonlinSolver->stresses  + nl_eindex;
     	stress     = &(stressF->qp[0]);
     	tstrain    = &(tstrainF->qp[0]);
+    	Fy         = (myNonlinSolver->constants   + nl_eindex)->fs[0];
 
     	bStrain = tstrain->xx + tstrain->yy + tstrain->zz;
     	bStress = stress->xx + stress->yy + stress->zz;
@@ -2944,7 +2945,8 @@ void print_nonlinear_stations(mesh_t     *myMesh,
     				" % 8e % 8e"
     				" % 8e % 8e"
     				" % 8e % 8e"
-    				" % 8e % 8e",
+    				" % 8e % 8e"
+    				" % 8e",
 
     				tstrain->xx, stress->xx, // 11 12
     				tstrain->yy, stress->yy, // 13 14
@@ -2952,7 +2954,8 @@ void print_nonlinear_stations(mesh_t     *myMesh,
     				bStrain,     bStress,    // 17 18
     				tstrain->xy, stress->xy, // 19 20
     				tstrain->yz, stress->yz, // 21 22
-    				tstrain->xz, stress->xz); // 23 24
+    				tstrain->xz, stress->xz,
+    				Fy); // 23 24
     	}
     } /* for all my stations */
 
