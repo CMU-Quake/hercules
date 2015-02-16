@@ -62,10 +62,11 @@ static int32_t              *myStationsElementIndices;
 //static nlstation_t          *myNonlinStations;
 static int32_t              *myNonlinStationsMapping;
 static int32_t               myNumberOfNonlinStations;
-static int32_t               myNonlinElementsCount;
+static int32_t               myNonlinElementsCount = 0;
 static int32_t              *myNonlinElementsMapping;
 static int32_t               myBottomElementsCount = 0;
 static bottomelement_t      *myBottomElements;
+static int32_t               theNonlinearFlag = 0;
 
 static double totalWeight = 0;
 
@@ -82,19 +83,19 @@ double get_geostatic_total_time() {
  */
 int isThisElementNonLinear(mesh_t *myMesh, int32_t eindex) {
 
-    elem_t  *elemp;
-    edata_t *edata;
+	elem_t  *elemp;
+	edata_t *edata;
 
-    elemp = &myMesh->elemTable[eindex];
-    edata = (edata_t *)elemp->data;
+	if ( theNonlinearFlag == 0 )
+		return NO;
 
-//    int32_t lnid0 = myMesh->elemTable[eindex].lnid[0];
-//    double  zo    = myMesh->ticksize*myMesh->nodeTable[lnid0].z;
+	elemp = &myMesh->elemTable[eindex];
+	edata = (edata_t *)elemp->data;
 
-    if ( ( edata->Vs <=  theVsLimits[thePropertiesCount-1] ) && ( edata->Vs >=  theVsLimits[0] ) )
-                	return YES;
+	if ( ( edata->Vs <=  theVsLimits[thePropertiesCount-1] ) && ( edata->Vs >=  theVsLimits[0] ) )
+		return YES;
 
-return NO;
+	return NO;
 }
 
 /*
@@ -303,7 +304,7 @@ void nonlinear_init( int32_t     myID,
                      double      theEndT )
 {
     double  double_message[2];
-    int     int_message[5];
+    int     int_message[6];
 
     /* Capturing data from file --- only done by PE0 */
     if (myID == 0) {
@@ -319,15 +320,15 @@ void nonlinear_init( int32_t     myID,
     double_message[0] = theGeostaticLoadingT;
     double_message[1] = theGeostaticCushionT;
 
-
     int_message[0] = (int)theMaterialModel;
     int_message[1] = thePropertiesCount;
     int_message[2] = theGeostaticFinalStep;
     int_message[3] = (int)thePlasticityModel;
     int_message[4] = (int)theApproxGeoState;
+    int_message[5] = (int)theNonlinearFlag;
 
     MPI_Bcast(double_message, 2, MPI_DOUBLE, 0, comm_solver);
-    MPI_Bcast(int_message,    5, MPI_INT,    0, comm_solver);
+    MPI_Bcast(int_message,    6, MPI_INT,    0, comm_solver);
 
     theGeostaticLoadingT  = double_message[0];
     theGeostaticCushionT  = double_message[1];
@@ -337,6 +338,7 @@ void nonlinear_init( int32_t     myID,
     theGeostaticFinalStep = int_message[2];
     thePlasticityModel    = int_message[3];
     theApproxGeoState     = int_message[4];
+    theNonlinearFlag      = int_message[5];
 
     /* allocate table of properties for all other PEs */
 
@@ -493,6 +495,8 @@ int32_t nonlinear_initparameters ( const char *parametersin,
         theHardeningModulus[row]  = auxiliar[ row * 7 + 5 ];
         theBetaDilatancy[row]     = auxiliar[ row * 7 + 6 ];
     }
+
+    theNonlinearFlag = 1;
 
     return 0;
 }
