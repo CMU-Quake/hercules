@@ -1167,7 +1167,7 @@ tensor_t zero_tensor() {
 tensor_t ApproxGravity_tensor(double Szz, double phi, double h, double lz, double rho) {
 
 	double Ko = 1 - sin(phi);
-	double Sigma = -( Szz + 9.8 * rho * h * lz);
+	double Sigma = -( Szz + 9.8 * rho * h * lz * 0.5);
 
     tensor_t C;
 
