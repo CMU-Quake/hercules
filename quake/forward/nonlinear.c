@@ -1505,7 +1505,7 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 		BOX85_l(ep_barn, sigma_ppal_trial, phi, dil, h, c, kappa, mu, &sigma_ppal, ep_bar);
 
 		/* Check assumption of returning to the main plan */
-		if ( ( sigma_ppal.x <= sigma_ppal.y ) && ( sigma_ppal.y <= sigma_ppal.z ) ) {
+		if ( ( sigma_ppal.x <= sigma_ppal.y ) || ( sigma_ppal.y <= sigma_ppal.z ) ) { /*Todo: Check this conditional with David   */
 
 			if ( ( 1. - sin(dil) ) * sigma_ppal_trial.x - 2. * sigma_ppal_trial.y + ( 1. + sin(dil) ) * sigma_ppal_trial.z > 0 )
 				edge = 1; /*return to the right edge*/
@@ -1516,9 +1516,11 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 
 			cond1 = sigma_ppal.x - sigma_ppal.y;
 			cond2 = sigma_ppal.y - sigma_ppal.z;
+			double p_trial = ( sigma_ppal_trial.x + sigma_ppal_trial.y + sigma_ppal_trial.z )/3.0;
 
-			if ( (cond1 < 0.0 ) || ( abs(cond1) >= Tol_sigma) || (cond2 < 0.0) || (abs(cond2) >= Tol_sigma) ) { /* return to the apex */
-				double p_trial = tensor_I1(stresses)/3.0;
+			if ( (cond1 <= 0.0 ) && ( abs(cond1) >= Tol_sigma)  ) { /* return to the apex */
+				BOX87_l(ep_barn, p_trial, phi, dil, h, c, kappa, &sigma_ppal, ep_bar);
+			} else if ( (cond2 <= 0.0) && (abs(cond2) >= Tol_sigma) ){
 				BOX87_l(ep_barn, p_trial, phi, dil, h, c, kappa, &sigma_ppal, ep_bar);
 			}
 		}
