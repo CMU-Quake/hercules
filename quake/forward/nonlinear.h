@@ -226,8 +226,6 @@ tensor_t zero_tensor     ();
 qptensors_t compute_qp_stresses ( qptensors_t strains, double mu, double lambda);
 qptensors_t subtrac_qptensors   ( qptensors_t A, qptensors_t B);
 
-double   compute_yield_surface_state ( double J2, double I1, double alpha, double s1, double s3, double phi );
-double   MohrCoul_Inv( double phi, tensor_t Sigma );
 double   compute_hardening           ( double gamma, double c, double h, double ep_bar, double phi );
 double   compute_yield_surface_stateII ( double J3, double J2, double I1, double alpha, double phi, tensor_t Sigma );
 

@@ -1211,20 +1211,6 @@ tensor_t copy_tensor (tensor_t original) {
     return copy;
 }
 
-
-double compute_yield_surface_state ( double J2, double I1, double alpha, double s1, double s3, double phi ) {
-	double Yf=0.;
-
-	if ( ( theMaterialModel == VONMISES ) || ( theMaterialModel == DRUCKERPRAGER ) ) {
-		Yf = alpha * I1 + sqrt( J2 );
-	} else {
-		Yf = s1 - s3 + ( s1 + s3 )*sin(phi);
-	}
-
-	return Yf;
-
-}
-
 double compute_yield_surface_stateII ( double J3, double J2, double I1, double alpha, double phi, tensor_t Sigma ) {
 
 	double Yf=0., p, q, r, teta, Rmc, s1, s3;
@@ -1394,7 +1380,6 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 
 	if ( ( theMaterialModel == VONMISES ) || ( theMaterialModel == DRUCKERPRAGER ) ){
 
-	//	Fs_pr = compute_yield_surface_state ( J2_pr, I1_pr, alpha, 0, 0, 0) - compute_hardening(gamma,c,h,ep_barn,phi); /* Fs predictor */
 		Fs_pr = compute_yield_surface_stateII ( J3_pr, J2_pr, I1_pr, alpha, phi, sigma_trial) - compute_hardening(gamma,c,h,ep_barn,phi); /* Fs predictor */
 
 		if ( Fs_pr < 0.0 ) {
@@ -1418,7 +1403,8 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 		/* Updated stresses */
 		estrain     = subtrac_tensors ( e_n, *epl );
 		stresses    = point_stress ( estrain, mu, Lambda );
-		*sigma      = subtrac_tensors ( stresses, sigma0 );
+		*sigma      = stresses;
+		stresses    = add_tensors ( stresses, sigma0 );
 
 		/* updated invariants*/
 		double I1     = tensor_I1 ( stresses );
@@ -1431,9 +1417,7 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 		*ep_bar = ep_barn + dLambda * gamma;
 
 		/* Updated yield function value  */
-//		*fs = compute_yield_surface_state ( J2, I1, alpha, 0, 0, 0) - compute_hardening(gamma,c,h,*ep_bar,phi);
 		*fs = compute_yield_surface_stateII ( J3, J2, I1, alpha, phi, stresses) - compute_hardening(gamma,c,h,*ep_bar,phi);
-
 
 		/* check for apex zone in DP model */
 		if (  theMaterialModel == DRUCKERPRAGER  ){
@@ -1443,9 +1427,7 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 
 			if ( (I1 < Imin) || (I1 > Imax) || (sqrt(J2_pr) - mu * dLambda < 0.0) ) { /*return to the apex  */
 
-	//			dep_bar = (  compute_yield_surface_state   ( 0.0, I1_pr, alpha, 0, 0, 0 ) - compute_hardening(gamma,c,h,ep_barn,phi) ) / ( 9.0 * kappa * alpha * beta / gamma + h * gamma );
 				dep_bar = (  compute_yield_surface_stateII ( 0.0, 0.0, I1_pr, alpha, phi, sigma_trial ) - compute_hardening(gamma,c,h,ep_barn,phi) ) / ( 9.0 * kappa * alpha * beta / gamma + h * gamma );
-
 
 				/* Updated equivalent plastic strain */
 				*ep_bar = ep_barn + dep_bar;
@@ -1484,10 +1466,6 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 		vect1_t n1, n2, n3, sigma_ppal_trial;
 		int edge;
 
-	//	specDecomp(sigma_trial, &n1, &n2, &n3, &sigma_ppal_trial); /* eig_values.x > eig_values.y > eig_values.z   */
-	//	Fs_pr = compute_yield_surface_state ( 0.0, 0.0, 0.0, sigma_ppal_trial.x, sigma_ppal_trial.z, phi) - compute_hardening(gamma,c,h,ep_barn,phi); /* Fs predictor */
-
-	//	Fs_pr = MohrCoul_Inv( phi, sigma_trial ) - compute_hardening(gamma,c,h,ep_barn,phi);
 		Fs_pr = compute_yield_surface_stateII ( J3_pr, J2_pr, I1_pr, alpha, phi, sigma_trial) - compute_hardening(gamma,c,h,ep_barn,phi);
 
 		if ( Fs_pr < 0.0 ) {
@@ -1502,10 +1480,10 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 		specDecomp(sigma_trial, &n1, &n2, &n3, &sigma_ppal_trial); /* eig_values.x > eig_values.y > eig_values.z   */
 
 		vect1_t sigma_ppal;
-		BOX85_l(ep_barn, sigma_ppal_trial, phi, dil, h, c, kappa, mu, &sigma_ppal, ep_bar);
+		BOX85_l(ep_barn, sigma_ppal_trial, phi, dil, h, c, kappa, mu, &sigma_ppal, ep_bar); /* Return to the main plan */
 
 		/* Check assumption of returning to the main plan */
-		if ( ( sigma_ppal.x <= sigma_ppal.y ) || ( sigma_ppal.y <= sigma_ppal.z ) ) { /*Todo: Check this conditional with David   */
+		if ( ( sigma_ppal.x <= sigma_ppal.y ) || ( sigma_ppal.y <= sigma_ppal.z ) ) {
 
 			if ( ( 1. - sin(dil) ) * sigma_ppal_trial.x - 2. * sigma_ppal_trial.y + ( 1. + sin(dil) ) * sigma_ppal_trial.z > 0 )
 				edge = 1; /*return to the right edge*/
@@ -1539,7 +1517,6 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 		double J2     = tensor_J2 ( dev );
 		double J3     = tensor_J3 ( dev );
 
-	//	*fs = compute_yield_surface_state ( 0.0, 0.0, 0.0, sigma_ppal.x, sigma_ppal.z, phi) - compute_hardening(gamma,c,h,*ep_bar,phi);
 		*fs = compute_yield_surface_stateII ( J3, J2, I1, alpha, phi, stressRecomp) - compute_hardening(gamma,c,h,*ep_bar,phi);
 
 	}
@@ -1750,38 +1727,6 @@ void check_strain_stability ( double dLambda, double dt, mesh_t *myMesh,
 /* -------------------------------------------------------------------------- */
 /*                   Nonlinear core computational methods                     */
 /* -------------------------------------------------------------------------- */
-double MohrCoul_Inv( double phi, tensor_t Sigma ) {
-
-	double I1, J2, J3, p, q, r, teta, Rmc, Yf;
-
-	I1 = tensor_I1(Sigma);
-
-	tensor_t sigma_dev = tensor_deviator(Sigma, I1/3.0);
-
-	J2 = tensor_J2(sigma_dev);
-	J3 = tensor_J3(sigma_dev);
-
-	p = (1./3.) * I1;
-	q = 2.0 * pow( J2, 1.5 );
-	r = -3.0 * sqrt(3.0) * (J3);
-
-	if ( ( (r/q) <= 1.00000001 ) && ( (r/q) >= 0.99999999 ) )
-		teta = PI / 6.0;
-	else
-		teta = 1./3. * asin(r/q);
-
-	double po=90;
-
-	if ( ( teta > PI / 6. ) || ( teta < -PI / 6. ) )
-		po =900;
-
-	Rmc = -1./sqrt(3.0) * ( sin(phi)*sin(teta) ) + cos(teta);
-
-	return Yf = 2. * ( Rmc * sqrt(J2) + p * sin(phi) );
-
-}
-
-
 void BOX85_l(double ep_bar_n,vect1_t sigma_ppal_trial,double Phi, double Psi, double H, double c0, double K, double G, vect1_t *sigma_ppal, double *ep_bar_n1) {
 
 /* Return mapping algorithm copied from:
@@ -3022,24 +2967,45 @@ void print_nonlinear_stations(mesh_t     *myMesh,
     int32_t mappingIndex;
 
     for ( iStation = 0; iStation < myNumberOfNonlinStations; iStation++ ) {
-    	tensor_t       *stress, *tstrain;
+    	tensor_t       *stress, *tstrain, tstress;
     	qptensors_t    *stressF, *tstrainF;
-    	double         bStrain = 0., bStress = 0., Fy;
+    	double         bStrain = 0., bStress = 0., Fy, h;
+    	tensor_t       sigma0;
+
+    	elem_t         *elemp;
+		edata_t        *edata;
+    	nlconstants_t  *enlcons;
 
     	nl_eindex    = myStationsElementIndices[iStation];
     	eindex       = myNonlinElementsMapping[nl_eindex];
     	mappingIndex = myNonlinStationsMapping[iStation];
+    	enlcons      = myNonlinSolver->constants + nl_eindex;
+
+		elemp = &myMesh->elemTable[eindex];
+		edata = (edata_t *)elemp->data;
+		h     = edata->edgesize;
+
+		/* compute the self-weight stresses at the first Gauss point*/
+		double lz = -0.577350269189;
+		if ( theApproxGeoState == YES )
+			sigma0 = ApproxGravity_tensor(enlcons->sigmaZ_st, enlcons->phi, h, lz, edata->rho);
+		else
+			sigma0 = zero_tensor();
 
     	/* Capture data from the nonlinear element structure
     	 * corresponding to the first Gauss point*/
     	tstrainF   = myNonlinSolver->strains   + nl_eindex;
     	stressF    = myNonlinSolver->stresses  + nl_eindex;
-    	stress     = &(stressF->qp[0]);
+
+    	stress      = &(stressF->qp[0]);            /* relative stresses of the first Gauss point */
+    	tstress     = add_tensors(*stress,sigma0); /* compute the total stress tensor */
+
     	tstrain    = &(tstrainF->qp[0]);
+
     	Fy         = (myNonlinSolver->constants   + nl_eindex)->fs[0];
 
     	bStrain = tstrain->xx + tstrain->yy + tstrain->zz;
-    	bStress = stress->xx + stress->yy + stress->zz;
+    	bStress = tstress.xx + tstress.yy + tstress.zz;
 
     	if (step % rate == 0) {
     		fprintf( myStations[mappingIndex].fpoutputfile,
@@ -3053,13 +3019,13 @@ void print_nonlinear_stations(mesh_t     *myMesh,
     				" % 8e % 8e"
     				" % 8e",
 
-    				tstrain->xx, stress->xx, // 11 12
-    				tstrain->yy, stress->yy, // 13 14
-    				tstrain->zz, stress->zz, // 15 16
+    				tstrain->xx, tstress.xx, // 11 12
+    				tstrain->yy, tstress.yy, // 13 14
+    				tstrain->zz, tstress.zz, // 15 16
     				bStrain,     bStress,    // 17 18
-    				tstrain->xy, stress->xy, // 19 20
-    				tstrain->yz, stress->yz, // 21 22
-    				tstrain->xz, stress->xz,
+    				tstrain->xy, tstress.xy, // 19 20
+    				tstrain->yz, tstress.yz, // 21 22
+    				tstrain->xz, tstress.xz,
     				Fy); // 23 24
     	}
     } /* for all my stations */
