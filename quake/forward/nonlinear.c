@@ -48,6 +48,7 @@ static int32_t               thePropertiesCount;
 static materialmodel_t       theMaterialModel;
 static plasticitytype_t      thePlasticityModel;
 static noyesflag_t           theApproxGeoState  = NO;
+static noyesflag_t           theTensionCutoff   = NO;
 static double               *theVsLimits;
 static double               *theAlphaCohes;
 static double               *theKayPhis;
@@ -304,7 +305,7 @@ void nonlinear_init( int32_t     myID,
                      double      theEndT )
 {
     double  double_message[2];
-    int     int_message[6];
+    int     int_message[7];
 
     /* Capturing data from file --- only done by PE0 */
     if (myID == 0) {
@@ -326,9 +327,10 @@ void nonlinear_init( int32_t     myID,
     int_message[3] = (int)thePlasticityModel;
     int_message[4] = (int)theApproxGeoState;
     int_message[5] = (int)theNonlinearFlag;
+    int_message[6] = (int)theTensionCutoff;
 
     MPI_Bcast(double_message, 2, MPI_DOUBLE, 0, comm_solver);
-    MPI_Bcast(int_message,    6, MPI_INT,    0, comm_solver);
+    MPI_Bcast(int_message,    7, MPI_INT,    0, comm_solver);
 
     theGeostaticLoadingT  = double_message[0];
     theGeostaticCushionT  = double_message[1];
@@ -339,6 +341,7 @@ void nonlinear_init( int32_t     myID,
     thePlasticityModel    = int_message[3];
     theApproxGeoState     = int_message[4];
     theNonlinearFlag      = int_message[5];
+    theTensionCutoff      = int_message[6];
 
     /* allocate table of properties for all other PEs */
 
@@ -375,11 +378,12 @@ int32_t nonlinear_initparameters ( const char *parametersin,
     double   geostatic_loading_t, geostatic_cushion_t,
             *auxiliar;
     char     material_model[64],
-             plasticity_type[64], approx_geostatic_state[64];
+             plasticity_type[64], approx_geostatic_state[64], tension_cutoff[64];
 
     materialmodel_t      materialmodel;
     plasticitytype_t     plasticitytype;
     noyesflag_t          approxgeostatic = -1;
+    noyesflag_t          tensioncutoff = -1;
 
     /* Opens numericalin file */
     if ((fp = fopen(parametersin, "r")) == NULL) {
@@ -394,7 +398,8 @@ int32_t nonlinear_initparameters ( const char *parametersin,
          (parsetext(fp, "material_model",               's', &material_model         ) != 0) ||
          (parsetext(fp, "approximate_geostatic_state",  's', &approx_geostatic_state ) != 0) ||
          (parsetext(fp, "material_plasticity_type",     's', &plasticity_type        ) != 0) ||
-         (parsetext(fp, "material_properties_count",    'i', &properties_count       ) != 0) )
+         (parsetext(fp, "material_properties_count",    'i', &properties_count       ) != 0) ||
+         (parsetext(fp, "tension_cutoff",               's', &tension_cutoff         ) != 0) )
     {
         fprintf(stderr, "Error parsing nonlinear parameters from %s\n", parametersin);
         return -1;
@@ -423,8 +428,6 @@ int32_t nonlinear_initparameters ( const char *parametersin,
                 "(linear, vonMises, DruckerPrager): %s\n", material_model);
         return -1;
     }
-
-
 
     if (properties_count < 1) {
         fprintf(stderr, "Illegal material properties count %d\n", properties_count);
@@ -462,6 +465,24 @@ int32_t nonlinear_initparameters ( const char *parametersin,
         return -1;
     }
 
+    if ( ( strcasecmp(tension_cutoff, "yes") == 0 ) && ( ( materialmodel == DRUCKERPRAGER ) || ( materialmodel == MOHR_COULOMB ) ) ) {
+    	tensioncutoff = YES;
+    } else if ( ( strcasecmp(tension_cutoff, "yes") == 0 ) && ( ( materialmodel != DRUCKERPRAGER ) || ( materialmodel != MOHR_COULOMB ) ) ) {
+    	fprintf(stderr,
+    			":Tension cutoff option available "
+    			"only for Mohr-Coulomb or Drucker-Prager models: %s\n",
+    			material_model );
+    	return -1;
+    } else if ( strcasecmp(tension_cutoff, "no") == 0 ) {
+    	tensioncutoff = NO;
+    } else {
+    	fprintf(stderr,
+    			":Unknown response for considering "
+    			"tension cutoff (yes or no): %s\n",
+    			tension_cutoff );
+    	return -1;
+    }
+
 
     /* Initialize the static global variables */
     theGeostaticLoadingT  = geostatic_loading_t;
@@ -471,6 +492,7 @@ int32_t nonlinear_initparameters ( const char *parametersin,
     thePropertiesCount    = properties_count;
     thePlasticityModel    = plasticitytype;
     theApproxGeoState     = approxgeostatic;
+    theTensionCutoff      = tensioncutoff;
 
     auxiliar             = (double*)malloc( sizeof(double) * thePropertiesCount * 7 );
     theVsLimits          = (double*)malloc( sizeof(double) * thePropertiesCount );
@@ -1377,6 +1399,7 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 	double   J2_pr   = tensor_J2 ( dev_pr );
 	double   J3_pr   = tensor_J3 (dev_pr);
 	tensor_t dfds_pr = compute_dfds ( dev_pr, J2_pr, beta );
+	vect1_t  sigma_ppal;
 
 	if ( ( theMaterialModel == VONMISES ) || ( theMaterialModel == DRUCKERPRAGER ) ){
 
@@ -1463,8 +1486,40 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 	} else { /* Must be MohrCoulomb soil */
 
 		/* Spectral decomposition of the sigma_trial tensor*/
-		vect1_t n1, n2, n3, sigma_ppal_trial;
+		vect1_t   n1, n2, n3, sigma_ppal_trial;
+		tensor_t  stressRecomp;
 		int edge;
+
+//		if (theTensionCutoff == YES) {
+//			specDecomp(sigma_trial, &n1, &n2, &n3, &sigma_ppal_trial); /* eig_values.x > eig_values.y > eig_values.z   */
+//			double ST_fnc = get_ShearTensionLimits (phi, c, sigma_ppal_trial.x , sigma_ppal_trial.z); /* shear-tension function */
+//
+//			if ( (ST_fnc > 0) && ( sigma_ppal_trial.x > 0 ) ) {
+//				/* Perform tension-cutoff  */
+//				TensionCutoff_Return( kappa, mu, phi, c, sigma_ppal_trial, &sigma_ppal );
+//
+//				/* get updated stress tensor "sigma" */
+//				stressRecomp = specRecomp(sigma_ppal, n1, n2, n3);
+//				*sigma  = subtrac_tensors(stressRecomp,sigma0);
+//
+//				estrain = elastic_strains (*sigma, mu, kappa);
+//				*epl  = subtrac_tensors ( e_n, estrain );
+//
+//				/* updated invariants*/
+//				*fs = sigma_ppal.x;
+//				return;
+//
+//			} else if ( (ST_fnc > 0) && ( sigma_ppal_trial.x <= 0 ) ) { /* This is an elastic state in the tension zone  */
+//				*epl    = copy_tensor(ep);
+//				*sigma  = copy_tensor(stresses); /* return stresses without self-weight  */
+//				*ep_bar = ep_barn;
+//				*fs     = sigma_ppal_trial.x;
+//				return;
+//			}
+//
+//			/* set the spectral decomposition flag to 1 to avoid double computation  */
+//		    flagSpecDec = 1;
+//		}
 
 		Fs_pr = compute_yield_surface_stateII ( J3_pr, J2_pr, I1_pr, alpha, phi, sigma_trial) - compute_hardening(gamma,c,h,ep_barn,phi);
 
@@ -1476,10 +1531,11 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 			return;
 		}
 
-		/* check for return to the main plane */
-		specDecomp(sigma_trial, &n1, &n2, &n3, &sigma_ppal_trial); /* eig_values.x > eig_values.y > eig_values.z   */
+		/* Spectral decomposition */
+//		if ( flagSpecDec == 0 )
+			specDecomp(sigma_trial, &n1, &n2, &n3, &sigma_ppal_trial); /* eig_values.x > eig_values.y > eig_values.z   */
 
-		vect1_t sigma_ppal;
+		/* Return to the main plane */
 		BOX85_l(ep_barn, sigma_ppal_trial, phi, dil, h, c, kappa, mu, &sigma_ppal, ep_bar); /* Return to the main plan */
 
 		/* Check assumption of returning to the main plan */
@@ -1497,14 +1553,45 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 			double p_trial = ( sigma_ppal_trial.x + sigma_ppal_trial.y + sigma_ppal_trial.z )/3.0;
 
 			if ( (cond1 <= 0.0 ) && ( abs(cond1) >= Tol_sigma)  ) { /* return to the apex */
-				BOX87_l(ep_barn, p_trial, phi, dil, h, c, kappa, &sigma_ppal, ep_bar);
+				if (theTensionCutoff == YES) {
+					sigma_ppal.x = 0;
+					sigma_ppal.y = 0;
+					sigma_ppal.z = 0;
+				} else
+					BOX87_l(ep_barn, p_trial, phi, dil, h, c, kappa, &sigma_ppal, ep_bar);
 			} else if ( (cond2 <= 0.0) && (abs(cond2) >= Tol_sigma) ){
-				BOX87_l(ep_barn, p_trial, phi, dil, h, c, kappa, &sigma_ppal, ep_bar);
+				if (theTensionCutoff == YES) {
+					sigma_ppal.x = 0;
+					sigma_ppal.y = 0;
+					sigma_ppal.z = 0;
+				} else
+					BOX87_l(ep_barn, p_trial, phi, dil, h, c, kappa, &sigma_ppal, ep_bar);
 			}
 		}
 
+		/* Tension cutoff check   */
+		if ( (theTensionCutoff == YES) && ( sigma_ppal.x > 0 ) )  {
+
+			/* Perform tension-cutoff  */
+			TensionCutoff_Return( kappa, mu, phi, c, sigma_ppal_trial, &sigma_ppal );
+
+			/* get updated stress tensor "sigma" */
+			stressRecomp = specRecomp(sigma_ppal, n1, n2, n3);
+			*sigma  = subtrac_tensors(stressRecomp,sigma0);
+
+			estrain = elastic_strains (*sigma, mu, kappa);
+			*epl  = subtrac_tensors ( e_n, estrain );
+
+			/* updated invariants*/
+			*fs = sigma_ppal.x;
+			return;
+
+		}
+
+		/* Done tension cutoff check  */
+
 		/* get updated stress tensor "sigma" */
-		tensor_t stressRecomp = specRecomp(sigma_ppal, n1, n2, n3);
+		stressRecomp = specRecomp(sigma_ppal, n1, n2, n3);
 		*sigma  = subtrac_tensors(stressRecomp,sigma0);
 
 		estrain = elastic_strains (*sigma, mu, kappa);
@@ -1517,7 +1604,10 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 		double J2     = tensor_J2 ( dev );
 		double J3     = tensor_J3 ( dev );
 
-		*fs = compute_yield_surface_stateII ( J3, J2, I1, alpha, phi, stressRecomp) - compute_hardening(gamma,c,h,*ep_bar,phi);
+		if ( (theTensionCutoff == YES) && ( sigma_ppal.x >= 0 ) )
+			*fs = 0;
+		else
+			*fs = compute_yield_surface_stateII ( J3, J2, I1, alpha, phi, stressRecomp) - compute_hardening(gamma,c,h,*ep_bar,phi);
 
 	}
 
@@ -2142,6 +2232,177 @@ void  specDecomp(tensor_t sigma, vect1_t *n1, vect1_t *n2, vect1_t *n3, vect1_t 
 
 }
 
+double get_ShearTensionLimits (double phi, double coh, double S1, double S3) {
+/* Shear-tension limits defined as in FLAC3D User's manual version 5.01 pp 1-31   */
+
+	double Nphi    = ( 1 + sin(phi) )/( 1 - sin(phi) );
+	double alpha_p = sqrt( 1 + Nphi * Nphi )+ Nphi;
+	double Sp      = -2 * coh * sqrt(Nphi);
+
+	double h = S1 + alpha_p * ( S3 - Sp );
+
+	return h;
+
+}
+
+void TensionCutoff_Return( double k, double mu, double phi, double coh, vect1_t sigma_ppal_pr, vect1_t *SigmaUP ) {
+
+double N_phi, S_p, alpha_1, alpha_2, Phi_pr[5], Pl1, Pl2, aa, bb, det,
+       DLam1, DLam2;
+int    i, pos,  zone;
+
+/* Compute maximum compression stress at sigma1 = 0 */
+N_phi = (1+sin(phi))/(1-sin(phi));
+S_p   = - 2. * coh * sqrt(N_phi);
+
+/* Material constants */
+alpha_1 = k + 4. * mu / 3.;
+alpha_2 = k - 2. * mu / 3.;
+
+/* check active zones in the predictor state */
+vect1_t  sigma_TC1, sigma_TC2;
+zone =  CornerZones( sigma_ppal_pr, S_p, &sigma_TC1, Phi_pr);
+
+if ( zone == 0 ) {
+
+    // get active planes. Note that the first plane is already an active plane
+    Pl1 = Phi_pr[0];
+    Pl2 = 0.0;
+    for (i = 1; i < 5; i++) {
+    	if ( Phi_pr[i] > 0 ) {
+    		Pl2 = Phi_pr[i];
+    		pos=i;
+    		break;
+    	}
+    }
+
+    if ( Pl2 != 0.0 ) {
+    	aa = alpha_1;
+    	bb = alpha_2;
+
+    	if ( ( pos == 2 ) || ( pos == 5 ) )
+    		bb=-bb;
+
+    	det = ( aa * aa - bb * bb );
+
+    	DLam1 = (  aa * Pl1 - bb * Pl2 ) / det;
+    	DLam2 = ( -bb * Pl1 + aa * Pl2 ) / det;
+
+    	switch ( pos ) {
+    	case ( 2 ):
+			sigma_TC2.x  = sigma_ppal_pr.x - ( alpha_1 * DLam1 - alpha_2 * DLam2  );
+    		sigma_TC2.y  = sigma_ppal_pr.y - ( alpha_2 * DLam1 - alpha_2 * DLam2  );
+    		sigma_TC2.z  = sigma_ppal_pr.z - ( alpha_2 * DLam1 - alpha_1 * DLam2  );
+    		break;
+
+    	case ( 3 ):
+			sigma_TC2.x = sigma_ppal_pr.x - ( alpha_1 * DLam1 + alpha_2 * DLam2  );
+    		sigma_TC2.y = sigma_ppal_pr.y - ( alpha_2 * DLam1 + alpha_1 * DLam2  );
+    		sigma_TC2.z = sigma_ppal_pr.z - ( alpha_2 * DLam1 + alpha_2 * DLam2  );
+    		break;
+
+    	case ( 4 ):
+			sigma_TC2.x = sigma_ppal_pr.x - ( alpha_1 * DLam1 + alpha_2 * DLam2  );
+    		sigma_TC2.y = sigma_ppal_pr.y - ( alpha_2 * DLam1 + alpha_2 * DLam2  );
+    		sigma_TC2.z = sigma_ppal_pr.z - ( alpha_2 * DLam1 + alpha_1 * DLam2  );
+    		break;
+
+    	case ( 5 ):
+			sigma_TC2.x = sigma_ppal_pr.x - ( alpha_1 * DLam1 - alpha_2 * DLam2  );
+    		sigma_TC2.y = sigma_ppal_pr.y - ( alpha_2 * DLam1 - alpha_1 * DLam2  );
+    		sigma_TC2.z = sigma_ppal_pr.z - ( alpha_2 * DLam1 - alpha_2 * DLam2  );
+    		break;
+    	}
+
+    } else {
+    	sigma_TC2.x = sigma_ppal_pr.x - Pl1;
+    	sigma_TC2.y = sigma_ppal_pr.y - ( alpha_2 * Pl1 / alpha_1 );
+    	sigma_TC2.z = sigma_ppal_pr.z - ( alpha_2 * Pl1 / alpha_1 );
+    }
+
+    /* Check active zones for sigma tension cut 2 "sigma_TC2"  */
+    zone =  CornerZones( sigma_TC2, S_p, SigmaUP, Phi_pr);
+
+    if ( zone == 0 ) {
+        SigmaUP->x = sigma_TC2.x;
+        SigmaUP->y = sigma_TC2.y;
+        SigmaUP->z = sigma_TC2.z;
+
+        if( SigmaUP->z < S_p )
+        	SigmaUP->z = S_p;
+
+        if(SigmaUP->y < S_p)
+        	SigmaUP->y = S_p;
+    }
+
+    return;
+
+}
+
+	SigmaUP->x = sigma_TC1.x;
+	SigmaUP->y = sigma_TC1.y;
+	SigmaUP->z = sigma_TC1.z;
+}
+
+
+int CornerZones( vect1_t Sigma, double S_p, vect1_t* SigmaUP, double Phi_pr[5]) {
+
+	double Tol;
+	int i, cnt=0, zone;
+
+Phi_pr[0] = Sigma.x;
+Phi_pr[1] = S_p - Sigma.z;
+Phi_pr[2] = Sigma.y;
+Phi_pr[3] = Sigma.z;
+Phi_pr[4] = S_p - Sigma.y;
+
+Tol=-1.0e-10;
+
+/* sanity check. Cannot exist more that 3 active surfaces */
+for (i = 0; i < 5; i++) {
+	if ( Phi_pr[i] > 0 )
+		++cnt;
+}
+if (cnt > 3) {
+	fprintf(stderr, "Error: %d: No more that 3 active surfaces can coexist ",cnt);
+	MPI_Abort(MPI_COMM_WORLD,ERROR);
+	exit(1);
+}
+
+if ( ( Phi_pr[2] > Tol ) && ( Phi_pr[3] > Tol ) ) {
+	SigmaUP->x = 0.0;
+	SigmaUP->y = 0.0;
+	SigmaUP->z = 0.0;
+	zone=1;
+} else if ( ( Phi_pr[3] > Tol ) && ( Phi_pr[4] > Tol ) ) {
+	SigmaUP->x = 0.0;
+	SigmaUP->y = S_p;
+	SigmaUP->z = 0.0;
+	zone=3;
+} else if ( ( Phi_pr[1] > Tol ) && ( Phi_pr[4] > Tol ) ) {
+	SigmaUP->x = 0.0;
+	SigmaUP->y = S_p;
+	SigmaUP->z = S_p;
+	zone=5;
+} else if ( ( Phi_pr[1] > Tol ) && ( Phi_pr[2] > Tol) ) {
+	SigmaUP->x = 0.0;
+	SigmaUP->y = 0.0;
+	SigmaUP->z = S_p;
+	zone=7;
+} else {
+	SigmaUP->x = 0.0;
+	SigmaUP->y = 0.0;
+	SigmaUP->z = 0.0;
+	zone=0;
+}
+
+return zone;
+
+}
+
+
+
+
 /* -------------------------------------------------------------------------- */
 /* -------------------------------------------------------------------------- */
 
@@ -2638,7 +2899,6 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
 		beta   = enlcons->beta;
 		k      = enlcons->k;
 		hrd    = enlcons->h;
-
 
 		/* Capture the current state in the element */
 		tstrains  = myNonlinSolver->strains   + nl_eindex;

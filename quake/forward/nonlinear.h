@@ -265,6 +265,9 @@ void     BOX85_l(double ep_bar_n,vect1_t sigma_ppal_trial,double Phi, double Psi
 void     BOX86_l(double ep_bar_n,vect1_t sigma_ppal_trial,double Phi, double Psi, double H, double c0, double K, double G, double id, vect1_t *sigma_ppal, double *ep_bar_n1);
 void     BOX87_l(double ep_bar_n,double p_trial,double Phi, double Psi, double H, double c0, double K, vect1_t *sigma_ppal, double *ep_bar_n1);
 tensor_t specRecomp(vect1_t eig_val, vect1_t n1, vect1_t n2, vect1_t n3);
+double   get_ShearTensionLimits (double phi, double coh, double S1, double S3);
+void     TensionCutoff_Return( double k, double mu, double phi, double coh, vect1_t sigma_ppal_pr, vect1_t *SigmaUP );
+int      CornerZones( vect1_t Sigma, double S_p, vect1_t* SigmaUP, double Phi_pr[5]);
 
 
 void compute_addforce_gravity( mesh_t     *myMesh,
