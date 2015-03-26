@@ -2914,6 +2914,9 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
 			continue;
 		}
 
+		/* strain predictor  */
+        pstrains1->qp[i] = copy_tensor ( pstrains2->qp[i] );     /* The strain predictor assumes that the current plastic strains equal those from the previous step   */
+
 		/* Loop over the quadrature points */
 		for (i = 0; i < 8; i++) {
 
