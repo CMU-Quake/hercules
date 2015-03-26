@@ -2914,8 +2914,6 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
 			continue;
 		}
 
-		/* strain predictor  */
-        pstrains1->qp[i] = copy_tensor ( pstrains2->qp[i] );     /* The strain predictor assumes that the current plastic strains equal those from the previous step   */
 
 		/* Loop over the quadrature points */
 		for (i = 0; i < 8; i++) {
@@ -2929,6 +2927,9 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
 
 			/* Calculate total strains */
 			tstrains->qp[i] = point_strain(u, lx, ly, lz, h);
+
+			/* strain predictor  */
+	        pstrains1->qp[i] = copy_tensor ( pstrains2->qp[i] );     /* The strain predictor assumes that the current plastic strains equal those from the previous step   */
 
 			/* Calculate stresses */
 			if ( ( theMaterialModel == LINEAR ) || ( step <= theGeostaticFinalStep ) ){
