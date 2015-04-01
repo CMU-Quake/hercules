@@ -1490,36 +1490,38 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 		tensor_t  stressRecomp;
 		int edge;
 
-//		if (theTensionCutoff == YES) {
-//			specDecomp(sigma_trial, &n1, &n2, &n3, &sigma_ppal_trial); /* eig_values.x > eig_values.y > eig_values.z   */
-//			double ST_fnc = get_ShearTensionLimits (phi, c, sigma_ppal_trial.x , sigma_ppal_trial.z); /* shear-tension function */
-//
-//			if ( (ST_fnc > 0) && ( sigma_ppal_trial.x > 0 ) ) {
-//				/* Perform tension-cutoff  */
-//				TensionCutoff_Return( kappa, mu, phi, c, sigma_ppal_trial, &sigma_ppal );
-//
-//				/* get updated stress tensor "sigma" */
-//				stressRecomp = specRecomp(sigma_ppal, n1, n2, n3);
-//				*sigma  = subtrac_tensors(stressRecomp,sigma0);
-//
-//				estrain = elastic_strains (*sigma, mu, kappa);
-//				*epl  = subtrac_tensors ( e_n, estrain );
-//
-//				/* updated invariants*/
-//				*fs = sigma_ppal.x;
-//				return;
-//
-//			} else if ( (ST_fnc > 0) && ( sigma_ppal_trial.x <= 0 ) ) { /* This is an elastic state in the tension zone  */
-//				*epl    = copy_tensor(ep);
-//				*sigma  = copy_tensor(stresses); /* return stresses without self-weight  */
-//				*ep_bar = ep_barn;
-//				*fs     = sigma_ppal_trial.x;
-//				return;
-//			}
-//
-//			/* set the spectral decomposition flag to 1 to avoid double computation  */
-//		    flagSpecDec = 1;
-//		}
+		if (theTensionCutoff == YES) {
+			specDecomp(sigma_trial, &n1, &n2, &n3, &sigma_ppal_trial); /* eig_values.x > eig_values.y > eig_values.z   */
+			double ST_fnc = get_ShearTensionLimits (phi, c, sigma_ppal_trial.x , sigma_ppal_trial.z); /* shear-tension function */
+
+			if ( (ST_fnc > 0) && ( sigma_ppal_trial.x > 0 ) ) {
+				/* Perform tension-cutoff  */
+				TensionCutoff_Return( kappa, mu, phi, c, sigma_ppal_trial, &sigma_ppal );
+
+				/* get updated stress tensor "sigma" */
+				stressRecomp = specRecomp(sigma_ppal, n1, n2, n3);
+				*sigma  = subtrac_tensors(stressRecomp,sigma0);
+
+				estrain = elastic_strains (*sigma, mu, kappa);
+				*epl  = subtrac_tensors ( e_n, estrain );
+
+				/* updated invariants*/
+				*fs = sigma_ppal.x;
+
+				*ep_bar = 0.0; /* Todo: should think in a correct way to compute it when the tension cutoff option is on  */
+				return;
+
+			} else if ( (ST_fnc > 0) && ( sigma_ppal_trial.x <= 0 ) ) { /* This is an elastic state in the tension zone  */
+				*epl    = copy_tensor(ep);
+				*sigma  = copy_tensor(stresses); /* return stresses without self-weight  */
+				*ep_bar = ep_barn;
+				*fs     = sigma_ppal_trial.x;
+				return;
+			}
+
+			/* set the spectral decomposition flag to 1 to avoid double computation  */
+		   // flagSpecDec = 1;
+		}
 
 		Fs_pr = compute_yield_surface_stateII ( J3_pr, J2_pr, I1_pr, alpha, phi, sigma_trial) - compute_hardening(gamma,c,h,ep_barn,phi);
 
@@ -1532,7 +1534,7 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 		}
 
 		/* Spectral decomposition */
-//		if ( flagSpecDec == 0 )
+		if ( theTensionCutoff == NO )
 			specDecomp(sigma_trial, &n1, &n2, &n3, &sigma_ppal_trial); /* eig_values.x > eig_values.y > eig_values.z   */
 
 		/* Return to the main plane */
@@ -1546,7 +1548,7 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 			else
 				edge = -1; /*return to the left edge*/
 
-			BOX86_l    (ep_barn, sigma_ppal_trial, phi, dil, h, c, kappa, mu, edge, &sigma_ppal, ep_bar);
+			BOX86_l(ep_barn, sigma_ppal_trial, phi, dil, h, c, kappa, mu, edge, &sigma_ppal, ep_bar);
 
 			cond1 = sigma_ppal.x - sigma_ppal.y;
 			cond2 = sigma_ppal.y - sigma_ppal.z;
@@ -1554,41 +1556,41 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 
 			if ( (cond1 <= 0.0 ) && ( abs(cond1) >= Tol_sigma)  ) { /* return to the apex */
 				if (theTensionCutoff == YES) {
-					sigma_ppal.x = 0;
-					sigma_ppal.y = 0;
-					sigma_ppal.z = 0;
+					sigma_ppal.x = 0.0;
+					sigma_ppal.y = 0.0;
+					sigma_ppal.z = 0.0;
+					*ep_bar      = 0.0; /* Todo: should think in a correct way to compute it when the tension cutoff option is on  */
 				} else
 					BOX87_l(ep_barn, p_trial, phi, dil, h, c, kappa, &sigma_ppal, ep_bar);
 			} else if ( (cond2 <= 0.0) && (abs(cond2) >= Tol_sigma) ){
 				if (theTensionCutoff == YES) {
-					sigma_ppal.x = 0;
-					sigma_ppal.y = 0;
-					sigma_ppal.z = 0;
+					sigma_ppal.x = 0.0;
+					sigma_ppal.y = 0.0;
+					sigma_ppal.z = 0.0;
+					*ep_bar      = 0.0; /* Todo: should think in a correct way to compute it when the tension cutoff option is on  */
 				} else
 					BOX87_l(ep_barn, p_trial, phi, dil, h, c, kappa, &sigma_ppal, ep_bar);
 			}
 		}
 
-		/* Tension cutoff check   */
+/*		 Tension cutoff check
 		if ( (theTensionCutoff == YES) && ( sigma_ppal.x > 0 ) )  {
 
-			/* Perform tension-cutoff  */
+			 Perform tension-cutoff
 			TensionCutoff_Return( kappa, mu, phi, c, sigma_ppal_trial, &sigma_ppal );
 
-			/* get updated stress tensor "sigma" */
+			 get updated stress tensor "sigma"
 			stressRecomp = specRecomp(sigma_ppal, n1, n2, n3);
 			*sigma  = subtrac_tensors(stressRecomp,sigma0);
 
 			estrain = elastic_strains (*sigma, mu, kappa);
 			*epl  = subtrac_tensors ( e_n, estrain );
 
-			/* updated invariants*/
+			 updated invariants
 			*fs = sigma_ppal.x;
 			return;
-
 		}
-
-		/* Done tension cutoff check  */
+		 Done tension cutoff check  */
 
 		/* get updated stress tensor "sigma" */
 		stressRecomp = specRecomp(sigma_ppal, n1, n2, n3);
