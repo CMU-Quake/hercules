@@ -93,21 +93,26 @@ typedef struct nlconstants_t {
 
     double alpha;        /*  yield function constants in Drucker-Prager model*/
     double beta;         /*  constant of the plastic potential flow law */
-    double gamma;        /*  hardening function multiplier in Drucker-Prager model */
+    double gamma;        /*  constant for teh hardening function in Drucker-Prager model */
 
-    double c;           /* soil cohesion */
-    double phi;         /* angle of internal friction */
-    double dil_angle;   /* angle of dilatancy */
+    double c;            /* soil cohesion */
+    double phi;          /* angle of internal friction */
+    double dil_angle;    /* angle of dilatancy */
 
     double k;
-    double h;  /* variable used for the hardening function definition. In Drucker-Prager or Vonmises H = gamma(c + h*ep)  */
-                         /*                                            In MohrCoulomb                H =     2(c + h*ep)cos(phi)  */
-    double fs[8];        /* F(sigma) */
-    double dLambda[8];   /* yield control */
+    double h;             /*  variable used for the isotropic hardening function.
+                              vonMises H=0. Hardening is considered Kinematic in vonMises criterion
+                              In Drucker-Prager H = gamma(c + h*ep)  */
+                          /*  In MohrCoulomb    H =     2(c + h*ep)cos(phi)  */
+
+    double Sstrain0;      /* Defines the elastic range of the vonMises model. Sy=G*Sstrain0   */
+
+    double fs[8];         /* F(sigma) */
+    double dLambda[8];    /* yield control */
     double strainrate;
     double sensitivity;
 
-    double sigmaZ_st;   /* static vertical stress */
+    double sigmaZ_st;    /* static vertical stress */
 
     double maxFs;
     double avgFs;
@@ -121,6 +126,8 @@ typedef struct nlsolver_t {
     qptensors_t   *strains;
     qptensors_t   *pstrains1;
     qptensors_t   *pstrains2;
+    qptensors_t   *alphastress1;
+    qptensors_t   *alphastress2;
     qpvectors_t   *ep1;         /* effective plastic strains */
     qpvectors_t   *ep2;
 
@@ -226,7 +233,7 @@ tensor_t zero_tensor     ();
 qptensors_t compute_qp_stresses ( qptensors_t strains, double mu, double lambda);
 qptensors_t subtrac_qptensors   ( qptensors_t A, qptensors_t B);
 
-double   compute_hardening           ( double gamma, double c, double h, double ep_bar, double phi );
+double   compute_hardening           ( double gamma, double c, double Sy, double h, double ep_bar, double phi );
 double   compute_yield_surface_stateII ( double J3, double J2, double I1, double alpha, double phi, tensor_t Sigma );
 
 double   compute_dLambdaII           ( nlconstants_t constants, double fs, double eff_ps, double J2, double I1, double J2_st, double I1_st, double *po);
