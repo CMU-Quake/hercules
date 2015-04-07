@@ -21,6 +21,7 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <float.h>
 #include <gsl/gsl_poly.h>
 
 #include "geometrics.h"
@@ -792,13 +793,15 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
     myNonlinSolver->ep2 =
         (qpvectors_t *)calloc(myNonlinElementsCount, sizeof(qpvectors_t));
 
-    if ( (myNonlinSolver->constants  == NULL) ||
-         (myNonlinSolver->stresses   == NULL) ||
-         (myNonlinSolver->strains    == NULL) ||
-         (myNonlinSolver->ep1        == NULL) ||
-         (myNonlinSolver->ep2        == NULL) ||
-         (myNonlinSolver->pstrains1  == NULL) ||
-         (myNonlinSolver->pstrains2  == NULL) ) {
+    if ( (myNonlinSolver->constants           == NULL) ||
+         (myNonlinSolver->stresses            == NULL) ||
+         (myNonlinSolver->strains             == NULL) ||
+         (myNonlinSolver->ep1                 == NULL) ||
+         (myNonlinSolver->ep2                 == NULL) ||
+         (myNonlinSolver->alphastress1        == NULL) ||
+         (myNonlinSolver->alphastress2        == NULL) ||
+         (myNonlinSolver->pstrains1           == NULL) ||
+         (myNonlinSolver->pstrains2           == NULL) ) {
 
         fprintf(stderr, "Thread %d: nonlinear_init: out of memory\n", myID);
         MPI_Abort(MPI_COMM_WORLD, ERROR);
@@ -932,6 +935,23 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth) {
 /* -------------------------------------------------------------------------- */
 
 /*
+ * Returns the scaled tensor B = lambda*A .
+ */
+tensor_t scaled_tensor(tensor_t A, double lambda) {
+
+    tensor_t B;
+
+    B.xx = lambda*A.xx;
+    B.yy = lambda*A.yy;
+    B.zz = lambda*A.zz;
+    B.xy = lambda*A.xy;
+    B.yz = lambda*A.yz;
+    B.xz = lambda*A.xz;
+
+    return B;
+}
+
+/*
  * tensor_I1: Returns the invariant I1 of a tensor.
  */
 double tensor_I1(tensor_t tensor) {
@@ -965,12 +985,22 @@ tensor_t tensor_deviator(tensor_t tensor, double oct) {
 }
 
 /*
- * tensos_J2: Returns the second invariant of a tensor given its deviator.
+ * tensor_J2: Returns the second invariant of a tensor given its deviator.
  */
 double tensor_J2(tensor_t dev) {
 
     return ( (dev.xx * dev.xx) + (dev.yy * dev.yy) + (dev.zz * dev.zz) ) * 0.5
            + (dev.xy * dev.xy) + (dev.yz * dev.yz) + (dev.xz * dev.xz);
+}
+
+/*
+ * combtensor_J2: Returns the combined second invariant J2_comb = (A:B)/2
+ * A y B symmetric tensors
+ */
+double combtensor_J2(tensor_t A, tensor_t B) {
+
+    return ( (A.xx * B.xx) + (A.yy * B.yy) + (A.zz * B.zz) ) * 0.5
+           + (A.xy * B.xy) + (A.yz * B.yz) + (A.xz * B.xz);
 }
 
 /*
@@ -1375,8 +1405,8 @@ double compute_dLambdaII ( nlconstants_t constants, double fs, double eff_ps, do
 */
 
 
-void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, double ep_barn, tensor_t sigma0, double dt,
-		tensor_t *epl, tensor_t *sigma, double *ep_bar, double *fs) {
+void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, tensor_t eta_n,  double ep_barn, tensor_t sigma0, double dt,
+		               tensor_t *epl, tensor_t *eta, tensor_t *sigma, double *ep_bar, double *fs) {
 	/* INPUTS:
 	 * constants: Material constants
 	 * e_n      : Total strain tensor
@@ -1384,16 +1414,21 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 	 * ep_barn  : equivalent plastic strain at t-1. Used to compute the predictor hardening function
 	 * sigma0   : Approximated self-weight tensor.
 	 * dt       : Time step
+	 * eta_n  : backstress tensor at t-a. Used to compute the predictor state in vonMises kinematics
 	 *
 	 * OUTPUTS:
 	 * fs       : Updated yield function value
 	 * epl      : Updated plastic strain
 	 * sigma    : Updated stress tensor
+	 * eta      : Updated backstress tensor
 	 * ep_bar   : Updated equivalent hardening variable
 	 */
 
-	double phi_pt, c, h, kappa, mu, Sy, beta, alpha, gamma, phi, dil, Fs_pr, Lambda, dLambda=0.0,
-			Tol_sigma = 5e-10, cond1, cond2, dep_bar; /*  variables needed for the plastic strain update */
+	double phi_pt, c, h, kappa, mu, Sy, Su, beta, alpha, gamma, phi, dil, Fs_pr, Lambda, dLambda=0.0,
+			Tol_sigma = 5e-10, cond1, cond2, dep_bar,
+			C1, C2, C3, C4, C5; /*  variables needed for the plastic strain update */
+
+	int i;
 
 	h      = constants.h;
 	c      = constants.c;
@@ -1421,6 +1456,10 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 	double   I1_pr   = tensor_I1 ( sigma_trial );
 	double   oct_pr  = tensor_octahedral ( I1_pr );
 	tensor_t dev_pr  = tensor_deviator ( sigma_trial, oct_pr );
+
+	if ( theMaterialModel == VONMISES )
+		dev_pr = subtrac_tensors ( dev_pr, eta_n );       /* Subtract the backstress tensor   */
+
 	double   J2_pr   = tensor_J2 ( dev_pr );
 	double   J3_pr   = tensor_J3 (dev_pr);
 	tensor_t dfds_pr = compute_dfds ( dev_pr, J2_pr, beta );
@@ -1511,12 +1550,75 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, doubl
 			}
 		} else { /* must be kinematic von Mises  */
 
-			   /* compute coeficients of quartic function */
-//			    double S_ss    = sum(sum(S_pr.*S_pr));
-//			    double S_aa    = sum(sum(alpha_n.*alpha_n));
-//			    double S_sa    = sum(sum(S_pr.*alpha_n));
+			   /* compute coefficients of the quartic function */
+			    dev_pr = add_tensors ( dev_pr, eta_n );       /* restore deviator predictor    */
+                J2_pr   = tensor_J2 ( dev_pr );
 
+			    double S_ss    = 2.0 * J2_pr;
+			    double S_aa    = 2.0 * tensor_J2 ( eta_n ); /* eta_n is already deviatoric */
+			    double S_sa    = 2.0 * combtensor_J2(eta_n, dev_pr);
 
+			    tensor_t popo_e_n    = copy_tensor(e_n);
+			    tensor_t popo_eta_n  = copy_tensor(eta_n);
+			    tensor_t popo_ep     = copy_tensor(ep);
+			    tensor_t popo_sigma0     = copy_tensor(sigma0);
+
+			    double  H_kin  = mu;
+			    double  H_nlin = sqrt(3.0/2.0) * H_kin/( sqrt(3.0) * c - Sy );  /* Remember that c=Su for the vonMises yielding criterion */
+			    double  G1     = mu + H_kin/2.0;
+
+			    Sy = sqrt(2.0/3.0)*Sy;
+
+			    /* coefficients of the quartic function  */
+			    C1 = pow( 2.0 * mu * H_nlin, 2.0 );
+			    C2 = (4.0 * Sy * mu * H_nlin + 8.0 * mu * G1 ) * H_nlin;
+			    C3 = ( H_nlin * H_nlin ) * ( Sy * Sy - S_ss ) + 4.0 * G1 * G1 + 4.0 * H_nlin * Sy * ( mu + G1 );
+			    C4 = 2.0 * H_nlin * ( Sy * Sy + S_sa - S_ss ) + 4.0 * Sy * G1;
+			    C5 = Sy*Sy - S_aa + 2.0 * S_sa - S_ss;
+
+			    /* roots finder */
+			    double coeff[5] = { C5, C4, C3, C2, C1 };
+			    double z[8];
+
+			    gsl_poly_complex_workspace * w = gsl_poly_complex_workspace_alloc (5);
+			    gsl_poly_complex_solve (coeff, 5, w, z);
+			    gsl_poly_complex_workspace_free (w);
+
+			    /* find the minimum positive root */
+			    double dl  = FLT_MAX;
+
+			    for (i = 0; i < 4; i++) {
+			    	if ( ( z[2*i] >= 0.0 ) && ( abs(z[2*i+1]) <= 1E-10 ) && ( z[2*i] < dl ) )
+			    		dl = z[2*i];
+			    }
+
+			    /* Sanity check. Should not get here !!!  */
+			    if ( dl == FLT_MAX ) {
+			        fprintf(stderr,"Material update error: "
+			                "could not find a positive root for von Mises with kinematic hardening\n");
+			        MPI_Abort(MPI_COMM_WORLD, ERROR);
+			        exit(1);
+			    }
+
+			    double T_lambda = 1.0 / ( 1.0 + H_nlin * dl );
+			    tensor_t Zo = scaled_tensor( eta_n, T_lambda );
+			    tensor_t Z  = subtrac_tensors( dev_pr, Zo );
+
+			    double magZ = sqrt( 2.0 * tensor_J2 ( Z ) );
+			    tensor_t   n = scaled_tensor( Z, 1.0 / magZ );
+
+			    /* updated variables */
+			    *epl    = add_tensors(ep, scaled_tensor( n, dl ) );              /* Updated plastic strains  */
+			    *ep_bar = ep_barn + dl;                                          /* Updated plastic equivalent strain  */
+			    *eta    = add_tensors( scaled_tensor( eta_n, T_lambda ), scaled_tensor( n, H_kin * T_lambda * dl ) ); /* Updated backstress tensor */
+
+			    *sigma  = subtrac_tensors( stresses, scaled_tensor( n , 2.0 * mu * dl ) );  /* Updated stresses tensor */
+
+			    /*  updated yield function. Must be ZERO */
+			    tensor_t Sdev = subtrac_tensors( dev_pr, scaled_tensor( n , 2.0 * mu * dl ) );
+			    *fs           = sqrt( 2.0 * tensor_J2( subtrac_tensors( Sdev,*eta ) ) ) - Sy;
+
+			    return;
 		}
 
 	} else { /* Must be MohrCoulomb soil */
@@ -2939,14 +3041,14 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
 		hrd    = enlcons->h;
 
 		/* Capture the current state in the element */
-		tstrains     = myNonlinSolver->strains   + nl_eindex;
-		stresses     = myNonlinSolver->stresses  + nl_eindex;
-		pstrains1    = myNonlinSolver->pstrains1 + nl_eindex;
-		pstrains2    = myNonlinSolver->pstrains2 + nl_eindex;
-		alphastress1 = myNonlinSolver->pstrains1 + nl_eindex;
-		alphastress2 = myNonlinSolver->pstrains2 + nl_eindex;
-		epstr1       = myNonlinSolver->ep1       + nl_eindex;
-		epstr2       = myNonlinSolver->ep2       + nl_eindex;
+		tstrains     = myNonlinSolver->strains      + nl_eindex;
+		stresses     = myNonlinSolver->stresses     + nl_eindex;
+		pstrains1    = myNonlinSolver->pstrains1    + nl_eindex;   /* Previous plastic tensor  */
+		pstrains2    = myNonlinSolver->pstrains2    + nl_eindex;   /* Current  plastic tensor  */
+		alphastress1 = myNonlinSolver->alphastress1 + nl_eindex;   /* Previous backstress tensor  */
+		alphastress2 = myNonlinSolver->alphastress2 + nl_eindex;   /* Current  backstress tensor  */
+		epstr1       = myNonlinSolver->ep1          + nl_eindex;
+		epstr2       = myNonlinSolver->ep2          + nl_eindex;
 
 		/* Capture displacements */
 		if ( get_displacements(mySolver, elemp, u) == 0 ) {
@@ -2967,8 +3069,9 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
 			/* Calculate total strains */
 			tstrains->qp[i] = point_strain(u, lx, ly, lz, h);
 
-			/* strain predictor  */
-	        pstrains1->qp[i] = copy_tensor ( pstrains2->qp[i] );     /* The strain predictor assumes that the current plastic strains equal those from the previous step   */
+			/* strain and backstress predictor  */
+	        pstrains1->qp[i]    = copy_tensor ( pstrains2->qp[i] );     /* The strain predictor assumes that the current plastic strains equal those from the previous step   */
+	        alphastress1->qp[i] = copy_tensor ( alphastress2->qp[i] );
 
 			/* Calculate stresses */
 			if ( ( theMaterialModel == LINEAR ) || ( step <= theGeostaticFinalStep ) ){
@@ -2981,8 +3084,9 @@ void compute_nonlinear_state ( mesh_t     *myMesh,
 				else
 					sigma0 = zero_tensor();
 
-				material_update ( *enlcons,  tstrains->qp[i], pstrains1->qp[i], epstr1->qv[i], sigma0, theDeltaT,
-						&pstrains2->qp[i], &stresses->qp[i], &epstr2->qv[i], &enlcons->fs[i]);
+				material_update ( *enlcons,           tstrains->qp[i],      pstrains1->qp[i], alphastress1->qp[i], epstr1->qv[i], sigma0, theDeltaT,
+						           &pstrains2->qp[i], &alphastress2->qp[i], &stresses->qp[i], &epstr2->qv[i],      &enlcons->fs[i]);
+
 			}
 		} /* for all quadrature points */
 	} /* for all nonlinear elements */

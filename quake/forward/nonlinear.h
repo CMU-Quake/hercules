@@ -205,11 +205,13 @@ void nonlinear_solver_init(int32_t myID, mesh_t *myMesh, double depth);
 /*                   Auxiliary tensor manipulation methods                    */
 /* -------------------------------------------------------------------------- */
 
-double   tensor_I1(tensor_t tensor);
-double   tensor_octahedral(double I1);
-tensor_t tensor_deviator(tensor_t tensor, double oct);
-double   tensor_J2(tensor_t dev);
-double   tensor_J3(tensor_t dev);
+double    tensor_I1(tensor_t tensor);
+double    tensor_octahedral(double I1);
+tensor_t  tensor_deviator(tensor_t tensor, double oct);
+double    tensor_J2(tensor_t dev);
+double    tensor_J3(tensor_t dev);
+double    combtensor_J2(tensor_t A, tensor_t B);
+tensor_t  scaled_tensor(tensor_t A, double lambda);
 
 void point_dxi      ( double *dx, double *dy, double *dz,
                       double  lx, double  ly, double  lz,
@@ -242,8 +244,8 @@ tensor_t compute_pstrain2            ( nlconstants_t constants, tensor_t pstrain
 							           tensor_t dfds, double dLambda, double dt, double J2, double I1,
 							           double J2_st, double I1_st, double po );
 
-void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, double ep_barn, tensor_t sigma0, double dt,
-		               tensor_t *epl, tensor_t *sigma, double *ep_bar, double *fs);
+void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, tensor_t eta_n, double ep_barn, tensor_t sigma0, double dt,
+		               tensor_t *epl, tensor_t *eta, tensor_t *sigma, double *ep_bar, double *fs);
 
 tensor_t ApproxGravity_tensor(double Szz, double phi, double h, double lz, double rho);
 
