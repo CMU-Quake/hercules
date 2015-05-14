@@ -1558,11 +1558,6 @@ void material_update ( nlconstants_t constants, tensor_t e_n, tensor_t ep, tenso
 			    double S_aa    = 2.0 * tensor_J2 ( eta_n ); /* eta_n is already deviatoric */
 			    double S_sa    = 2.0 * combtensor_J2(eta_n, dev_pr);
 
-			    tensor_t popo_e_n    = copy_tensor(e_n);
-			    tensor_t popo_eta_n  = copy_tensor(eta_n);
-			    tensor_t popo_ep     = copy_tensor(ep);
-			    tensor_t popo_sigma0     = copy_tensor(sigma0);
-
 			    double  H_kin  = mu;
 			    double  H_nlin = sqrt(3.0/2.0) * H_kin/( sqrt(3.0) * c - Sy );  /* Remember that c=Su for the vonMises yielding criterion */
 			    double  G1     = mu + H_kin/2.0;
