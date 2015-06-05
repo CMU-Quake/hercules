@@ -19,7 +19,7 @@ include $(WORKDIR)/common.mk
 SOLVE_CPPFLAGS ?= -DHALFSPACE -DBOUNDARY  
 
 
-LOADLIBES = $(CVM_DIR)/cvm.o $(OCTOR_LIB) $(ETREE_LIB) 
+LOADLIBES = $(CVM_DIR)/cvm.o $(OCTOR_LIB) $(ETREE_LIB)
 
 #
 # Is vis enabled?
@@ -39,7 +39,18 @@ IO_CPPFLAGS ?= -DUSECVMDB
 CPPFLAGS += -I$(ETREE_DIR) -I$(CVM_DIR) -I$(OCTOR_DIR) -I. -I$(MPI_DIR)/include
 CPPFLAGS += $(SOLVE_CPPFLAGS) $(IO_CPPFLAGS) $(VIS_CPPFLAGS)
 
-LDFLAGS += -lm 
+LDFLAGS += -lm  -L$(CUDA_DIR)/lib64 -lcudart
+
+#
+# Is performance tracking enabled?
+#
+ifeq (${ENABLE_PERF},1)
+NVFLAGS += -DUSE_PERF -I$(PAPI_DIR)/include -I$(CUPTI_DIR)/include
+LDFLAGS += -L$(PAPI_DIR)/lib -lpapi -L$(CUPTI_DIR)/lib64 -lcupti
+ifeq (${PERF_MPI_MPICH2},1)
+CPPFLAGS += -DPERF_MPI_MPICH2
+endif
+endif
 
 ifeq ($(SYSTEM), BGW)
   LOADLIBES += /bgl/local/lib/libmpihpm_c.a /bgl/BlueLight/ppcfloor/bglsys/lib/libbgl_perfctr.rts.a
@@ -49,7 +60,7 @@ endif
 # Object modules 
 #
 PSOLVE_OBJECTS = psolve.o nrutila.o quakesource.o geometrics.o nonlinear.o \
-	commutil.o util.o output.o io_planes.o io_checkpoint.o stiffness.o damping.o quake_util.o kernel.o timers.o buildings.o meshformatlab.o drm.o 
+	commutil.o util.o output.o io_planes.o io_checkpoint.o stiffness.o damping.o quake_util.o kernel.o timers.o buildings.o meshformatlab.o drm.o myperf_cuda.o
 
 OBJECTS = ${PSOLVE_OBJECTS}
 

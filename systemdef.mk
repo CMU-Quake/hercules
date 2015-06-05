@@ -36,13 +36,16 @@ endif
 
 # XK7 (Titan/BW): Depends on mpi/cuda environment variables provided by system
 ifeq ($(SYSTEM), XK7)
-        MPI_DIR ?= ${MPICH_DIR}
-        CC      = nvcc
-        CXX     = nvcc
+	CUDA_DIR  ?= ${CRAY_CUDATOOLKIT_DIR}
+        MPI_DIR   ?= ${MPICH_DIR}
+	PAPI_DIR  ?= /opt/cray/papi/5.3.1
+	CUPTI_DIR ?= $(CUDA_DIR)/extras/CUPTI
+        CC      = ${CRAY_CUDATOOLKIT_DIR}/bin/nvcc
+        CXX     = ${CRAY_CUDATOOLKIT_DIR}/bin/nvcc
         LD      = CC
         NVCC	= ${CRAY_CUDATOOLKIT_DIR}/bin/nvcc
         CFLAGS  += -DBIGBEN
-        LDFLAGS += 
+        LDFLAGS +=
         ifdef IOBUF_INC
 	    NVFLAGS  += -DUSE_IOBUF -I${IOBUF_INC}/include
             CPPFLAGS += -DUSE_IOBUF -I${IOBUF_INC}/include
@@ -142,16 +145,18 @@ ifeq ($(SYSTEM), USCHPC)
 endif
 
 ifeq ($(SYSTEM), USCHPCGPU)
-	CUDA_DIR ?= /usr/usc/cuda/5.0
-	MPI_DIR	 ?= /usr/usc/openmpi/1.6.4
-	CC	  = nvcc
-	CXX	  = nvcc
+	CUDA_DIR  ?= /usr/usc/cuda/default
+	MPI_DIR	  ?= /usr/usc/openmpi/1.6.4
+	PAPI_DIR  ?= /usr/usc/papi/5.3.0
+	CUPTI_DIR ?= $(CUDA_DIR)/extras/CUPTI
+	CC	  = $(CUDA_DIR)/bin/nvcc
+	CXX	  = $(CUDA_DIR)/bin/nvcc
 	LD	  = mpicxx
-	NVCC	  = /usr/usc/cuda/5.0/bin/nvcc
-	LDFLAGS += -L$(CUDA_DIR)/lib64 -lcuda -lcudart
+	NVCC	  = $(CUDA_DIR)/bin/nvcc
+#	LDFLAGS  += -L$(CUDA_DIR)/lib64 -lcudart
 #	CFLAGS   += -Wall
-	NVFLAGS += -arch sm_35 -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64
-        CPPFLAGS    += -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64 -I$(MPI_DIR)/include
+	NVFLAGS  += -arch sm_35 -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64
+        CPPFLAGS += -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64 -I$(MPI_DIR)/include
 endif
 
 

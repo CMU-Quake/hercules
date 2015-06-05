@@ -41,6 +41,18 @@ CPPFLAGS += $(SOLVE_CPPFLAGS) $(IO_CPPFLAGS) $(VIS_CPPFLAGS)
 
 LDFLAGS += -lm
 
+#
+# Is performance tracking enabled?
+#
+ifeq (${ENABLE_PERF},1)
+CPPFLAGS += -DUSE_PERF -I$(PAPI_DIR)/include
+LDFLAGS += -L$(PAPI_DIR)/lib -lpapi
+ifeq (${PERF_MPI_MPICH2},1)
+CPPFLAGS += -DPERF_MPI_MPICH2
+endif
+endif
+
+
 ifeq ($(SYSTEM), BGW)
   LOADLIBES += /bgl/local/lib/libmpihpm_c.a /bgl/BlueLight/ppcfloor/bglsys/lib/libbgl_perfctr.rts.a
 endif
@@ -49,7 +61,7 @@ endif
 # Object modules 
 #
 PSOLVE_OBJECTS = psolve.o nrutila.o quakesource.o geometrics.o nonlinear.o \
-	commutil.o util.o output.o io_planes.o io_checkpoint.o stiffness.o damping.o quake_util.o timers.o buildings.o meshformatlab.o drm.o 
+	commutil.o util.o output.o io_planes.o io_checkpoint.o stiffness.o damping.o quake_util.o timers.o buildings.o meshformatlab.o drm.o myperf.o
 
 OBJECTS = qmesh.o q4.o single_query.o ${PSOLVE_OBJECTS}
 
