@@ -38,14 +38,14 @@ endif
 ifeq ($(SYSTEM), XK7)
 	CUDA_DIR  ?= ${CRAY_CUDATOOLKIT_DIR}
         MPI_DIR   ?= ${MPICH_DIR}
-	PAPI_DIR  ?= /opt/cray/papi/5.3.0
+	PAPI_DIR  ?= /opt/cray/papi/5.3.1
 	CUPTI_DIR ?= $(CUDA_DIR)/extras/CUPTI
         CC      = ${CRAY_CUDATOOLKIT_DIR}/bin/nvcc
         CXX     = ${CRAY_CUDATOOLKIT_DIR}/bin/nvcc
         LD      = CC
         NVCC	= ${CRAY_CUDATOOLKIT_DIR}/bin/nvcc
         CFLAGS  += -DBIGBEN
-        LDFLAGS += 
+        LDFLAGS +=
         ifdef IOBUF_INC
 	    NVFLAGS  += -DUSE_IOBUF -I${IOBUF_INC}/include
             CPPFLAGS += -DUSE_IOBUF -I${IOBUF_INC}/include

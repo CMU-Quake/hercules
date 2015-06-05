@@ -110,10 +110,13 @@ int perf_init()
   perf_mpi_recv_bytes = 0;
   perf_mpi_elapsed = 0.0;
 
+  /* Create statistics datatype */
+  perf_create_datatype_stats(&PERF_DATATYPE_STAT);
+
   /* Initialize PAPI library */
   retval = PAPI_library_init(PAPI_VER_CURRENT);
   if (retval != PAPI_VER_CURRENT && retval > 0) {
-    fprintf(stderr,"PAPI library version mismatch!\n");
+    //fprintf(stderr,"PAPI library version mismatch!\n");
     return(-1); 
   }
   if (retval < 0) {
@@ -126,13 +129,13 @@ int perf_init()
 
   /* Create empty PAPI event set */
   if (PAPI_create_eventset(&perf_papi_events) != PAPI_OK) {
-    fprintf(stderr, "Failed to create event set\n");
+    //fprintf(stderr, "Failed to create event set\n");
     return(-4);
   }
 
   /* Add metric to the PAPI eventset */
   if (PAPI_add_event(perf_papi_events, PAPI_FP_OPS) != PAPI_OK) {
-    fprintf(stderr, "Failed to add PAPI_FP_INS event to PAPI event set\n");
+    //fprintf(stderr, "Failed to add PAPI_FP_INS event to PAPI event set\n");
     return(-5);
   }
 
@@ -143,9 +146,6 @@ int perf_init()
   perf_flops_cpu_state = PERF_STATE_OFF;
   perf_mpi_state = PERF_STATE_OFF;
 
-  /* Create statistics datatype */
-  perf_create_datatype_stats(&PERF_DATATYPE_STAT);
-
   return(0);
 }
 
@@ -153,19 +153,19 @@ int perf_init()
 int perf_finalize()
 {
   if (perf_state != PERF_STATE_ON) {
-    fprintf(stderr, "Performance module is uninitialized\n");
+    //fprintf(stderr, "Performance module is uninitialized\n");
     return(-1);
   }
 
   /* Remove all events in the eventset */
   if (PAPI_cleanup_eventset(perf_papi_events) != PAPI_OK) {
-    fprintf(stderr, "Failed to cleanup papi eventset\n");
+    //fprintf(stderr, "Failed to cleanup papi eventset\n");
     return(-2);
   }
   
   /* Free all memory and data structures, EventSet must be empty. */
   if (PAPI_destroy_eventset(&perf_papi_events) != PAPI_OK) {
-    fprintf(stderr, "Failed to destroy papi eventset\n");
+    //fprintf(stderr, "Failed to destroy papi eventset\n");
     return(-3);
   }
 

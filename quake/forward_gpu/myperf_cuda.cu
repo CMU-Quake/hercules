@@ -165,32 +165,32 @@ int perf_init(int devicenum)
   perf_mpi_recv_bytes = 0;
   perf_mpi_elapsed = 0.0;
 
+  /* Create statistics datatype */
+  perf_create_datatype_stats(&PERF_DATATYPE_STAT);
+
   /* Initialize PAPI library */
   retval = PAPI_library_init(PAPI_VER_CURRENT);
   if (retval != PAPI_VER_CURRENT && retval > 0) {
-    fprintf(stderr,"PAPI library version mismatch!\n");
+    //fprintf(stderr,"PAPI library version mismatch!\n");
     return(-1); 
   }
   if (retval < 0) {
     return(-2);
-    //handle_error(retval);
   }
   retval = PAPI_is_initialized();
   if (retval != PAPI_LOW_LEVEL_INITED) {
     return(-3);
-    //handle_error(retval);
   }
 
   /* Create empty PAPI event set */
   if (PAPI_create_eventset(&perf_papi_events) != PAPI_OK) {
-    fprintf(stderr, "Failed to create event set\n");
+    //fprintf(stderr, "Failed to create event set\n");
     return(-4);
-    //handle_error(1);
   }
 
   /* Add metric to the PAPI eventset */
   if (PAPI_add_event(perf_papi_events, PAPI_FP_OPS) != PAPI_OK) {
-    fprintf(stderr, "Failed to add PAPI_FP_INS event to PAPI event set\n");
+    //fprintf(stderr, "Failed to add PAPI_FP_INS event to PAPI event set\n");
     return(-5);
   }
 
@@ -199,18 +199,18 @@ int perf_init(int devicenum)
 
   /* Initialize CUDA API driver */
   if (cuInit(0) != CUDA_SUCCESS) {
-    fprintf(stderr, "Failed to initialize CUDA API driver\n");
+    //fprintf(stderr, "Failed to initialize CUDA API driver\n");
     return(-6);
   }
 
   if (cuDeviceGet(&perf_device, devicenum) != CUDA_SUCCESS) {
-    fprintf(stderr, "Failed to get device handle\n");
+    //fprintf(stderr, "Failed to get device handle\n");
     return(-7);
   }
 
   /* Create new context only if not in exclusive mode */
   if (cudaGetDeviceProperties(&deviceprops, devicenum) != cudaSuccess) {
-    fprintf(stderr, "Failed to get device propertiesn");
+    //fprintf(stderr, "Failed to get device propertiesn");
     return(-1);
   }
 
@@ -220,56 +220,41 @@ int perf_init(int devicenum)
     if (cuda_retval == CUDA_SUCCESS) {
       if (perf_context == NULL) {
 	if (cuCtxCreate(&perf_context, 0, perf_device) != CUDA_SUCCESS) {
-	  fprintf(stderr, "Failed to create new device context\n");
+	  //fprintf(stderr, "Failed to create new device context\n");
 	  return(-8);
 	}
 	perf_context_is_new = 1;
       }
     } else {
-      fprintf(stderr, "Failed to query current context - error %d\n", 
-	      (int)cuda_retval);
+      //fprintf(stderr, "Failed to query current context - error %d\n", 
+      //	      (int)cuda_retval);
       return(-8);
     }
   } else {
     if (cuCtxCreate(&perf_context, 0, perf_device) != CUDA_SUCCESS) {
-      fprintf(stderr, "Failed to create new device context\n");
+      //fprintf(stderr, "Failed to create new device context\n");
       return(-8);
     }
     perf_context_is_new = 1;
   }
 
-  //cuda_retval = cuCtxGetCurrent(&perf_context);
-  //if (cuda_retval == CUDA_SUCCESS) {
-  //  if (perf_context == NULL) {
-  //    if (cuCtxCreate(&perf_context, 0, perf_device) != CUDA_SUCCESS) {
-  //	fprintf(stderr, "Failed to create new device context\n");
-  //	return(-8);
-  //    }
-  //     perf_context_is_new = 1;
-  //  }
-  //} else {
-  //  fprintf(stderr, "Failed to query current context - error %d\n", 
-  //	    (int)cuda_retval);
-  // return(-8);
-  //}
-  
   /* allocate space to hold all the events needed for the metric */
   cupti_retval = cuptiMetricGetIdFromName(perf_device, 
 					  PERF_CUDA_FLOPS_METRIC, 
 					  &perf_metricId);
   if (cupti_retval != CUPTI_SUCCESS) {
-    const char *errstr;
-    cuptiGetResultString(cupti_retval, &errstr);
-    fprintf(stderr, "CUPTI ERROR: %s\n", errstr);
+    //const char *errstr;
+    //cuptiGetResultString(cupti_retval, &errstr);
+    //fprintf(stderr, "CUPTI ERROR: %s\n", errstr);
     return(-9);
   }
 
   cupti_retval = cuptiMetricGetNumEvents(perf_metricId, 
 					 &perf_metricData.numEvents);
   if (cupti_retval != CUPTI_SUCCESS) {
-    const char *errstr;
-    cuptiGetResultString(cupti_retval, &errstr);
-    fprintf(stderr, "CUPTI ERROR: %s\n", errstr);
+    //const char *errstr;
+    //cuptiGetResultString(cupti_retval, &errstr);
+    //fprintf(stderr, "CUPTI ERROR: %s\n", errstr);
     return(-9);
   }
 
@@ -285,15 +270,15 @@ int perf_init(int devicenum)
 					   &perf_metricId, 
 					   &passData);
   if (cupti_retval != CUPTI_SUCCESS) {
-    const char *errstr;
-    cuptiGetResultString(cupti_retval, &errstr);
-    fprintf(stderr, "CUPTI ERROR: %s\n", errstr);
+    //const char *errstr;
+    //cuptiGetResultString(cupti_retval, &errstr);
+    //fprintf(stderr, "CUPTI ERROR: %s\n", errstr);
     return(-9);
   }
 
   if (passData->numSets != 1) {
-    fprintf(stderr, "Too many passes required to compute metric (%d)\n", 
-	    passData->numSets);
+    //fprintf(stderr, "Too many passes required to compute metric (%d)\n", 
+    //	    passData->numSets);
     return(-9);
   }
   perf_metricData.eventGroups = passData->sets;
@@ -309,9 +294,6 @@ int perf_init(int devicenum)
   perf_flops_gpu_state = PERF_STATE_OFF;
   perf_mpi_state = PERF_STATE_OFF;
 
-  /* Create statistics datatype */
-  perf_create_datatype_stats(&PERF_DATATYPE_STAT);
-
   return(0);
 }
 
@@ -321,22 +303,20 @@ int perf_finalize()
   //  static CUcontext context = 0;
 
   if (perf_state != PERF_STATE_ON) {
-    fprintf(stderr, "Performance module is uninitialized\n");
+    //fprintf(stderr, "Performance module is uninitialized\n");
     return(-1);
   }
 
   /* Remove all events in the eventset */
   if (PAPI_cleanup_eventset(perf_papi_events) != PAPI_OK) {
-    fprintf(stderr, "Failed to cleanup papi eventset\n");
+    //fprintf(stderr, "Failed to cleanup papi eventset\n");
     return(-2);
-    //handle_error(1);
   }
   
   /* Free all memory and data structures, EventSet must be empty. */
   if (PAPI_destroy_eventset(&perf_papi_events) != PAPI_OK) {
-    fprintf(stderr, "Failed to destroy papi eventset\n");
+    //fprintf(stderr, "Failed to destroy papi eventset\n");
     return(-3);
-    //handle_error(1);
   }
 
   PAPI_shutdown();
@@ -344,20 +324,10 @@ int perf_finalize()
   /* Destroy the device context we created */
   if (perf_context_is_new) {
     if (cuCtxDetach(perf_context) != CUDA_SUCCESS) {
-      fprintf(stderr, "Failed to detach and destroy context\n");
+      //fprintf(stderr, "Failed to detach and destroy context\n");
       return(-4);
     }
   }
-
-  //while (cuCtxPopCurrent (&context) == CUDA_SUCCESS) {
-  //  if (context != 0) {
-  //    if (cuCtxDestroy(context) != CUDA_SUCCESS) {
-  //	fprintf(stderr, "Failed to destroy context\n");
-  //	return(-4);
-  //    }
-  //    context = 0;
-  //  }
-  //}
 
   free(perf_metricData.eventIdArray);
   free(perf_metricData.eventValueArray);
