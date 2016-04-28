@@ -1175,34 +1175,38 @@ void topography_elements_count(int32_t myID, mesh_t *myMesh ) {
     	esize = edata->edgesize;
     	Vol   = esize * esize *esize;
 
-    	if ( ( Vp != -1 ) && ( topo_crossings ( xo, yo, zo, esize ) == 1 )  && (
+		if ( ( Vp != -1 ) && ( topo_crossings ( xo, yo, zo, esize ) == 1 )  && (
+				( xo != 0.0 ) &&
+				( xo + esize != theDomainLong_ns ) &&
+				( yo != 0.0 ) &&
+				( yo + esize != theDomainLong_ew ) ) ) {
+			/* Check for enclosed volume   */
+			if (theTopoMethod == VT) {
+				TetrVolume ( xo, yo, zo, esize, aux_vol );
+				if ( ( aux_vol[0]==0 ) && ( aux_vol[1]==0 ) && ( aux_vol[2]==0 ) && ( aux_vol[3]==0 ) && ( aux_vol[4]==0 ) )  /* small enclosed volume */
+					get_airprops_topo( edata );  /* consider the element as an  air element */
+				else
+					count++;
+			} else
+				count++;
+	    }
+
+/*    	if ( ( Vp != -1 ) && ( topo_crossings ( xo, yo, zo, esize ) == 1 )  && (
     							 ( xo != 0.0 ) &&
     						     ( xo + esize != theDomainLong_ns ) &&
     						     ( yo != 0.0 ) &&
     						     ( yo + esize != theDomainLong_ew ) ) ) {
-    		/* Check for enclosed volume   */
+    		 Check for enclosed volume
     		TetrVolume ( xo, yo, zo, esize, aux_vol );
-    		if ( ( aux_vol[0]==0 ) && ( aux_vol[1]==0 ) && ( aux_vol[2]==0 ) && ( aux_vol[3]==0 ) && ( aux_vol[4]==0 ) ) { /* small enclosed volume */
-    			get_airprops_topo( edata );  /* consider the element as an  air element */
+    		if ( ( aux_vol[0]==0 ) && ( aux_vol[1]==0 ) && ( aux_vol[2]==0 ) && ( aux_vol[3]==0 ) && ( aux_vol[4]==0 ) ) {  small enclosed volume
+    			get_airprops_topo( edata );   consider the element as an  air element
     	        // fprintf( topoinfo,"%f     %f     %f     %f     \n", xo, yo, zo, esize );
     		} else {
     		count++;}
-    	}
+    	}*/
 
     }
 
-   // close(topoinfo);
-
-
-//		if ( ( Vp != -1 ) ) {
-//			if ( ( topo_crossings ( xo, yo, zo, esize ) == 1 ) && (
-//				 ( xo != 0.0 ) &&
-//			     ( xo + esize != theDomainLong_ns ) &&
-//			     ( yo != 0.0 ) &&
-//			     ( yo + esize != theDomainLong_ew ) ) ) {
-//				count++;
-//			}
-//		}
 
     if ( count > myMesh-> lenum ) {
         fprintf(stderr,"Thread %d: topography_elements_count: "
