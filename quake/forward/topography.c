@@ -1147,8 +1147,6 @@ void topography_elements_count(int32_t myID, mesh_t *myMesh ) {
     int32_t eindex;
     int32_t count         = 0;
 
-	//FILE  *topoinfo = hu_fopen( "topoElem.txt", "w" );
-
     for (eindex = 0; eindex < myMesh->lenum; eindex++) {
 
     	elem_t     *elemp;
@@ -1190,23 +1188,7 @@ void topography_elements_count(int32_t myID, mesh_t *myMesh ) {
 			} else
 				count++;
 	    }
-
-/*    	if ( ( Vp != -1 ) && ( topo_crossings ( xo, yo, zo, esize ) == 1 )  && (
-    							 ( xo != 0.0 ) &&
-    						     ( xo + esize != theDomainLong_ns ) &&
-    						     ( yo != 0.0 ) &&
-    						     ( yo + esize != theDomainLong_ew ) ) ) {
-    		 Check for enclosed volume
-    		TetrVolume ( xo, yo, zo, esize, aux_vol );
-    		if ( ( aux_vol[0]==0 ) && ( aux_vol[1]==0 ) && ( aux_vol[2]==0 ) && ( aux_vol[3]==0 ) && ( aux_vol[4]==0 ) ) {  small enclosed volume
-    			get_airprops_topo( edata );   consider the element as an  air element
-    	        // fprintf( topoinfo,"%f     %f     %f     %f     \n", xo, yo, zo, esize );
-    		} else {
-    		count++;}
-    	}*/
-
     }
-
 
     if ( count > myMesh-> lenum ) {
         fprintf(stderr,"Thread %d: topography_elements_count: "
@@ -1261,24 +1243,8 @@ void topography_elements_mapping(int32_t myID, mesh_t *myMesh) {
 
     		myTopoElementsMapping[count] = eindex;
     		count++;
-//    		/* Check for enclosed volume   */
-//    		TetrVolume ( xo, yo, zo, esize, aux_vol );
-//    		if ( ( aux_vol[0] != 0 ) || ( aux_vol[1] != 0 ) || ( aux_vol[2] != 0 ) || ( aux_vol[3] != 0 ) || ( aux_vol[4] != 0 ) ) { /* small enclosed volume */
-//    			myTopoElementsMapping[count] = eindex;
-//    			count++;
-//    		}
     	}
 
-//		if ( ( Vp != -1 ) ) {
-//			if ( ( topo_crossings ( xo, yo, zo, esize ) == 1 ) &&
-//			     ( ( xo != 0.0 ) &&
-//			       ( xo + esize != theDomainLong_ns ) &&
-//			       ( yo != 0.0 ) &&
-//			       ( yo + esize != theDomainLong_ew ) ) ) {
-//				myTopoElementsMapping[count] = eindex;
-//				count++;
-//			}
-//		}
 	}
 
 	if ( count != myTopoElementsCount ) {
@@ -1301,8 +1267,6 @@ void topo_solver_init(int32_t myID, mesh_t *myMesh) {
 
     topography_elements_count   ( myID, myMesh );
     topography_elements_mapping ( myID, myMesh );
-
-//    fprintf(stdout, "TopoElem=%d, MyID=%d\n", myTopoElementsCount, myID);
 
     /* Memory allocation for mother structure */
     myTopoSolver = (toposolver_t *)malloc(sizeof(toposolver_t));
