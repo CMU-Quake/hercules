@@ -275,8 +275,27 @@ double point_to_plane( double xp, double yp, double zp, double xo, double yo, do
 
 }
 
-/* returns the zp coordinate of a point inside a plane using linear interp   */
+/* returns the zp coordinate of a point inside a plane using bi-linear interp   */
 double interp_z( double xp, double yp, double xo, double yo, double h, double zcoords[4] )
+{
+
+	double eta, psi, zp;
+
+	eta = 2.0 * ( xp - ( xo + h / 2.0 ) ) / h;
+	psi = 2.0 * ( yp - ( yo + h / 2.0 ) ) / h;
+
+	zp  = 0.25 * ( ( 1.0 - eta ) * (1.0 - psi ) * zcoords[0] +
+			       ( 1.0 - eta ) * (1.0 + psi ) * zcoords[1] +
+			       ( 1.0 + eta ) * (1.0 + psi ) * zcoords[2] +
+			       ( 1.0 + eta ) * (1.0 - psi ) * zcoords[3] );
+
+	return zp;
+}
+
+
+
+/* returns the zp coordinate of a point inside a plane using linear interp   */
+/*double interp_z( double xp, double yp, double xo, double yo, double h, double zcoords[4] )
 {
 	double x1, y1, mag;
 	vector3D_t V1, V2, V3, V4, N;
@@ -322,7 +341,7 @@ double interp_z( double xp, double yp, double xo, double yo, double h, double zc
 	N.x[1]  = V4.x[1] / mag;
 	N.x[2]  = V4.x[2] / mag;
 
-	/*  Sanity check   */
+	  Sanity check
 	if ( N.x[2] == 0 ) {
 
         fprintf(stderr,"Thread 1: Topography module interp_z fnc: "
@@ -333,7 +352,7 @@ double interp_z( double xp, double yp, double xo, double yo, double h, double zc
 
 	return zcoords[0] - ( N.x[0] * x1 + N.x[1] * y1) / N.x[2];
 
-}
+}*/
 
 /* returns the elevation value of a point with plane coordinates (xo,yo).
  * Elevation is measured with respect to Hercules' Z global axis  */
@@ -369,6 +388,7 @@ double point_elevation ( double xo, double yo ) {
 		}
 
 		zp = thebase_zcoord - interp_z( xp, yp, x_o*So, y_o*So, So, mesh_cz );
+
 	}
 
 	return zp;
