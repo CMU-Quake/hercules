@@ -292,8 +292,6 @@ double interp_z( double xp, double yp, double xo, double yo, double h, double zc
 	return zp;
 }
 
-
-
 /* returns the zp coordinate of a point inside a plane using linear interp   */
 /*double interp_z( double xp, double yp, double xo, double yo, double h, double zcoords[4] )
 {
@@ -341,7 +339,7 @@ double interp_z( double xp, double yp, double xo, double yo, double h, double zc
 	N.x[1]  = V4.x[1] / mag;
 	N.x[2]  = V4.x[2] / mag;
 
-	  Sanity check
+	  // Sanity check
 	if ( N.x[2] == 0 ) {
 
         fprintf(stderr,"Thread 1: Topography module interp_z fnc: "
@@ -425,14 +423,6 @@ double point_PlaneDist ( double xp, double yp, double zp ) {
 	    return dist;
 	}
 
-//	if ( (mesh_cz[0] == mesh_cz[1]) && (mesh_cz[1] == mesh_cz[2]) && (mesh_cz[2] == mesh_cz[3] ) ) {
-
-		// double po=90;
-		//fprintf(stdout,"elv1=%f, elev2=%f, elev3=%f, elev4=%f, xp=%f, yp=%f, zp=%f, i=%d, j=%d \n", mesh_cz[0], mesh_cz[1], mesh_cz[2], mesh_cz[3], xp, yp, zp, i, j );
-
-//	}
-
-
 	dist = point_to_plane( xp, yp, zp, x_o*So, y_o*So, So, mesh_cz );
 
 	return dist;
@@ -515,6 +505,13 @@ void topo_searchII ( octant_t *leaf, double ticksize, edata_t *edata, int *to_to
 	yo = leaf->ly * ticksize;
 	zo = leaf->lz * ticksize;
 	esize  = (double)edata->edgesize;
+
+	/* check for octant outside the domain boundaries */
+	if ( ( (xo+esize) > theDomainLong_ns ) || ( (yo + esize) > theDomainLong_ew ) ) {
+		*to_topoSetrec = -1;
+		*to_topoExpand = -1;
+		return;
+	}
 
 	emin = ( (tick_t)1 << (PIXELLEVEL - theMaxoctlevel) ) * ticksize;
 	double Del = esize / (np - 1);
@@ -1853,12 +1850,6 @@ void compute_tetra_localcoord ( vector3D_t point, elem_t *elemp,
 	int i;
 	double eta, psi, gamma;
 	double xp1, yp1, zp1, tol=-1.0e-5;
-
-//	double po;
-//
-//	if ( point.x[0]==42900.000000 && point.x[1]==49100.000000 && point.x[2]==3700.000000)
-//		po=98;
-
 
 	if ( ( ( xo <  theDomainLong_ns / 2.0  ) && ( yo <  theDomainLong_ew / 2.0 ) ) ||
 	     ( ( xo >= theDomainLong_ns / 2.0 ) && ( yo >= theDomainLong_ew / 2.0 ) ) )
