@@ -57,7 +57,7 @@
 #include "buildings.h"
 #include "drm.h"
 #include "meshformatlab.h"
-
+#include "topography.h"
 
 /* ONLY GLOBAL VARIABLES ALLOWED OUTSIDE OF PARAM. and GLOBAL. IN ALL OF PSOLVE!! */
 MPI_Comm comm_solver;
@@ -227,6 +227,7 @@ static struct Param_t {
     noyesflag_t  printK;
     noyesflag_t  printStationAccelerations;
     noyesflag_t  includeBuildings;
+    noyesflag_t  includeTopography;
     noyesflag_t  includeNonlinearAnalysis;
     noyesflag_t  useInfQk;
     int  theTimingBarriersFlag;
@@ -367,7 +368,7 @@ monitor_print( const char* format, ... )
 static void read_parameters( int argc, char** argv ){
 
 #define LOCAL_INIT_DOUBLE_MESSAGE_LENGTH 18  /* Must adjust this if adding double params */
-#define LOCAL_INIT_INT_MESSAGE_LENGTH 20     /* Must adjust this if adding int params */
+#define LOCAL_INIT_INT_MESSAGE_LENGTH 21     /* Must adjust this if adding int params */
 
     double  double_message[LOCAL_INIT_DOUBLE_MESSAGE_LENGTH];
     int     int_message[LOCAL_INIT_INT_MESSAGE_LENGTH];
@@ -446,7 +447,7 @@ static void read_parameters( int argc, char** argv ){
     int_message[17] = (int)Param.drmImplement;
     int_message[18] = (int)Param.useInfQk;
     int_message[19] = Param.theStepMeshingFactor;
-
+    int_message[20] = (int)Param.includeTopography;
 
     MPI_Bcast(int_message, LOCAL_INIT_INT_MESSAGE_LENGTH, MPI_INT, 0, comm_solver);
 
@@ -470,6 +471,7 @@ static void read_parameters( int argc, char** argv ){
     Param.drmImplement                   = int_message[17];
     Param.useInfQk                       = int_message[18];
     Param.theStepMeshingFactor           = int_message[19];
+    Param.includeTopography              = int_message[20];
 
     /*Broadcast all string params*/
     MPI_Bcast (Param.parameters_input_file,  256, MPI_CHAR, 0, comm_solver);
@@ -669,7 +671,8 @@ static int32_t parse_parameters( const char* numericalin )
               print_station_accelerations[64],
 	      	  mesh_coordinates_for_matlab[64],
     		  implement_drm[64],
-    		  use_infinite_qk[64];
+    		  use_infinite_qk[64],
+    		  include_topography[64];
 
     damping_type_t   typeOfDamping     = -1;
     stiffness_type_t stiffness_method  = -1;
@@ -681,8 +684,8 @@ static int32_t parse_parameters( const char* numericalin )
     noyesflag_t      useInfQk          = -1;
 
     noyesflag_t      meshCoordinatesForMatlab  = -1;
-    noyesflag_t      implementdrm  = -1;
-
+    noyesflag_t      implementdrm              = -1;
+    noyesflag_t		 haveTopography            = -1;
 
     /* Obtain the specification of the simulation */
     if ((fp = fopen(physicsin, "r")) == NULL)
@@ -774,6 +777,7 @@ static int32_t parse_parameters( const char* numericalin )
         (parsetext(fp, "include_buildings",              's', &include_buildings           ) != 0) ||
         (parsetext(fp, "mesh_coordinates_for_matlab",    's', &mesh_coordinates_for_matlab ) != 0) ||
         (parsetext(fp, "implement_drm",    				 's', &implement_drm               ) != 0) ||
+        (parsetext(fp, "include_topography",    		 's', &include_topography          ) != 0) ||       
         (parsetext(fp, "simulation_velocity_profile_freq_hz",'d', &freq_vel                ) != 0) ||
         (parsetext(fp, "use_infinite_qk",                's', &use_infinite_qk             ) != 0) )
     {
@@ -983,6 +987,16 @@ static int32_t parse_parameters( const char* numericalin )
             "Unknown response using infinite Qk (yes or no): %s\n",
                 use_infinite_qk);
     }
+    
+    if ( strcasecmp(include_topography, "yes") == 0 ) {
+        haveTopography = YES;
+    } else if ( strcasecmp(include_topography, "no") == 0 ) {
+        haveTopography = NO;
+    } else {
+        solver_abort( __FUNCTION_NAME, NULL,
+                "Unknown response for include_topography (yes or no): %s\n",
+                include_topography );
+    }
 
     /* Init the static global variables */
 
@@ -1035,6 +1049,8 @@ static int32_t parse_parameters( const char* numericalin )
 
     Param.drmImplement              = implementdrm;
 
+    Param.includeTopography         = haveTopography;
+
     strcpy( Param.theCheckPointingDirOut, checkpoint_path );
 
     monitor_print("\n\n---------------- Some Input Data ----------------\n\n");
@@ -1050,6 +1066,7 @@ static int32_t parse_parameters( const char* numericalin )
     monitor_print("Mesh Coordinates For Matlab:        %s\n", mesh_coordinates_for_matlab);
     monitor_print("cvmdb_input_file:                   %s\n", Param.cvmdb_input_file);
     monitor_print("Implement drm:      	               %s\n", implement_drm);
+    monitor_print("Include Topography:                 %s\n", include_topography);
     monitor_print("\n-------------------------------------------------\n\n");
 
     fflush(Param.theMonitorFileFp);
@@ -1332,6 +1349,12 @@ setrec( octant_t* leaf, double ticksize, void* data )
         }
     }
 
+    if ( Param.includeTopography == YES ) {
+        if ( topo_setrec( leaf, ticksize, edata, Global.theCVMEp ) ) {
+            return;
+        }
+    }
+
     g_props_min.Vs  = FLT_MAX;
     g_props_min.Vp  = NAN;
     g_props_min.rho = NAN;
@@ -1350,6 +1373,27 @@ setrec( octant_t* leaf, double ticksize, void* data )
 
 		z_m = Global.theZForMeshOrigin
 		    + (leaf->lz +  points[i_z] * halfticks) * ticksize;
+
+		/* Shift the domain if topography with squashed etree is considered */
+		if ( ( Param.includeTopography == YES ) && ( get_theetree_type() == SQD )  ) {
+                    z_m -=   point_elevation ( x_m, y_m ) ;
+                    if ( z_m < 0 ) /* get air properties */
+                    {
+                    	edata_t* airedata = (edata_t*)data;
+                    	get_airprops_topo( airedata );
+                    	g_props.Vp  = airedata->Vp;
+                    	g_props.Vs  = airedata->Vs;
+                    	g_props.rho = airedata->rho;
+
+                		if ( g_props.Vs < g_props_min.Vs ) {
+                		    /* assign minimum value of vs to produce elements
+                		     * that are small enough to rightly represent the model */
+                		    g_props_min = g_props;
+                		}
+
+                		continue;
+                    }
+		}
 
 		/* Shift the domain if buildings are considered */
 		if ( Param.includeBuildings == YES ) {
@@ -2065,7 +2109,7 @@ mesh_generate()
             fprintf(stdout, "Partitioning ");
             fflush(stdout);
         }
-        if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
+        if (octor_partitiontree(Global.myOctree, bldgs_nodesearch_com,pushdowns_nodesearch) != 0) {
             fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",Global.myID);
             MPI_Abort(MPI_COMM_WORLD, ERROR); exit(1);
         }
@@ -2089,41 +2133,48 @@ mesh_generate()
         MPI_Barrier(comm_solver);
     }
 
-    /* Buildings Carving */
+    /* gggg */
+
+    /* Buildings/Topography Carving */
+//    if ( Param.includeBuildings == YES ||  Param.includeTopography == YES ) {
     if ( Param.includeBuildings == YES ) {
+    	int flag = 0;
+    	Timer_Start("Carve Buildings");
+    	if (Global.myID == 0) {
+    		fprintf(stdout, "Carving Buildings/Topography");
+    		fflush(stdout);
+    	}
 
-        Timer_Start("Carve Buildings");
-        if (Global.myID == 0) {
-            fprintf(stdout, "Carving buildings");
-            fflush(stdout);
-        }
+    	if(Param.includeBuildings == YES) flag = 1;
 
-        /* NOTE: If you want to see the carving process, comment next line */
-        octor_carvebuildings(Global.myOctree, 1, bldgs_nodesearch);
-        MPI_Barrier(comm_solver);
-        Timer_Stop("Carve Buildings");
-        if (Global.myID == 0) {
-            fprintf(stdout, "%9.2f\n", Timer_Value("Carve Buildings", 0) );
-            fflush(stdout);
-        }
 
-        Timer_Start("Octor Partitiontree");
-        if (Global.myID == 0) {
-            fprintf(stdout, "Repartitioning");
-            fflush(stdout);
-        }
-        if (octor_partitiontree(Global.myOctree, bldgs_nodesearch) != 0) {
-            fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",
-                    Global.myID);
-            MPI_Abort(MPI_COMM_WORLD, ERROR);
-            exit(1);
-        }
-        MPI_Barrier(comm_solver);
-        Timer_Stop("Octor Partitiontree");
-        if (Global.myID == 0) {
-            fprintf(stdout, "%9.2f\n", Timer_Value("Octor Partitiontree", 0));
-            fflush(stdout);
-        }
+    	/* NOTE: If you want to see the carving process, comment next line */
+
+    	octor_carvebuildings(Global.myOctree, flag, bldgs_nodesearch_com,pushdowns_search);
+    	MPI_Barrier(comm_solver);
+    	Timer_Stop("Carve Buildings");
+    	if (Global.myID == 0) {
+    		fprintf(stdout, "%9.2f\n", Timer_Value("Carve Buildings", 0) );
+    		fflush(stdout);
+    	}
+
+    	Timer_Start("Octor Partitiontree");
+    	if (Global.myID == 0) {
+    		fprintf(stdout, "Repartitioning");
+    		fflush(stdout);
+    	}
+    	if (octor_partitiontree(Global.myOctree, bldgs_nodesearch_com,pushdowns_nodesearch) != 0) {
+    		fprintf(stderr, "Thread %d: mesh_generate: fail to balance load\n",
+    				Global.myID);
+    		MPI_Abort(MPI_COMM_WORLD, ERROR);
+    		exit(1);
+    	}
+    	MPI_Barrier(comm_solver);
+    	Timer_Stop("Octor Partitiontree");
+    	if (Global.myID == 0) {
+    		fprintf(stdout, "%9.2f\n", Timer_Value("Octor Partitiontree", 0));
+    		fflush(stdout);
+    	}
     }
 
     if ( Global.myID == 0 && Param.theStepMeshingFactor !=0 ) {
@@ -2138,7 +2189,9 @@ mesh_generate()
         fprintf(stdout, "Extracting the mesh %30s","");
         fflush(stdout);
     }
-    Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch);
+    Global.myMesh = octor_extractmesh(Global.myOctree, bldgs_nodesearch,pushdowns_nodesearch,bldgs_nodesearch_com,
+    		find_topoAirOct, topo_nodesearch);
+
     if (Global.myMesh == NULL) {
         fprintf(stderr, "Thread %d: mesh_generate: fail to extract mesh\n",
                 Global.myID);
@@ -2201,6 +2254,13 @@ toexpand(octant_t *leaf, double ticksize, const void *data) {
 	if ( Param.drmImplement == YES) {
 		//if( Param.drmImplement == YES && Param.theDrmPart != PART1 ) {
 		res = drm_toexpand( leaf, ticksize, edata );
+		if ( res != -1 ) {
+			return res;
+		}
+	}
+
+	if ( Param.includeTopography == YES ) {
+		res = topo_toexpand( leaf, ticksize, edata, Param.theFactor );
 		if ( res != -1 ) {
 			return res;
 		}
@@ -2846,6 +2906,10 @@ static void solver_set_critical_T()
 	double	 VpVsZ;	      /* the result of Vp / Vs * zeta		      */
 	double	 Vs;	      /* the Vs					      */
 
+	/* yigit says -- Buildings assume 5% damping */
+	int64_t   n_0;
+	double    z_m;
+
 	/* Captures the element */
 
 	elemp = &Global.myMesh->elemTable[eindex];
@@ -2853,13 +2917,30 @@ static void solver_set_critical_T()
 
 	/* Calculate the clue quantities */
 
-	ratio	    = edata->edgesize / edata->Vp;
+	if ( edata->Vp != -1 )
+		ratio	    = edata->edgesize / edata->Vp;
+	else
+		ratio = 1e32;
 
 	/* Old formula for damping */
 	/* zeta	       = (edata->Vs < 1500) ? 25 / edata->Vs : 5 / edata->Vs; */
 	/* New formula acording to Graves */
 
+
+	n_0 = Global.myMesh->elemTable[eindex].lnid[0];
+	z_m = Global.theZForMeshOrigin + (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].z;
+
+	/* Shift the domain if buildings are considered */
+	if ( Param.includeBuildings == YES ) {
+		z_m -= get_surface_shift();
+	}
+
 	zeta	    = 10 / edata->Vs;
+
+	/*If element is in the building, use 5% damping.*/
+	if (z_m < 0) {
+		zeta = 0.05;
+	}
 
 	omega	    = 3.46410161514 / ratio;
 	a	    = zeta * Global.theABase;
@@ -3239,6 +3320,13 @@ void mu_and_lambda(double *theMu, double *theLambda,
 
     double mu, lambda;
 
+// This is added for the treatment of air elements
+    if ( ( edata->Vp == -1 ) && ( edata->rho == 0 ) ) {
+    	*theMu     = 0;
+    	*theLambda = 0;
+    	return;
+    }
+
     mu = edata->rho * edata->Vs * edata->Vs;
 
     if ( edata->Vp > (edata->Vs * Param.theThresholdVpVs) ) {
@@ -3375,6 +3463,12 @@ static void solver_init()
 
         double zeta, a, b;
 
+    	/* yigit says -- Buildings assume 5% damping */
+
+        int32_t   n_0;
+        double    z_m;
+
+
         /* Note the difference between the two tables */
         elemp = &Global.myMesh->elemTable[eindex];
         edata = (edata_t *)elemp->data;
@@ -3393,8 +3487,21 @@ static void solver_init()
         /* Old formula for damping */
         /* zeta = (edata->Vs < 1500) ? 25 / edata->Vs : 5 / edata->Vs; */
 
+        n_0 = Global.myMesh->elemTable[eindex].lnid[0];
+        z_m = Global.theZForMeshOrigin + (Global.myOctree->ticksize)*Global.myMesh->nodeTable[n_0].z;
+
+        /* Shift the domain if buildings are considered */
+        if ( Param.includeBuildings == YES ) {
+        	z_m -= get_surface_shift();
+        }
+
         /* New formula for damping according to Graves */
-        	zeta = 10 / edata->Vs;
+        zeta = 10 / edata->Vs;
+
+        /* If element is in a building, use 5% damping */
+        if ( (z_m < 0) && ( Param.includeBuildings == YES  ) ) { /* Dorian says: This is only valid for buildings  */
+        	zeta = 0.05;
+        }
 
         if ( zeta > Param.theThresholdDamping ) {
         	zeta = Param.theThresholdDamping;
@@ -3436,6 +3543,23 @@ static void solver_init()
         mass = edata->rho * edata->edgesize * edata->edgesize *edata->edgesize;
         M    = mass / 8;
 
+        /* Essential for topography module:   */
+        /* Here I correct the nodal mass in the case that topography exists  */
+        double nodesMass[8]={0};
+
+        /* get element coordinates */
+        double  xo       = Global.myMesh->ticksize * Global.myMesh->nodeTable[lnid0].x;
+        double  yo       = Global.myMesh->ticksize * Global.myMesh->nodeTable[lnid0].y;
+        double  zo       = Global.myMesh->ticksize * Global.myMesh->nodeTable[lnid0].z;
+
+        if ( Param.includeTopography == YES ) {
+        	toponodes_mass( eindex, nodesMass, M, xo, yo, zo );
+        } else {
+    		for (j = 0; j < 8; j++) {
+    			nodesMass[j] = M;
+    		}
+        }
+
         /* For each node */
         for (j = 0; j < 8; j++)
         {
@@ -3445,6 +3569,8 @@ static void solver_init()
 
             lnid = elemp->lnid[j];
             np   = &Global.mySolver->nTable[lnid];
+
+            M = nodesMass[j];
 
             np->mass_simple += M;
 
@@ -3911,7 +4037,7 @@ static void solver_nonlinear_state( mysolver_t *solver,
     if ( Param.includeNonlinearAnalysis == YES ) {
         Timer_Start( "Compute Non-linear Entities" );
         compute_nonlinear_state ( mesh, solver, Param.theNumberOfStations,
-                                  Param.myNumberOfStations, Param.myStations, Param.theDeltaT );
+                                  Param.myNumberOfStations, Param.myStations, Param.theDeltaT, step );
         if ( get_geostatic_total_time() > 0 ) {
             compute_bottom_reactions( mesh, solver, k1, k2, step, Param.theDeltaT );
         }
@@ -3990,7 +4116,10 @@ solver_compute_force_damping( mysolver_t *solver,
 
 	if(Param.theTypeOfDamping == RAYLEIGH  || Param.theTypeOfDamping == MASS)
 	{
-		damping_addforce(Global.myMesh, Global.mySolver, Global.theK1, Global.theK2);
+		/* Dorian says: The Mass and Rayleigh damping are implicitly considered in the nodal mass
+		 * and the stiffness computation module  */
+
+		//damping_addforce(Global.myMesh, Global.mySolver, Global.theK1, Global.theK2);
 	}
 	else if(Param.theTypeOfDamping == BKT)
 	{
@@ -4017,6 +4146,23 @@ solver_compute_force_nonlinear( mysolver_t *solver,
         Timer_Start( "Compute addforces Non-linear" );
         compute_addforce_nl( mesh, solver, deltaT2 );
         Timer_Stop( "Compute addforces Non-linear" );
+    }
+}
+
+
+/**
+ * Compute the topography contribution to the force.
+ * \param deltaT2 Delta t^2 (i.e., squared).
+ */
+static void
+solver_compute_force_topography( mysolver_t *solver,
+                                mesh_t     *mesh,
+                                double      deltaT2 )
+{
+    if ( Param.includeTopography == YES ) {
+        Timer_Start( "Compute addforces Topography" );
+        compute_addforce_topoEffective( mesh, solver, deltaT2 );
+        Timer_Stop( "Compute addforces Topography" );
     }
 }
 
@@ -4081,6 +4227,7 @@ solver_compute_displacement( mysolver_t* solver, mesh_t* mesh )
         fvector_t        nodalForce = solver->force[nindex];
         const fvector_t* tm1Disp    = solver->tm1 + nindex;
         fvector_t*       tm2Disp    = solver->tm2 + nindex;
+        fvector_t*       tm3Disp    = solver->tm3 + nindex;
 
         /* total nodal forces */
         nodalForce.f[0] += np->mass2_minusaM[0] * tm1Disp->f[0]
@@ -4090,20 +4237,43 @@ solver_compute_displacement( mysolver_t* solver, mesh_t* mesh )
         nodalForce.f[2] += np->mass2_minusaM[2] * tm1Disp->f[2]
                          - np->mass_minusaM[2]  * tm2Disp->f[2];
 
-        /* Save tm3 for accelerations */
-        if ( Param.printStationAccelerations == YES ) {
-
-            fvector_t* tm3Disp = solver->tm3 + nindex;
-
-            tm3Disp->f[0] = tm2Disp->f[0];
-            tm3Disp->f[1] = tm2Disp->f[1];
-            tm3Disp->f[2] = tm2Disp->f[2];
+        /* overwrite tm2 */
+        /* mass sanity check */
+        if (np->mass_simple < 0) {
+            fprintf(stderr,
+                    "Negative lumped mass m=%f. Node ID=%d \n", np->mass_simple, nindex);
+            MPI_Abort(MPI_COMM_WORLD, ERROR);
+            exit(1);
         }
 
-        /* overwrite tm2 */
-        tm2Disp->f[0] = nodalForce.f[0] / np->mass_simple;
-        tm2Disp->f[1] = nodalForce.f[1] / np->mass_simple;
-        tm2Disp->f[2] = nodalForce.f[2] / np->mass_simple;
+        /* Dorian. correct Displacement */
+         // TODO: Think of a better place for this
+        if ( np->mass_simple != 0 ) {
+
+            /* Save tm3 for accelerations */
+            if ( Param.printStationAccelerations == YES ) {
+
+                tm3Disp->f[0] = tm2Disp->f[0];
+                tm3Disp->f[1] = tm2Disp->f[1];
+                tm3Disp->f[2] = tm2Disp->f[2];
+            }
+
+        	tm2Disp->f[0] = nodalForce.f[0] / np->mass_simple;
+        	tm2Disp->f[1] = nodalForce.f[1] / np->mass_simple;
+        	tm2Disp->f[2] = nodalForce.f[2] / np->mass_simple;
+        }
+        else {
+        	tm2Disp->f[0] = 0.0;
+        	tm2Disp->f[1] = 0.0;
+        	tm2Disp->f[2] = 0.0;
+
+            tm3Disp->f[0] = 0.0;
+            tm3Disp->f[1] = 0.0;
+            tm3Disp->f[2] = 0.0;
+        }
+
+
+
 
     } /* for (nindex ...): all my harbored nodes */
 
@@ -4275,7 +4445,8 @@ static void solver_run()
         Timer_Start( "Solver I/O" );
         solver_write_checkpoint( step, startingStep );
         solver_update_status( step, startingStep );
-        solver_output_wavefield( step );
+        // Todo Dorian. Ask Ricardo about this file (disp.out), it gets really big at high frequencies, and it is not clear its purpose.
+        //solver_output_wavefield( step );
         solver_output_planes( Global.mySolver, Global.myID, step );
         solver_output_stations( step );
         solver_output_drm_nodes( Global.mySolver, step, Param.theTotalSteps );
@@ -4287,10 +4458,12 @@ static void solver_run()
         solver_nonlinear_state( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2, step );
         solver_compute_force_source( step );
         solver_compute_effective_drm_force( Global.mySolver, Global.myMesh,Global.theK1, Global.theK2, step, Param.theDeltaT );
+        solver_compute_force_topography( Global.mySolver, Global.myMesh, Param.theDeltaTSquared );
         solver_compute_force_stiffness( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2 );
         solver_compute_force_damping( Global.mySolver, Global.myMesh, Global.theK1, Global.theK2 );
         solver_compute_force_gravity( Global.mySolver, Global.myMesh, step );
         solver_compute_force_nonlinear( Global.mySolver, Global.myMesh, Param.theDeltaTSquared );
+
         Timer_Stop( "Compute Physics" );
 
         Timer_Start( "Communication" );
@@ -6300,6 +6473,12 @@ source_init( const char* physicsin )
 			surfaceShift = get_surface_shift();
 		}
 
+		//TODO: check that this shifting only has effect here
+	//	if ( Param.includeTopography == YES ) {
+	//		surfaceShift = get_thebase_topo();
+	//	}
+
+
 		/* it will create the files to be read each time step to
        load (force) the mesh */
 		if ( compute_print_source( physicsin, Global.myOctree, Global.myMesh,
@@ -6431,10 +6610,56 @@ compute_csi_eta_dzeta( octant_t* octant, vector3D_t pointcoords,
         exit(1);
     }
 
-    /* Derive the local coordinate of the source inside the element */
-    localcoords->x[0] =  2*(xGlobal- center_x)/h;
-    localcoords->x[1] =  2*(yGlobal- center_y)/h;
-    localcoords->x[2] =  2*(zGlobal- center_z)/h;
+	localcoords->x[0] =  2*(xGlobal- center_x)/h;
+	localcoords->x[1] =  2*(yGlobal- center_y)/h;
+	localcoords->x[2] =  2*(zGlobal- center_z)/h;
+
+    /* redefine local coordinates and nodes to interpolate if VT is on */
+
+	//FILE  *topoinfo = hu_fopen( "topoElem.txt", "w" );
+
+	if ( ( Param.includeTopography == YES ) && ( BelongstoTopography ( Global.myMesh, eindex) )
+		 && (get_topo_meth() == VT ) && (Param.drmImplement == NO) ) {
+		elem_t  *elemp;
+		edata_t *edata;
+
+		elemp  = &Global.myMesh->elemTable[eindex];
+		edata = (edata_t *)elemp->data;
+
+		/* Calculate the element's origin */
+		double xo = Global.myMesh->ticksize * octant->lx;
+		double yo = Global.myMesh->ticksize * octant->ly;
+		double zo = Global.myMesh->ticksize * octant->lz;
+
+//		Check for air element. This should not happen at this point
+//		if ( edata->Vp == -1 ) {
+
+//			fprintf(stdout,"Strip on air element: xo=%f, yo=%f, zo=%f, esize=%f \n",xo, yo, zo, h );
+
+//			fprintf(stderr,"Error: Found topography element with Vp=-1 \n "
+//					"compute_csi_eta_dzeta fnc\n");
+//			MPI_Abort(MPI_COMM_WORLD, ERROR);
+//			exit(1);
+//		}
+
+		double aux[3] = {0};
+
+		compute_tetra_localcoord ( pointcoords, elemp,
+				localNodeID, aux, xo, yo, zo, h );
+
+		localcoords->x[0] = aux[0];
+		localcoords->x[1] = aux[1];
+		localcoords->x[2] = aux[2];
+
+		*(localNodeID + 4)=0;
+		*(localNodeID + 5)=0;
+		*(localNodeID + 6)=0;
+		*(localNodeID + 7)=0;
+
+
+	}
+
+	//close(topoinfo);
 
     return 1;
 }
@@ -6514,8 +6739,14 @@ read_stations_info( const char* numericalin )
 	Param.theStationZ [ iStation ] = depth;
 
 	if ( Param.includeBuildings == YES ) {
-	    Param.theStationZ [ iStation ] += get_surface_shift();
+		Param.theStationZ [ iStation ] += get_surface_shift();
 	}
+	if ( Param.includeTopography == YES ) {
+		//	    Param.theStationZ [ iStation ] += get_thebase_topo();
+		/* Dorian: place stations on surface */
+		Param.theStationZ [ iStation ] +=  point_elevation ( coords.x[0], coords.x[1] );
+	}
+
     }
 
     free( auxiliar );
@@ -6586,8 +6817,8 @@ void setup_stations_data()
     /* allocate memory if necessary and generate the list of stations per
      * processor */
     if (Param.myNumberOfStations != 0) {
-	monitor_print( "PE=%d local_stations=%d total_station_count=%d\n",
-		       Global.myID, Param.myNumberOfStations, Param.theNumberOfStations );
+//	monitor_print( "PE=%d local_stations=%d total_station_count=%d\n",
+//		       Global.myID, Param.myNumberOfStations, Param.theNumberOfStations );
 
 	XMALLOC_VAR_N( Param.myStations, station_t, Param.myNumberOfStations );
     }
@@ -6658,8 +6889,7 @@ void setup_stations_data()
 	                "    Epsilon_XY      Sigma_XY"
 	                "    Epsilon_YZ      Sigma_YZ"
 	                "    Epsilon_XZ      Sigma_XZ"
-	                "        lambda            Fs"
-	                "             k",
+	                "        Fs     ",
 	                Param.myStations[iLCStation].fpoutputfile );
 	    }
 
@@ -6709,6 +6939,43 @@ interpolate_station_displacements( int32_t step )
         dis_y = 0;
         dis_z = 0;
 
+        vel_x = 0;
+        vel_y = 0;
+        vel_z = 0;
+
+        acc_x = 0;
+        acc_y = 0;
+        acc_z = 0;
+
+        double time = Param.theDeltaT * step;
+
+        if ( ( Param.includeTopography == YES ) &&
+        		( compute_tetra_displ (&dis_x, &dis_y, &dis_z,
+        				&vel_x, &vel_y, &vel_z,
+        				&acc_x, &acc_y, &acc_z,
+        				Param.theDeltaT, Param.theDeltaTSquared,
+        				iStation,Global.mySolver) == 1 ) ) {
+
+        	fprintf( Param.myStations[iStation].fpoutputfile,
+        			"\n%10.6f % 8e % 8e % 8e",
+        			time, dis_x, dis_y, dis_z );
+
+        	if (  Param.printStationVelocities    == YES ) {
+        		fprintf( Param.myStations[iStation].fpoutputfile,
+        				" % 8e % 8e % 8e", vel_x, vel_y, vel_z );
+        	}
+
+        	if ( Param.printStationAccelerations == YES ) {
+        		fprintf( Param.myStations[iStation].fpoutputfile,
+        				" % 8e % 8e % 8e", acc_x, acc_y, acc_z );
+        	}
+
+        	if ( (step % (Param.theStationsPrintRate*10)) == 0 ) {
+        		fflush(Param.myStations[iStation].fpoutputfile);
+        	}
+
+        } else {
+
         for (iPhi = 0; iPhi < 8; iPhi++) {
             phi[ iPhi ] = ( 1 + xi[0][iPhi]*localCoords.x[0] )
 		                * ( 1 + xi[1][iPhi]*localCoords.x[1] )
@@ -6718,8 +6985,6 @@ interpolate_station_displacements( int32_t step )
             dis_y += phi[iPhi] * Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[1];
             dis_z += phi[iPhi] * Global.mySolver->tm1[ nodesToInterpolate[iPhi] ].f[2];
         }
-
-        double time = Param.theDeltaT * step;
 
         /*
          * Please DO NOT CHANGE the format for printing the displacements.
@@ -6788,6 +7053,8 @@ interpolate_station_displacements( int32_t step )
 	/* TODO: Have this 10 as a parameter with a default value */
         if ( (step % (Param.theStationsPrintRate*10)) == 0 ) {
             fflush(Param.myStations[iStation].fpoutputfile);
+        }
+
         }
     }
 
@@ -7107,7 +7374,7 @@ mesh_correct_properties( etree_t* cvm )
     edata_t* edata;
     int32_t  eindex;
     double   east_m, north_m, depth_m, VpVsRatio, RhoVpRatio;
-    int	     res, iNorth, iEast, iDepth, numPoints = 3;
+    int	     res, iNorth, iEast, iDepth, numPoints = 3, cnt=0;
     double   vs, vp, rho;
     double   points[3];
     int32_t  lnid0;
@@ -7134,6 +7401,13 @@ mesh_correct_properties( etree_t* cvm )
         edata = (edata_t*)elemp->data;
         lnid0 = Global.myMesh->elemTable[eindex].lnid[0];
 
+        if ( Param.includeTopography == YES ) {
+            if( topo_correctproperties( edata ) ) {
+                continue;
+            }
+        }
+
+
         if ( Param.includeBuildings == YES ) {
             if( bldgs_correctproperties( Global.myMesh, edata, lnid0) ) {
                 continue;
@@ -7143,6 +7417,7 @@ mesh_correct_properties( etree_t* cvm )
         vp  = 0;
         vs  = 0;
         rho = 0;
+        cnt = 0;
 
         for (iNorth = 0; iNorth < numPoints; iNorth++) {
 
@@ -7176,24 +7451,44 @@ mesh_correct_properties( etree_t* cvm )
         				//                        }
         			}
 
-        			res = cvm_query( Global.theCVMEp, east_m, north_m,
-        					depth_m, &g_props );
 
-        			if (res != 0) {
-        				fprintf(stderr, "Cannot find the query point\n");
-        				exit(1);
-        			}
+            		if ( ( Param.includeTopography == YES ) && ( get_theetree_type() == SQD )  ) {
+                                depth_m -=  point_elevation ( north_m, east_m ) ;
+                                if ( depth_m < 0 )
+                            		continue;
+
+                                if ( depth_m > Param.theDomainZ )
+                                	depth_m = Param.theDomainZ - edata->edgesize * 0.005;
+
+            		}
+
+                    res = cvm_query( Global.theCVMEp, east_m, north_m,
+                                     depth_m, &g_props );
+
+                    if (res != 0) {
+                        fprintf(stderr, "Cannot find the query point: east = %lf, north = %lf, depth = %lf \n",
+                        		east_m, north_m, depth_m);
+                        exit(1);
+                    }
 
         			vp  += g_props.Vp;
         			vs  += g_props.Vs;
         			rho += g_props.rho;
+        			++cnt;
                 }
             }
         }
 
-        edata->Vp  =  vp / 27;
-        edata->Vs  =  vs / 27;
-        edata->rho = rho / 27;
+        edata->Vp  =  vp;
+        edata->Vs  =  vs;
+        edata->rho = rho;
+
+
+        if (cnt != 0 ) {
+        	edata->Vp  =  vp / cnt;
+        	edata->Vs  =  vs / cnt;
+        	edata->rho = rho / cnt;
+        }
 
         /* Auxiliary ratios for adjustments */
         VpVsRatio  = edata->Vp  / edata->Vs;
@@ -7416,6 +7711,10 @@ int main( int argc, char** argv )
     	Timer_Reduce("Init Drm Parameters", MAX | MIN | AVERAGE , comm_solver);
     }
 
+    if ( Param.includeTopography == YES ){
+        topo_init( Global.myID, Param.parameters_input_file );
+    }
+
     // INTRODUCE BKT MODEL
     /* Init Quality Factor Table */
     constract_Quality_Factor_Table();
@@ -7464,6 +7763,20 @@ int main( int argc, char** argv )
     Timer_Stop("Mesh Stats Print");
     Timer_Reduce("Mesh Stats Print", MAX | MIN, comm_solver);
 
+    if ( Param.theNumberOfStations !=0 ){
+        output_stations_init(Param.parameters_input_file);
+    }
+
+    /* Initialize topography solver analysis structures */
+    /* must be before solver_init() for proper treatment of the nodal mass */
+    if ( Param.includeTopography == YES ) {
+        topo_solver_init(Global.myID, Global.myMesh);
+        if ( Param.theNumberOfStations !=0 ){
+            topography_stations_init(Global.myMesh, Param.myStations, Param.myNumberOfStations);
+        }
+
+    }
+
     /* Initialize the output planes */
     if ( Param.theNumberOfPlanes != 0 ) {
         planes_setup(Global.myID, &Param.thePlanePrintRate, Param.IO_pool_pe_count,
@@ -7473,9 +7786,7 @@ int main( int argc, char** argv )
 		     Param.planes_input_file);
     }
 
-    if ( Param.theNumberOfStations !=0 ){
-        output_stations_init(Param.parameters_input_file);
-    }
+
 
     /* Initialize the solver, source and output structures */
     solver_init();
@@ -7492,7 +7803,7 @@ int main( int argc, char** argv )
         }
         nonlinear_stats(Global.myID, Global.theGroupSize);
     }
-
+    
     Timer_Start("Source Init");
     source_init(Param.parameters_input_file);
     Timer_Stop("Source Init");
@@ -7503,6 +7814,7 @@ int main( int argc, char** argv )
      * \TODO a more clever way should be possible
      */
     stiffness_init(Global.myID, Global.myMesh);
+    damp_init     (Global.myID, Global.myMesh);
 
     /* this is a little too late to check for output parameters,
      * but let's do this in the mean time

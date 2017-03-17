@@ -26,20 +26,116 @@
 #include "damping.h"
 #include "stiffness.h"
 
+//#include "quake_util.h"
+#include "util.h"
+#include "timers.h"
+#include "cvm.h"
+
+#include "nonlinear.h"
+#include "topography.h"
+
+
+/* -------------------------------------------------------------------------- */
+/*                             Global Variables                               */
+/* -------------------------------------------------------------------------- */
+
+static int32_t  myLinearElementsCount;
+static int32_t *myLinearElementsMapper;
+
+
+/* -------------------------------------------------------------------------- */
+/*                      Initialization of parameters for
+ *                   Nonlinear and Topography compatibility                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Counts the number of nonlinear and topo elements in my local mesh
+ */
+void trad_elements_count(int32_t myID, mesh_t *myMesh) {
+
+    int32_t eindex;
+    int32_t count = 0;
+
+    for (eindex = 0; eindex < myMesh->lenum; eindex++) {
+
+        if ( ( isThisElementNonLinear(myMesh, eindex) == NO ) &&
+        	 ( BelongstoTopography(myMesh, eindex)    == NO )  ) {
+            count++;
+        }
+
+    }
+
+    if ( count > myMesh-> lenum ) {
+        fprintf(stderr,"Thread %d: damping_linear_elements_count: "
+                "more elements than expected\n", myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
+    myLinearElementsCount = count;
+
+    return;
+}
+
+/**
+ * Re-counts and stores the nonlinear and topo element's indices to a static local array
+ * that will serve as mapping tool to the local mesh elements table.
+ */
+void trad_elements_mapping(int32_t myID, mesh_t *myMesh) {
+
+    int32_t eindex;
+    int32_t count = 0;
+
+    XMALLOC_VAR_N(myLinearElementsMapper, int32_t, myLinearElementsCount);
+
+    for (eindex = 0; eindex < myMesh->lenum; eindex++) {
+
+
+        if ( ( isThisElementNonLinear(myMesh, eindex) == NO ) &&
+        	 ( BelongstoTopography(myMesh, eindex)    == NO ) ) {
+            myLinearElementsMapper[count] = eindex;
+            count++;
+        }
+
+    }
+
+    if ( count != myLinearElementsCount ) {
+        fprintf(stderr,"Thread %d: linear_elements_mapping: "
+                "more elements than the count\n", myID);
+        MPI_Abort(MPI_COMM_WORLD, ERROR);
+        exit(1);
+    }
+
+    return;
+}
+
+void damp_init(int32_t myID, mesh_t *myMesh) {
+
+    trad_elements_count(myID, myMesh);
+    trad_elements_mapping(myID, myMesh);
+}
+
+/* -------------------------------------------------------------------------- */
+/*                       Damping Contribution Methods                         */
+/* -------------------------------------------------------------------------- */
+
 void damping_addforce(mesh_t *myMesh, mysolver_t *mySolver, fmatrix_t (*theK1)[8], fmatrix_t (*theK2)[8]){
 
     fvector_t localForce[8];
     int       i,j;
     int32_t   eindex;
+    int32_t   lin_eindex;
 
     fvector_t deltaDisp[8];
 
     /* loop on the number of elements */
-    for (eindex = 0; eindex < myMesh->lenum; eindex++)
+    /* loop on the number of elements */
+    for (lin_eindex = 0; lin_eindex < myLinearElementsCount; lin_eindex++)
     {
         elem_t *elemp;
         e_t    *ep;
 
+        eindex = myLinearElementsMapper[lin_eindex];
         elemp = &myMesh->elemTable[eindex];
         ep = &mySolver->eTable[eindex];
 
