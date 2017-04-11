@@ -21,9 +21,7 @@
 #define MESHFORMATLAB_H_
 
 void saveMeshCoordinatesForMatlab( mesh_t      *myMesh,       int32_t myID,
-                                   const char  *parametersin, double  ticksize,
-                                   damping_type_t theTypeOfDamping, double xoriginm, double yoriginm,
-                                   double zoriginm, noyesflag_t includeBuildings );
+                                   const char  *parametersin, double  ticksize);
 
 #endif /* MESHFORMATLAB_H_ */
 

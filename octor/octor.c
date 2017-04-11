@@ -176,6 +176,9 @@ typedef struct vertex_t {
     int8_t touches;         /* How many octants share this vertex */
     int8_t level;           /* Lowest level of the octants who share this
                                vertex */
+    int32_t qleid;			/* Local element id (0...7) within the quadratic element */
+    int32_t cid;			/* Chunk id within 64 elements */
+
     unsigned char property; /* Indicate ANCHORED/DANGLING, and in the
                                latter case, the location and oriention */
     int32link_t *share;     /* Link list to who also harbor this vertex, valid
@@ -192,6 +195,8 @@ typedef struct vertex_info_t {
     int32_t owner;
     int8_t touches;
     int8_t level;
+    int32_t qleid;
+    int32_t cid;
 } vertex_info_t;
 
 
@@ -569,6 +574,10 @@ static int32_t oct_sprout(oct_t *leafoct, tree_t *tree);
 static void    oct_prune(oct_t *oct, tree_t *tree);
 static int32_t oct_expand(oct_t *leafoct, tree_t *tree,
                           toexpand_t *toexpand, setrec_t *setrec);
+/* HAYDAR QUADRATIC EFFORT */
+
+static int32_t oct_quadratic_expand(oct_t *leafoct, tree_t *tree, setrec_t *setrec);
+
 static oct_t * oct_shrink(oct_t *oct, tree_t *tree, unsigned char where,
                          toshrink_t *toshrink, setrec_t *setrec);
 
@@ -1238,36 +1247,28 @@ oct_getleftmost(oct_t *oct)
 static oct_t *
 oct_getnextleaf(oct_t *oct)
 {
-	oct_t *parent;
-	int8_t whoami;
-	int32_t which;
+    oct_t *parent;
+    int8_t whoami;
+    int32_t which;
 
-	parent = oct->parent;
+    parent = oct->parent;
 
-	if (parent == NULL)
-		/* We are at the root, no next leaf oct exists */
-		return NULL;
+    if (parent == NULL)
+        /* We are at the root, no next leaf oct exists */
+        return NULL;
 
-	whoami = oct->which;;
+    whoami = oct->which;;
 
-	for (which = whoami + 1; which < 8; which++) {
-		/* Move to the next one at the same level */
-		if (parent->payload.interior->child[which] != NULL) {
-			/* yigit says: do not ever return NULL here since there maybe other local
-			 * octants beyond the NULL.(especially important when carving
-			 * or progressive meshing is on.) */
-			oct_t *noct;
-			noct = oct_getleftmost(parent->payload.interior->child[which]);
-			if (noct == NULL)
-				continue;
-			else
-				return noct;
+    for (which = whoami + 1; which < 8; which++) {
+        /* Move to the next one at the same level */
 
-		}
-	}
+        if (parent->payload.interior->child[which] != NULL) {
+            return oct_getleftmost(parent->payload.interior->child[which]);
+        }
+    }
 
-	/* No more siblings on the same level. Go one level up */
-	return oct_getnextleaf(parent);
+    /* No more siblings on the same level. Go one level up */
+    return oct_getnextleaf(parent);
 }
 
 
@@ -1350,7 +1351,7 @@ oct_findneighbor(oct_t *oct, dir_t dir, oct_stack_t *stackp)
             mirror = tree_descend(ancestor, stackp);
 
         } else {
-            /* An edge neighbor may or may not share a common ancestor */
+            /* An edge neighbor may or may not share a common acnestor */
             dir_t O, sharedface;
 
             O = (dir_t)firstoctant->which;
@@ -1407,16 +1408,13 @@ oct_installleaf(tick_t lx, tick_t ly, tick_t lz, int8_t level, void *data,
         /* Parent oct may be a LEAF marked as REMOTE */
         if (parentoct->type == LEAF) {
 
-            /* Sanity check */ //yigit
-            if (parentoct->where != REMOTE && parentoct->where != T_UNDEFINED) {
-            	fprintf(stderr, "oct_installleaf: fatal error\n");
-            	return -1;
+            /* Sanity check */
+            if (parentoct->where != REMOTE) {
+                fprintf(stderr, "oct_installleaf: fatal error\n");
+                return -1;
             }
 
-            parentoct->where = T_UNDEFINED;  //yigit for buildings
-
             if (parentoct->payload.leaf != NULL) {
-
                 mem_recycleobj(theRecordPool, parentoct->payload.leaf->data);
                 mem_recycleobj(tree->leafmem, parentoct->payload.leaf);
             }
@@ -1489,44 +1487,6 @@ oct_installleaf(tick_t lx, tick_t ly, tick_t lz, int8_t level, void *data,
                 memset(childoct->payload.interior, 0, sizeof(interior_t));
             }
         } /* if childoct == NULL */
-
-        /* Note by: Yigit+Ricardo
-         * This was one of the key change needed to be introduced for
-         * progressive meshing to work. With this change and other
-         * minor details regarding the set_comm delete_comm pair, most
-         * issues with progressive meshing were solved.  But there is
-         * still a little bit of mistery about very large meshes */
-		else {
-			if (childlevel == level) {
-                
-				/* Initialize the fields common to LEAF and INTERIOR*/
-				if( childoct->which != which ||
-                   childoct->level != childlevel ||
-                   (childoct->lx) != (parentoct->lx | (xbit << offset)) ||
-                   (childoct->ly) != (parentoct->ly | (ybit << offset)) ||
-                   (childoct->lz) != (parentoct->lz | (zbit << offset)) ||
-                   childoct->parent != parentoct ||
-                   childoct->where != REMOTE ||
-                   childoct->type != LEAF ) {
-					fprintf(stderr, "Thread %d: haha haha lol lol lo lo\n",
-							tree->procid);
-					MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
-					exit(1);
-                    
-				}
-                
-				childoct->appdata = NULL;
-				childoct->where = LOCAL;   /* Applicable to LEAF only */
-                
-				childoct->payload.leaf->next = childoct->payload.leaf->prev
-                = NULL;
-                
-				memcpy(childoct->payload.leaf->data, data, tree->recsize);
-                
-				//childoct->where = LOCAL;
-			}
-            
-		} /* if childoct != NULL && childoct->type == REMOTE  && if (childlevel == level)  */
 
         parentoct = childoct;
 
@@ -1748,6 +1708,84 @@ oct_expand(oct_t *leafoct, tree_t *tree, toexpand_t *toexpand,
     return 0;
 }
 
+/* HAYDAR QUADRATIC EFFORT */
+
+/**
+ * oct_expand: On entering this function, oct must have intersect
+ *         the domain of interest.
+ *
+ * - Return 0 if succeeds. -1 on error.
+ */
+static int32_t
+oct_quadratic_expand(oct_t *leafoct, tree_t *tree, setrec_t *setrec)
+{
+    int8_t which;
+    const void *data;
+    const void *parent_data;
+
+
+    /* Point *data to the leaf payload if the user has initialized
+       the data */
+    if (leafoct->payload.leaf == NULL)
+        data = NULL;
+    else
+        data = leafoct->payload.leaf->data;
+
+    	parent_data = data;
+
+    /* strutural change */
+    if (oct_sprout(leafoct, tree) == -1) {
+    	/* Out of memory */
+    	return -1;
+    }
+
+    for (which = 0; which < 8; which++) {
+    	oct_t *child;
+
+    	child = leafoct->payload.interior->child[(int32_t)which];
+
+    	if (child != NULL) {
+    		void *data;
+
+    		// DENE
+//    	    edata_t *edata, *org_data;
+
+    		/* child->payload.leaf == NULL */
+    		if ((child->payload.leaf =
+    				(leaf_t *)mem_newobj(tree->leafmem)) == NULL){
+    			/*Out of memory */
+    			return -1;
+    		}
+
+    		child->payload.leaf->next = child->payload.leaf->prev = NULL;
+
+    		data = child->payload.leaf->data = mem_newobj(theRecordPool);
+    		if (data == NULL) {
+    			return -1;
+    		}
+
+    		/* instantiate the child */
+    		setrec((octant_t *)child, tree->ticksize, data);
+
+    		// DENE
+
+//    	    edata = (edata_t *)data;
+//    	    org_data = (edata_t *)parent_data;
+//
+//    	    edata->edgesize = org_data->edgesize / 2.;
+//
+//    		edata->Vs = org_data->Vs;
+//    		edata->Vp = org_data->Vp;
+//    		edata->rho = org_data->rho;
+
+    		//assign_org_data((octant_t *)child, tree->ticksize, data, parent_data);
+
+    	}
+    }
+
+
+    return 0;
+}
 
 
 /**
@@ -1959,63 +1997,6 @@ octor_getmaxleaflevel(const octree_t* octree, int where)
     }
 }
 
-extern int64_t
-octor_getleavescount(const octree_t* octree, int where)
-{
-    tree_t *tree = (tree_t*)octree;
-    int64_t lcount, gcount;
-
-	lcount = tree_countleaves(tree);
-	if (where == LOCAL) {
-		return lcount;
-	} else {
-		if (tree->groupsize > 1) {
-			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT64, MPI_SUM, tree->comm_tree);
-			return gcount;
-		} else {
-			return lcount;
-		}
-	}
-}
-
-extern int64_t
-octor_getminleavescount(const octree_t* octree, int where)
-{
-    tree_t *tree = (tree_t*)octree;
-    int64_t lcount, gcount;
-
-	lcount = tree_countleaves(tree);
-	if (where == LOCAL) {
-		return lcount;
-	} else {
-		if (tree->groupsize > 1) {
-			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT64, MPI_MIN, tree->comm_tree);
-			return gcount;
-		} else {
-			return lcount;
-		}
-	}
-}
-
-extern int64_t
-octor_getmaxleavescount(const octree_t* octree, int where)
-{
-    tree_t *tree = (tree_t*)octree;
-    int64_t lcount, gcount;
-
-	lcount = tree_countleaves(tree);
-	if (where == LOCAL) {
-		return lcount;
-	} else {
-		if (tree->groupsize > 1) {
-			MPI_Allreduce(&lcount, &gcount, 1, MPI_INT64, MPI_MAX, tree->comm_tree);
-			return gcount;
-		} else {
-			return lcount;
-		}
-	}
-}
-
 
 /*************************/
 /* Tree-level operations */
@@ -2070,7 +2051,7 @@ static int64_t tree_countleaves(tree_t *tree)
     localtotal = 0;
 
     for (level = 0; level < TOTALLEVEL; level++) {
-        localtotal += (int64_t)tree->leafcount[(int32_t)level];
+        localtotal += tree->leafcount[(int32_t)level];
     }
 
     return localtotal;
@@ -2316,53 +2297,20 @@ tree_ascend(oct_t *oct, dir_t I, oct_stack_t *stackp)
 static oct_t *
 tree_descend(oct_t *oct, oct_stack_t *stackp)
 {
+    while (stackp->top > 0) {
+        if ((oct == NULL) || (oct->type == LEAF)) {
+            break;
+        } else {
+            dir_t dir;
 
-	/* Original code was...
-	 *
-     * while (stackp->top > 0) {
-     *     if ((oct == NULL) || (oct->type == LEAF)) {
-     *         break;
-     *     } else {
-     *         dir_t dir;
-     *
-     *         stackp->top--;
-     *         dir = (dir_t)stackp->dir[(int32_t)stackp->top];
-     *
-     *         oct = oct->payload.interior->child[dir];
-     *     }
-     * } // descend until we cannot go further down
-     *
-     * return oct;
-     */
-    
-    /* Note by: Yigit+Ricardo
-     * This was one of the key change needed to be introduced for
-     * progressive meshing to work. With this change and other
-     * minor details regarding the set_comm delete_comm pair, most
-     * issues with progressive meshing were solved.  But there is
-     * still a little bit of mistery about very large meshes */
+            stackp->top--;
+            dir = (dir_t)stackp->dir[(int32_t)stackp->top];
 
-	while (stackp->top > 0) {
-		if ( oct->type == LEAF) {
-			break;
-		} else {
-			dir_t dir;
+            oct = oct->payload.interior->child[dir];
+        }
+    } /* descend until we cannot go further down */
 
-			dir = (dir_t)stackp->dir[(int32_t)(stackp->top-1)];
-
-			/* This should only occur if oct->where = T_UNDEFINED || oct->where = REMOTE */
-			if (oct->payload.interior->child[dir] == NULL) {
-				return oct;
-			}
-
-			oct = oct->payload.interior->child[dir];
-			stackp->top--;
-
-		}
-	} /* descend until we cannot go further down */
-
-	return oct;
-
+    return oct;
 }
 
 
@@ -3749,7 +3697,14 @@ node_setproperty ( tree_t             *tree,
                     break;
 
                 case(2) :
-					return -26;
+                    /* Dangling on a face*/
+                    if (modX == 0) {
+                        *pproperty = XFACE;
+                    } else if (modY == 0) {
+                        *pproperty = YFACE;
+                    } else {
+                        *pproperty = ZFACE;
+                    }
                     break;
 
                 case (3):
@@ -3857,7 +3812,6 @@ node_setproperty ( tree_t             *tree,
 }
 
 
-
 /**
  * dnode_correlate: Correlate a dangling node to its anchored nodes. Only
  *                  deal with local node ids.
@@ -3907,6 +3861,76 @@ dnode_correlate(tree_t *tree, mess_t *mess, link_t **vertexHashTable,
         MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
         exit(1);
     }
+
+    return;
+}
+
+
+
+/*
+ * HAYDAR QUADRATIC EFFORT
+ */
+
+/**
+ * dnode_correlate: Correlate a dangling node to its anchored nodes. Only
+ *                  deal with local node ids.
+ *
+ */
+static void
+dnode_correlate_quadratic(tree_t *tree, mess_t *mess, link_t **vertexHashTable,
+                int64_t ecount, dnode_t *dnodeTable, int32_t dnindex,
+                point_t pt, double weight)
+{
+    int32_t hashentry;
+    link_t *link;
+    vertex_t *vertex;
+
+    hashentry = math_hashuint32(&pt, 3) % ecount;
+    link = vertexHashTable[hashentry];
+
+    while (link != NULL) {
+        vertex = (vertex_t *)link->record;
+        if ((vertex->x == pt.x) &&
+            (vertex->y == pt.y) &&
+            (vertex->z == pt.z)) {
+
+            int32link_t *lanid;
+
+            lanid = (int32link_t *)mem_newobj(mess->int32linkpool);
+            if (lanid == NULL) {
+                fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                        tree->procid, __FILE__, __LINE__);
+                MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+                exit(1);
+            }
+
+            lanid->id = vertex->lnid;
+            lanid->next = dnodeTable[dnindex].lanid;
+
+            /*
+             * HAYDAR QUADRATIC EFFORT
+             */
+
+            lanid->weight = weight;
+            dnodeTable[dnindex].lanid = lanid;
+
+//            printf("%d, %lf\n", lanid->id, weight);
+
+            break;
+        } else {
+            link = link->next;
+        }
+
+    }
+
+    if (link == NULL) {
+        fprintf(stderr, "Thread %d: %s %d: dnode_correlate internal error\n",
+                tree->procid, __FILE__, __LINE__);
+        MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+        exit(1);
+    }
+
+//    exit(1);
 
     return;
 }
@@ -4249,6 +4273,7 @@ octor_newtree(double x, double y, double z, int32_t recsize,
             taskid++;
         }
 
+
         /* Release the interval inited table */
         free(inited);
 
@@ -4257,6 +4282,7 @@ octor_newtree(double x, double y, double z, int32_t recsize,
             /* error */
             return NULL;
         }
+
         /* Overwrite how many LOCAL leaf octants (tasks) I have */
         tree->leafcount[0] = 0;
         tree->leafcount[(int32_t)initlevel] =
@@ -4362,6 +4388,43 @@ octor_refinetree(octree_t *octree, toexpand_t *toexpand, setrec_t *setrec)
     return 0;
 }
 
+/* HAYDAR QUADRATIC EFFORT */
+
+/**
+ * octor_quadratic_refinetree: Refine all the subtree collections on local processor.
+ *
+ * - Return 0 if OK, -1 on error.
+ *
+ */
+extern int32_t
+octor_quadratic_refinetree(octree_t *octree, setrec_t *setrec)
+{
+    tree_t *tree = (tree_t *)octree;
+    oct_t *oct;
+
+    oct = tree->firstleaf;
+
+    while ((oct != NULL) && (oct->where == LOCAL)) {
+        if (oct_quadratic_expand(oct, tree, setrec) != 0) {
+            fprintf(stderr,
+                    "Proc %d (Failed): created %d leaves. min = %d max = %d\n",
+                    tree->procid,
+                    (int32_t)tree_countleaves(tree),
+                    tree_getminleaflevel(tree),
+                    tree_getmaxleaflevel(tree));
+            return -1;
+        }
+
+        oct = oct_getnextleaf(oct);
+    }
+
+#ifdef TREE_VERBOSE
+    tree_showstat(tree, DETAILS, "octor_refinetree");
+#endif /* TREE_VERBOSE */
+
+    return 0;
+}
+
 
 /**
  * octor_coarsentree: Make to tree coarsened as required by the application.
@@ -4395,7 +4458,7 @@ octor_coarsentree(octree_t *octree, toshrink_t *toshrink, setrec_t *setrec)
  *
  */
 extern int32_t
-octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
+octor_balancetree(octree_t *octree, setrec_t *setrec)
 {
     int32_t lmax, gmax, lmin, gmin, level, threshold;
     oct_t *oct, *nbr;
@@ -4411,68 +4474,6 @@ octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
     fprintf(stderr, "Thread %d: before balancetree: %qd\n", tree->procid,
             localcount);
 #endif /* TREE_VERBOSE */
-
-    /* 
-     * Note by Yigit and Ricardo:
-     * This block solved a misterious issue with progressive meshing.
-     * We, however, don't know exactly all the implications it may have.
-     * 
-     * START: Block by Yigit and Ricardo related to progressive meshing
-     */
-    
-    /* The neighboring relationship should be updated if  theStepMeshingFactor > 0*/
-    if (tree->groupsize > 1) {
-
-    	if( theStepMeshingFactor > 0 ) {
-
-    		int32_t nbrprocid, msgsize;
-
-    		tree_deletecom(tree);
-
-    		/* Allocate a communication manager */
-    		/* Note we do not use the interval array for allcom */
-
-    		tree->com = com_new(tree->procid, tree->groupsize);
-    		if (tree->com == NULL) {
-    			fprintf(stderr, "Thread %d: %s %d: out of memory\n",
-    					tree->procid, __FILE__, __LINE__);
-    			MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
-    			exit(1);
-    		}
-
-    		/* Global communication */
-    		MPI_Allgather(&tree->firstleaf->lx, sizeof(point_t), MPI_CHAR,
-    				tree->com->interval, sizeof(point_t), MPI_CHAR,
-    				tree->comm_tree);
-
-    		/* Initialize tree->com manually. Every processor is adjacent
-    	           with every other processors */
-
-    		msgsize = sizeof(descent_t);
-    		for (nbrprocid = tree->groupsize - 1; nbrprocid >= 0; nbrprocid--) {
-    			if (nbrprocid == tree->procid)
-    				continue;
-
-    			if ((tree->com->pctltab[nbrprocid] = pctl_new(nbrprocid, msgsize))
-    					== NULL) {
-    				fprintf(stderr, "Thread %d: %s %d: out of memory\n",
-    						tree->procid, __FILE__, __LINE__);
-    				MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
-    				exit(1);
-    			}
-
-    			/* link into the pctl list */
-    			tree->com->pctltab[nbrprocid]->next = tree->com->firstpctl;
-    			tree->com->firstpctl = tree->com->pctltab[nbrprocid];
-    			tree->com->nbrcnt++;
-    		}
-    	}
-
-    }/* if groupsize > 1 */
-
-	/* See note above.
-	 * END: Block by Yigit and Ricardo related to progressive meshing
-	 */
 
     /* Link LOCAL leaf octs at the same level together */
     memset(tree->toleaf, 0, sizeof(oct_t *) * TOTALLEVEL);
@@ -4508,194 +4509,119 @@ octor_balancetree(octree_t *octree, setrec_t *setrec, int theStepMeshingFactor)
         oct = tree->toleaf[level];
         while (oct != NULL) {
 
-        	for (dir = L; dir <= UF; dir = (dir_t) ((int)dir + 1)) {
+            for (dir = L; dir <= UF; dir = (dir_t) ((int)dir + 1)) {
 
-        		/* This block is added to ignore the out of bound neighbors*/
-        		/* Find the procid that accomodate the LDB pixel
-            	 of an equal-sized neighbor */
-        		point_t octLDB;
-        		uint32_t dir_bits;
-        		tick_t edgesize_tick;
-        		edgesize_tick = (tick_t)1 << (PIXELLEVEL - oct->level);
+                /* stack must be cleaned before calling oct_findneighbor */
+                stack.top = 0;
+                nbr = oct_findneighbor(oct, dir, &stack);
 
-        		dir_bits = theDirBitRep[dir];
-
-        		/* Assign the coordinate of oct to its neighbor */
-        		octLDB = *(point_t *)&oct->lx;
-
-        		/* Adjust the x, y, z coordinate as necessary */
-
-        		if (dir_bits & LEFT)
-        			octLDB.x = oct->lx - edgesize_tick;
-
-        		if (dir_bits & RIGHT)
-        			octLDB.x = oct->lx + edgesize_tick;
-
-        		if (dir_bits & DOWN)
-        			octLDB.y = oct->ly - edgesize_tick;
-
-        		if (dir_bits & UP)
-        			octLDB.y = oct->ly + edgesize_tick;
-
-        		if (dir_bits & BACK)
-        			octLDB.z = oct->lz - edgesize_tick;
-
-        		if (dir_bits & FRONT)
-        			octLDB.z = oct->lz + edgesize_tick;
-
-        		if ((octLDB.x < tree->nearendp[0]) ||
-        				(octLDB.y < tree->nearendp[1]) ||
-        				(octLDB.z < tree->nearendp[2]) ||
-        				(octLDB.x >= tree->farendp[0]) ||
-        				(octLDB.y >= tree->farendp[1]) ||
-        				(octLDB.z >= tree->farendp[2])) {
-        			/* Ignore the out-of-bound neighbor oct */
-        			continue;
-        		}
-        		/* End of the block */
-
-
-        		/* stack must be cleaned before calling oct_findneighbor */
-        		stack.top = 0;
-        		nbr = oct_findneighbor(oct, dir, &stack);
-
-        		//        		/* Discard out of bounds */ //yigit
-        		//
-        		//        		if ( nbr != NULL ) {
-        		//        			if ( ( nbr->lz < tree->nearendp[2] ) ||
-        		//        					( nbr->lz >= tree->farendp[2] ) ) {
-        		//        				continue;
-        		//        			}
-        		//
-        		//        			/* Discard out of bounds */
-        		//        			if ( ( nbr->ly < tree->nearendp[1] ) ||
-        		//        					( nbr->ly >= tree->farendp[1] ) ) {
-        		//        				continue;
-        		//        			}
-        		//
-        		//
-        		//        			/* Discard out of bounds */
-        		//        			if ( ( nbr->lx < tree->nearendp[0] ) ||
-        		//        					( nbr->lx >= tree->farendp[0] ) ) {
-        		//        				continue;
-        		//        			}
-        		//        		}
-
-
-        		if ((nbr == NULL) || (nbr->level > oct->level - 2)) {
-        			/* Ignore a non-existent neighbor or a neighbor
+                if ((nbr == NULL) || (nbr->level > oct->level - 2)) {
+                    /* Ignore a non-existent neighbor or a neighbor
                        that is small enough already */
-        			continue;
-        		}
+                    continue;
+                }
 
-        		if (nbr->where == LOCAL) {
-        			if (tree_pushdown(nbr, tree, &stack, setrec) != 0) {
-        				fprintf(stderr, "Thread %d: %s %d: ",
-        						tree->procid, __FILE__, __LINE__);
-        				fprintf(stderr, "Cannot pushdown local neighbor\n");
-        				MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
-        			} else {
-        				continue;
-        			}
+                if (nbr->where == LOCAL) {
+                    if (tree_pushdown(nbr, tree, &stack, setrec) != 0) {
+                        fprintf(stderr, "Thread %d: %s %d: ",
+                                tree->procid, __FILE__, __LINE__);
+                        fprintf(stderr, "Cannot pushdown local neighbor\n");
+                        MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+                    } else {
+                        continue;
+                    }
 
-        		} else if (nbr->where != LOCAL) {
-        			/* Note by Yigit+Ricardo:
-        			 * This condition used to be == REMOTE
-        			 * The change was made in the search for fixing
-        			 * progressive meshing issues */
+                } else if (nbr->where == REMOTE) {
 
-        			/* This only happens if groupsize > 1. We have
+                    /* This only happens if groupsize > 1. We have
                        maintained the validity of tree->com throughout. */
 
-        			int32_t procid;
-        			pctl_t *topctl;
-        			point_t nbrLDB;
-        			uint32_t dirbits;
-        			tick_t edgesize;
+                    int32_t procid;
+                    pctl_t *topctl;
+                    point_t nbrLDB;
+                    uint32_t dirbits;
+                    tick_t edgesize;
 
-        			/* Find the procid that accomodate the LDB pixel
+                    /* Find the procid that accomodate the LDB pixel
                        of an equal-sized neighbor */
 
-        			edgesize = (tick_t)1 << (PIXELLEVEL - oct->level);
+                    edgesize = (tick_t)1 << (PIXELLEVEL - oct->level);
 
-        			dirbits = theDirBitRep[dir];
+                    dirbits = theDirBitRep[dir];
 
-        			/* Assign the coordinate of oct to its neighbor */
-        			nbrLDB = *(point_t *)&oct->lx;
+                    /* Assign the coordinate of oct to its neighbor */
+                    nbrLDB = *(point_t *)&oct->lx;
 
-        			/* Adjust the x, y, z coordinate as necessary */
+                    /* Adjust the x, y, z coordinate as necessary */
 
-        			if (dirbits & LEFT)
-        				nbrLDB.x = oct->lx - edgesize;
+                    if (dirbits & LEFT)
+                        nbrLDB.x = oct->lx - edgesize;
 
-        			if (dirbits & RIGHT)
-        				nbrLDB.x = oct->lx + edgesize;
+                    if (dirbits & RIGHT)
+                        nbrLDB.x = oct->lx + edgesize;
 
-        			if (dirbits & DOWN)
-        				nbrLDB.y = oct->ly - edgesize;
+                    if (dirbits & DOWN)
+                        nbrLDB.y = oct->ly - edgesize;
 
-        			if (dirbits & UP)
-        				nbrLDB.y = oct->ly + edgesize;
+                    if (dirbits & UP)
+                        nbrLDB.y = oct->ly + edgesize;
 
-        			if (dirbits & BACK)
-        				nbrLDB.z = oct->lz - edgesize;
+                    if (dirbits & BACK)
+                        nbrLDB.z = oct->lz - edgesize;
 
-        			if (dirbits & FRONT)
-        				nbrLDB.z = oct->lz + edgesize;
+                    if (dirbits & FRONT)
+                        nbrLDB.z = oct->lz + edgesize;
 
-        			/* This seems obsolete now -yigit*/
-        			if ((nbrLDB.x < tree->nearendp[0]) ||
-        					(nbrLDB.y < tree->nearendp[1]) ||
-        					(nbrLDB.z < tree->nearendp[2]) ||
-        					(nbrLDB.x >= tree->farendp[0]) ||
-        					(nbrLDB.y >= tree->farendp[1]) ||
-        					(nbrLDB.z >= tree->farendp[2])) {
-        				/* Ignore the out-of-bound neighbor oct */
-        				continue;
-        			}
+                    if ((nbrLDB.x < tree->nearendp[0]) ||
+                        (nbrLDB.y < tree->nearendp[1]) ||
+                        (nbrLDB.z < tree->nearendp[2]) ||
+                        (nbrLDB.x >= tree->farendp[0]) ||
+                        (nbrLDB.y >= tree->farendp[1]) ||
+                        (nbrLDB.z >= tree->farendp[2])) {
+                        /* Ignore the out-of-bound neighbor oct */
+                        continue;
+                    }
 
-        			/* Find out who possesses the pixel */
-        			procid = math_zsearch(tree->com->interval,
-        					tree->com->groupsize,
-        					&nbrLDB);
+                    /* Find out who possesses the pixel */
+                    procid = math_zsearch(tree->com->interval,
+                                          tree->com->groupsize,
+                                          &nbrLDB);
 
-        			if (procid == tree->procid) {
+                    if (procid == tree->procid) {
+                        fprintf(stderr, "Thread %d: %s %d: internal error\n",
+                                tree->procid, __FILE__, __LINE__);
+                        MPI_Abort(MPI_COMM_WORLD, UNEXPECTED_ERR);
+                        exit(1);
+                    }
 
-        				fprintf(stderr, "Thread %d: %s %d: internal error\n",
-        						tree->procid, __FILE__, __LINE__);
-        				MPI_Abort(MPI_COMM_WORLD, UNEXPECTED_ERR);
-        				exit(1);
+                    /* Create a message destined to procid */
+                    topctl = tree->com->pctltab[procid];
 
-        			}
+                    if (topctl == NULL) {
+                        /* This should not happen */
+                        fprintf(stderr, "Thread %d: %s %d: internal error\n",
+                                tree->procid, __FILE__, __LINE__);
+                        MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+                        exit(1);
+                    }
 
-        			/* Create a message destined to procid */
-        			topctl = tree->com->pctltab[procid];
+                    descent = (descent_t *)mem_newobj(topctl->sndmem);
+                    if (descent == NULL) {
+                        fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                                tree->procid, __FILE__, __LINE__);
+                        MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+                        exit(1);
 
-        			if (topctl == NULL) {
-        				/* This should not happen */
-        				fprintf(stderr, "Thread %d: %s %d: internal error\n",
-        						tree->procid, __FILE__, __LINE__);
-        				MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
-        				exit(1);
-        			}
+                    }
 
-        			descent = (descent_t *)mem_newobj(topctl->sndmem);
-        			if (descent == NULL) {
-        				fprintf(stderr, "Thread %d: %s %d: out of memory\n",
-        						tree->procid, __FILE__, __LINE__);
-        				MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
-        				exit(1);
-
-        			}
-
-        			/* Marshal a DESCENT message */
-        			descent->lx = nbr->lx;
-        			descent->ly = nbr->ly;
-        			descent->lz = nbr->lz;
-        			descent->level = nbr->level;
-        			descent->stack = stack;
-        		}
-        	} /* for all the directions */
+                    /* Marshal a DESCENT message */
+                    descent->lx = nbr->lx;
+                    descent->ly = nbr->ly;
+                    descent->lz = nbr->lz;
+                    descent->level = nbr->level;
+                    descent->stack = stack;
+                }
+            } /* for all the directions */
 
             oct = oct->payload.leaf->next;
 
@@ -4833,61 +4759,101 @@ octor_carvebuildings(octree_t *octree, int flag,
         fprintf(stderr,
                 "Thread %d: %s %d: error in the first leaf \n",
                 tree->procid, __FILE__, __LINE__);
+//        MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
+//        exit(1);
     }
 
     if ( tree->firstleaf == NULL ) {
         fprintf(stderr,
                 "Thread %d: %s %d: NULL first leaf \n",
                 tree->procid, __FILE__, __LINE__);
+//        MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
+//        exit(1);
     }
 
-
+//    while ( ( oct != NULL ) && ( myCount < ecount-10 ) ) {
     while ( oct != NULL ) {
 
-    	double Vp;
+        double Vp;
 
-    	myCount++;
+        myCount++;
 
-    	edata = (edata_t *)oct->payload.leaf->data;
-    	Vp = edata->Vp;
+        edata = (edata_t *)oct->payload.leaf->data;
+        Vp = edata->Vp;
 
-    	nextOct = oct_getnextleaf(oct);
+        nextOct = oct_getnextleaf(oct);
 
-    	if ( Vp < 0 ) {//yigit
+        if ( Vp < 0 ) {
 
-    		/* Now I will eliminate this leaf */
+            if ( ( flag    == 1               ) &&
+                 ( nextOct == NULL            ) &&
+                 ( oct     == tree->firstleaf ) ) {
 
-    		/* making sure the first leaf is updated */
-    		if ( oct == tree->firstleaf ) {
-    			tree->firstleaf = nextOct;
-    		}
+                /* The first leaf is the only leaf left.  If I delete it the
+                 * PE will be left with no leaves and the tree_setcom method
+                 * (which I still do not understand) will fail.
+                 */
+                oct = nextOct;
+                continue;
+            }
 
-    		/* unlinking the octant and making sure the corresponding
-    		 * tree->toleaf list is updated */
+            /* Now I will eliminate this leaf */
 
-    		  oct_unlinkleaf(oct, tree->toleaf);
-    		  
-    		/* Modify the statistics */
-    		tree->leafcount[(int32_t)oct->level]--;
+            /* making sure the first leaf is updated */
+            if ( oct == tree->firstleaf ) {
+                tree->firstleaf = nextOct;
+            }
 
-    		/* Mark this leaf as remote */
-    		oct->where = REMOTE;
-    	}
+            /* unlinking the octant and making sure the corresponding
+             * tree->toleaf list is updated */
+            oct_unlinkleaf(oct, tree->toleaf);
 
-    	/* moving on to next octant */
-    	oct = nextOct;
+            /* actually setting the leaf to NULL from its parent */
+            oct_t *parent;
+            int8_t which = oct->which;
+            parent = oct->parent;
+            parent->payload.interior->child[which] = NULL;
+
+            /* updating count of leaves */
+            tree->leafcount[(int32_t)oct->level]--;
+
+            /* making sure I do not leave parents without children behind */
+            backfire_parent(parent);
+        }
+
+        /* moving on to next octant */
+        oct = nextOct;
     }
 
-    /* Release and recover memory */
-    oct_shrink(tree->root, tree, REMOTE, NULL, NULL);
 
     /* A sanity check */
     if ( tree->firstleaf != oct_getleftmost(tree->root) ) {
         fprintf(stderr,
                 "Thread %d: %s %d: error in the first leaf \n",
                 tree->procid, __FILE__, __LINE__);
+//        MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
+//        exit(1);
     }
 
+    if ( tree->firstleaf == NULL ) {
+        fprintf(stderr,
+                "Thread %d: %s %d: NULL first leaf \n",
+                tree->procid, __FILE__, __LINE__);
+//        MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
+//        exit(1);
+    }
+
+    /* Updating the neighboring relationship */
+
+    tree_deletecom(tree);
+
+    if (tree_setcom(tree, 0, bldgs_nodesearch) != 0) {
+        fprintf(stderr,
+                "Thread %d: %s %d: fail to create new communication manager\n",
+                tree->procid, __FILE__, __LINE__);
+        MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
+        exit(1);
+    }
 
 #ifdef TREE_VERBOSE
     tree_showstat(tree, DETAILS, "octor_balancetree");
@@ -4917,8 +4883,6 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
     MPI_Status *irecvstats = NULL;
     void **rcvleafoct_pool_list = NULL;
     int32_t irecvcount, irecvnum;
-    int32_t irecv;
-
 
     /* leafoctsize is the size of a serialized leaf octant */
     int32_t addresssize = 3 * sizeof(tick_t) + sizeof(int8_t);
@@ -4951,13 +4915,6 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
         irecvcount = end_procid - start_procid + 1;
     } else {
         irecvcount = end_procid - start_procid;
-    }
-
-    /* Eliminate any procids with 0 element.(after bldgs module)--yigit*/
-    for (irecv = start_procid; irecv < end_procid + 1 ; irecv++) {
-    	if (counttable[irecv] == 0 && irecv != tree->procid ) {
-    		irecvcount--;
-    	}
     }
 
     /* Create MPI request and stat objects */
@@ -4993,19 +4950,18 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
         minhigh = (bin_high > target_high) ? target_high : bin_high;
         intersectcount = minhigh - maxlow + 1;
 
-        //after bldgs module-- yigit
-        if (bin_procid != tree->procid && counttable[bin_procid] != 0) {
-        	void *rcvleafoct_pool;
-        	int32_t rcvbytesize;
+        if (bin_procid != tree->procid) {
+            void *rcvleafoct_pool;
+            int32_t rcvbytesize;
 
-        	/* allocate receive buffer */
-        	rcvbytesize = leafoctsize * intersectcount;
-        	rcvleafoct_pool_list[irecvnum] = malloc(rcvbytesize);
-        	rcvleafoct_pool = rcvleafoct_pool_list[irecvnum];
+            /* allocate receive buffer */
+            rcvbytesize = leafoctsize * intersectcount;
+            rcvleafoct_pool_list[irecvnum] = malloc(rcvbytesize);
+            rcvleafoct_pool = rcvleafoct_pool_list[irecvnum];
 
-        	if (rcvleafoct_pool == NULL) {
-        		/* Out of memory */
-        		fprintf( stderr,
+            if (rcvleafoct_pool == NULL) {
+                /* Out of memory */
+                fprintf( stderr,
                          "PE %d: %s %d: out of memory\n"
                          "Allocating %d bytes for %lld elements\n"
                          "Total memory allocated by Octor : %d bytes\n",
@@ -5232,22 +5188,17 @@ octor_partitiontree(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
     free(counttable);
     free(starttable);
 
-    /* Note by Ricardo:
-     * This block has been moved from here (at the end of octor_partitiontree)
-     * to the beginning of octor_extractmesh.
-     *
-     * // The neighboring relationship should be updated
-     *
-     * tree_deletecom(tree);
-     *
-     * if (tree_setcom(tree, 0, bldgs_nodesearch) != 0) {
-     *     fprintf(stderr,
-     *             "Thread %d: %s %d: fail to create new communication manager\n",
-     *             tree->procid, __FILE__, __LINE__);
-     *     MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
-     *     exit(1);
-     * }
-     */
+    /* The neighboring relationship should be updated */
+
+    tree_deletecom(tree);
+
+    if (tree_setcom(tree, 0, bldgs_nodesearch) != 0) {
+        fprintf(stderr,
+                "Thread %d: %s %d: fail to create new communication manager\n",
+                tree->procid, __FILE__, __LINE__);
+        MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
+        exit(1);
+    }
 
 #ifdef TREE_VERBOSE
     /* tree_showstat(tree, BRIEF, "octor_partitiontree"); */
@@ -5304,26 +5255,7 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
         theAllocatedMemSum += sizeof(mess_t);
     }
 
-    /* Note by Ricardo:
-     * This block has been moved from the end of octor_partitiontree
-     * to here (at the beginning of octor_extractmesh).
-     */
 
-    /* The neighboring relationship should be updated */
-
-    if (tree->groupsize > 1) {
-
-    	tree_deletecom(tree);
-
-    	if (tree_setcom(tree, 0, bldgs_nodesearch) != 0) {
-    		fprintf(stderr,
-    				"Thread %d: %s %d: fail to create new communication manager\n",
-    				tree->procid, __FILE__, __LINE__);
-    		MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
-    		exit(1);
-    	}
-    }
-    
     /* How many elements I have */
     ecount = tree_countleaves(tree);
 
@@ -6140,6 +6072,8 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
                     /* I need to allocate space for it in dnodeTable */
                     ldnnum++;
 
+//                    printf("%d\n",ldnnum);
+
                     /* Store various dangling node property
                        temporarily in gnid */
                     ptr = (unsigned char *)&node->gnid;
@@ -6608,6 +6542,2007 @@ octor_extractmesh(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
             }
             break;
         }
+    } /* for all DANGLING nodes owned by me */
+
+
+    /* Free temporary data structures */
+    if (tree->groupsize > 1) {
+        free(octCountTable);
+        free(octStartTable);
+        free(nodeCountTable);
+        free(nodeStartTable);
+    }
+    free(vertexHashTable);
+    mem_delete(vertexpool);
+    mem_delete(linkpool);
+
+    /* Discard memory used by the communication manager */
+    if (tree->groupsize > 1) {
+        com_resetpctl(tree->com, 0);
+    }
+
+    /* Fill in the fields for the return structure */
+    mess->lenum = ecount;
+    mess->lnnum = ncount;
+    mess->ldnnum = ldnnum;
+    mess->nharbored = harborcount;
+    mess->ticksize = tree->ticksize;
+    mess->elemTable = elemTable;
+    mess->nodeTable = nodeTable;
+    mess->dnodeTable = dnodeTable;
+
+#ifdef MESH_VERBOSE
+    mess_showstat(mess, DETAILS, "octor_extractmesh");
+#endif /* TREE_VERBOSE */
+
+    return (mesh_t *)mess;
+}
+
+
+
+/*
+ * HAYDAR QUADRATIC EFFORT
+ */
+
+/**
+ * octor_extractmesh_quadratic: Given a balanced (2-to-1 constraint) tree, which
+ *                         may have been load balanced. Extract the mesh
+ *                         structure for quadratic elements. It is modified version of original
+ *						   octor_extractmesh method.
+ */
+extern mesh_t *
+octor_extractmesh_quadratic(octree_t *octree, bldgs_nodesearch_t *bldgs_nodesearch)
+{
+    tree_t *tree = (tree_t *)octree;
+    int64_t *octCountTable;
+    int64_t *octStartTable;
+    int64_t *nodeCountTable;
+    int64_t *nodeStartTable;
+    int64_t ecount, ncount, harborcount, startgeid, startgnid, geid, gnid;
+    int64_t ldnnum;
+    int32_t eindex, nindex, dnindex;
+    elem_t *elemTable;
+    node_t *nodeTable, *node;
+    dnode_t *dnodeTable;
+    link_t **vertexHashTable, *link;
+    mem_t *vertexpool, *linkpool;
+    oct_t *oct;
+    int32_t hashentry;
+    vertex_t *vertex = NULL;
+    mess_t *mess = NULL;
+    com_t *allcom = NULL, *partcom = NULL;
+
+    /*---------------- Initialize various data structure ----------------*/
+
+    /* Increment theRecordPoolRefs by 1 */
+    theRecordPoolRefs++;
+
+    /* Allocate memory for the mesh control structure */
+    mess = (mess_t *)malloc(sizeof(mess_t));
+    if (mess == NULL) {
+        fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                tree->procid, __FILE__, __LINE__);
+        fprintf(stderr, "Total memory allocated by Octor : %d bytes\n",
+                (int)(theAllocatedMemSum));
+        MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+        exit(1);
+    } else {
+        theAllocatedMemSum += sizeof(mess_t);
+    }
+
+
+    /* How many elements I have */
+    ecount = tree_countleaves(tree);
+
+    /* Allocate memory for temporary data structures and int32link pool */
+    elemTable = (elem_t *)malloc(sizeof(elem_t) * ecount);
+    vertexHashTable = (link_t **)calloc(ecount, sizeof(link_t *));
+
+    vertexpool = (mem_t *)mem_new(sizeof(vertex_t), (int32_t)(ecount * 1.4));
+    linkpool = (mem_t *)mem_new(sizeof(link_t), (int32_t)(ecount * 1.4));
+
+    mess->int32linkpool = mem_new(sizeof(int32link_t),
+                                  (int32_t)(ecount * 0.1));
+
+    if ((elemTable == NULL) || (vertexHashTable == NULL) ||
+        (vertexpool == NULL) || (linkpool == NULL) ||
+        (mess->int32linkpool == NULL)) {
+        fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                tree->procid, __FILE__, __LINE__);
+        fprintf(stderr, "Total memory allocated by Octor : %d bytes\n",
+                (int)(theAllocatedMemSum));
+        MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+        exit(1);
+    } else {
+        theAllocatedMemSum += sizeof(elem_t) * ecount +
+            ecount * sizeof(link_t *) +
+            sizeof(vertex_t) * (int32_t)(ecount * 1.4) +
+            sizeof(link_t) * (int32_t)(ecount * 1.4);
+    }
+
+    /* Build elemTable and vertexHashTable. Some fields will not be
+       initialized till later. */
+
+    if (tree->groupsize > 1) {
+        /* Get octant count distribution */
+        tree_setdistribution(tree, &octCountTable, &octStartTable, ecount);
+        startgeid = octStartTable[tree->procid];
+
+    } else {
+        /* Single processor */
+        startgeid = 0;
+    }
+
+
+    /*---------- Traverse the elements to create vertices ----------------*/
+
+    /* Initialize variables */
+    oct = oct_getleftmost(tree->root);
+    geid = startgeid;
+    harborcount = 0;
+
+    /* RICARDO SANITY CHECKS */
+    if ( oct != tree->firstleaf ) {
+        fprintf(stderr,
+                "Thread %d: %s %d: error in the first leaf \n",
+                tree->procid, __FILE__, __LINE__);
+        MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
+        exit(1);
+    }
+
+    /* RICARDO SANITY CHECKS */
+    if ( tree->firstleaf == NULL ) {
+        fprintf(stderr,
+                "Thread %d: %s %d: NULL first leaf \n",
+                tree->procid, __FILE__, __LINE__);
+        MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
+        exit(1);
+    }
+
+    /* Traverse the elements to create vertices */
+    for (eindex = 0; eindex < ecount; eindex++) {
+        tick_t edgesize;
+        point_t pt;
+        int32_t i, j, k;
+
+        if (oct == NULL) {
+            fprintf(stderr,
+                    "\n\nThread %d: %s %d: internal error (too few octs)"
+                    "\nI am in octant %d and I am supposed to be able to "
+                    "go up to %d total octants\n\n",
+                    tree->procid, __FILE__, __LINE__, (int)eindex, (int)ecount );
+            MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+            exit(1);
+        }
+
+        /* Assign known fields. lnid[8] are undefined yet. */
+        elemTable[eindex].geid = geid;
+        elemTable[eindex].level = oct->level;
+        elemTable[eindex].data = oct->payload.leaf->data;
+
+        /* Produce eight mesh nodes, some of which may have been
+           produced already. */
+
+        edgesize = (tick_t)1 << (PIXELLEVEL - oct->level);
+
+        for (k = 0; k < 2; k++) {
+            pt.z = oct->lz + k * edgesize;
+
+            for (j = 0; j < 2; j++) {
+                pt.y = oct->ly + j * edgesize;
+
+                for (i = 0; i < 2; i++) {
+                    point_t adjustedpt;
+
+                    pt.x = oct->lx + i * edgesize;
+
+                    hashentry = math_hashuint32(&pt, 3) % ecount;
+                    link = vertexHashTable[hashentry];
+
+                    while (link != NULL) {
+                        vertex = (vertex_t *)link->record;
+                        if ((vertex->x == pt.x) &&
+                            (vertex->y == pt.y) &&
+                            (vertex->z == pt.z)) {
+                            break;
+                        } else {
+                            link = link->next;
+                        }
+                    }
+
+                    if (link == NULL) {
+                        /* A newly encounter vertex */
+                        vertex = (vertex_t *)mem_newobj(vertexpool);
+                        link = (link_t *)mem_newobj(linkpool);
+
+                        if ((vertex == NULL) || (link == NULL)) {
+                            fprintf(stderr, "Thread %d: %s %d: out of memory\n"
+                                    , tree->procid, __FILE__, __LINE__);
+                            MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+                            exit(1);
+                        }
+
+                        /* Initialize the fields */
+                        vertex->x = pt.x;
+                        vertex->y = pt.y;
+                        vertex->z = pt.z;
+
+                        /* To find the owner of a node, adjust the
+                           coordinate of a node if it's on the
+                           boundary */
+                        adjustedpt.x = (pt.x == tree->farendp[0]) ?
+                            tree->farbound[0] : pt.x;
+                        adjustedpt.y = (pt.y == tree->farendp[1]) ?
+                            tree->farbound[1] : pt.y;
+                        adjustedpt.z = (pt.z == tree->farendp[2]) ?
+                            tree->farbound[2] : pt.z;
+
+                        vertex->owner = (tree->groupsize == 1) ? 0 :
+                            math_zsearch(tree->com->interval,
+                                         tree->com->groupsize, &adjustedpt);
+
+                        vertex->lnid = -1; /* undefined */
+                        vertex->touches = 1;
+                        vertex->level = oct->level;
+                        vertex->share = NULL; /* undefined */
+
+                        /* Link into the hash table */
+                        link->record = vertex;
+                        link->next = vertexHashTable[hashentry];
+                        vertexHashTable[hashentry] = link;
+
+                        /* Update the statistics */
+                        harborcount++;
+
+                        vertex->qleid = eindex % 8;
+                        vertex->cid   = (eindex % 64) / 8;
+
+                    } else {
+                        /* We have encountered this vertex already */
+
+                        vertex->touches++;
+                        vertex->level = (vertex->level < oct->level) ?
+                            vertex->level : oct->level;
+
+                        vertex->qleid = eindex % 8;
+                        vertex->cid   = (eindex % 64) / 8;
+
+                    }
+                } /* i */
+            } /* j */
+        } /* k */
+
+        /* Move along the frontier to the next one in preorder traversal */
+        oct = oct_getnextleaf(oct);
+
+        /* Increment geid by 1 */
+        geid++;
+
+    } /* for all the local octants */
+
+    /* RICARDO SANITY CHECKS */
+    if ( oct != NULL ) {
+        fprintf(stderr,
+                "Thread %d: %s %d: error in the last leaf \n",
+                tree->procid, __FILE__, __LINE__);
+        MPI_Abort(MPI_COMM_WORLD, COMM_ERR);
+        exit(1);
+    }
+
+    /*---Direct sharing: update the touches of vertices if necessary--------*/
+    if (tree->groupsize > 1) {
+        pctl_t *frompctl, *topctl;
+
+        /* Assemble a vertex list for each of my adjacent
+           processor. The vertices may not actually be present on
+           their processors, for example, a dangling node */
+
+        com_resetpctl(tree->com, sizeof(vertex_info_t));
+
+        /* Visit all my vertices */
+        for (hashentry = 0; hashentry < ecount; hashentry++) {
+
+            link = vertexHashTable[hashentry];
+
+            while (link != NULL) {
+                tick_t nx, ny, nz;
+                int32_t procid, nbrprocid[8], nbrs, xtick, ytick, ztick;
+                point_t pt;
+                int32_t idx, existed;
+
+                vertex = (vertex_t *)link->record;
+
+                if (vertex->touches == 8) {
+                    /* All the octants sharing this vertex must
+                       be on my processor. */
+                    link = link->next;
+                    continue;
+                }
+
+                nx = vertex->x;
+                ny = vertex->y;
+                nz = vertex->z;
+
+                /* Mark as no neighbors at this moment */
+                nbrs = 0;
+
+                /* Find which neighbor(s) processor share this vertex */
+                for (ztick = 0; ztick < 2; ztick++) {
+
+                    pt.z = nz - ztick;
+
+                    /* Discard out of bounds */
+                    if ( ( pt.z < tree->nearendp[2] ) ||
+                         ( pt.z >= tree->farendp[2] ) ) {
+                        continue;
+                    }
+
+                    for (ytick = 0; ytick < 2; ytick++) {
+
+                        pt.y = ny - ytick;
+
+                        /* Discard out of bounds */
+                        if ( ( pt.y < tree->nearendp[1] ) ||
+                             ( pt.y >= tree->farendp[1] ) ) {
+                            continue;
+                        }
+
+                        for (xtick = 0; xtick < 2; xtick++) {
+
+                            pt.x = nx - xtick;
+
+                            /* Discard out of bounds */
+                            if ( ( pt.x < tree->nearendp[0] ) ||
+                                 ( pt.x >= tree->farendp[0] ) ) {
+                                continue;
+                            }
+
+                            /* If we pushed the surface down for bldgs... */
+                            if ( tree->surfacep > 0 ) {
+
+                                /* ...and the point is above the surface... */
+                                if ( pt.z < tree->surfacep ) {
+
+                                    /* ...and does not belong to any bldg... */
+                                    int res = bldgs_nodesearch(
+                                            pt.x, pt.y, pt.z, tree->ticksize);
+
+                                    if ( res == 0 ) {
+
+                                        /* ...then, discard 'air' nodes! */
+                                        continue;
+                                    }
+                                }
+                            }
+
+                            /* Find who possess the pixel */
+                            procid = math_zsearch(tree->com->interval,
+                                                  tree->groupsize, &pt);
+
+			    /* Sanity check introduced after the buildings
+			     * options were incorporated. Should never occur */
+			    if ( ( procid < 0 ) ||
+			         ( procid > tree->groupsize ) ) {
+	                        fprintf(stderr,
+	                                "Thread %d: wrong procid from math "
+	                                "search at octor_extractmesh direct "
+	                                "sharing in vertex with coords "
+	                                "x,y,z = %f %f %f\n",
+	                                procid,
+	                                pt.x*tree->ticksize,
+	                                pt.y*tree->ticksize,
+	                                pt.z*tree->ticksize);
+			    }
+
+                            if (procid == tree->procid) {
+
+                                /* Discard my own nodes */
+                                continue;
+
+                            } else {
+
+                                /* Owned by a remote processor */
+
+                                /* Assume it's the first occurrence */
+                                existed = 0;
+
+                                for (idx = 0; idx < nbrs; idx++) {
+                                    if (procid == nbrprocid[idx]) {
+                                        /* Message created already */
+                                        existed = 1;
+                                        break;
+                                    }
+                                }
+
+                                if (existed)
+                                    continue;
+                                else {
+                                    nbrprocid[nbrs] = procid;
+                                    nbrs++;
+                                }
+                            }
+
+                        } /* xtick */
+                    } /* ytick */
+                } /* ztick */
+
+                /* Create a message destined for the found (sharing)
+                   neighbor processors */
+                for (idx = 0; idx < nbrs; idx++) {
+                    vertex_info_t *outvertex;
+                    int32_t nbrid;
+
+                    /* Get hold of the processor controller */
+                    nbrid = nbrprocid[idx];
+                    topctl = tree->com->pctltab[nbrid];
+                    if (topctl == NULL) {
+                        /* This should not happen */
+                        fprintf(stderr, "Thread %d: %s %d: internal error\n",
+                                tree->procid, __FILE__, __LINE__);
+                        MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+                        exit(1);
+                    }
+
+                    /* Allocate space for outgoing modified point */
+                    outvertex = (vertex_info_t *)mem_newobj(topctl->sndmem);
+
+                    if (outvertex == NULL) {
+                        fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                                tree->procid, __FILE__, __LINE__);
+                        MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+                        exit(1);
+                    }
+
+                    outvertex->x = vertex->x;
+                    outvertex->y = vertex->y;
+                    outvertex->z = vertex->z;
+                    outvertex->owner = vertex->owner;
+                    outvertex->touches = vertex->touches;
+                    outvertex->level = vertex->level;
+                    outvertex->qleid = vertex->qleid;
+                    outvertex->cid   = vertex->cid;
+                }
+                /* Move to the next vertex */
+                link = link->next;
+
+            } /* while link != NULL */
+        } /* for all the entries in the hash table */
+
+
+        /* Exchange vertex information between adjacent processors */
+        com_OrchestrateExchange(tree->com, VERTEX_INFO_MSG, tree->comm_tree);
+
+
+        /* Account of the vertex touches sent by my neighbors */
+        frompctl = tree->com->firstpctl;
+
+        while (frompctl != NULL) {
+            vertex_info_t *invertex;
+
+            mem_initcursor(frompctl->rcvmem);
+
+            while ((invertex =
+                    (vertex_info_t *)mem_getcursor(frompctl->rcvmem))
+                   != NULL) {
+
+                hashentry = math_hashuint32(&invertex->x, 3) % ecount;
+                link = vertexHashTable[hashentry];
+
+                while (link != NULL) {
+                    vertex = (vertex_t *)link->record;
+
+                    if ((vertex->x == invertex->x) &&
+                        (vertex->y == invertex->y) &&
+                        (vertex->z == invertex->z)) {
+                        break;
+                    } else
+                        link = link->next;
+                }
+
+                if (link != NULL) {
+                    /* I have already harbored this vertex */
+                    vertex->touches += invertex->touches;
+
+                } else {
+                    /* Harbor this first-time vertex if I own it */
+                    if (invertex->owner == tree->procid) {
+
+                        link = (link_t *)mem_newobj(linkpool);
+                        vertex = (vertex_t *)mem_newobj(vertexpool);
+
+                        if ((link == NULL) || (vertex == NULL)) {
+                            fprintf(stderr, "Thread %d: %s %d: out of memory\n"
+                                    , tree->procid, __FILE__, __LINE__);
+                            MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+                            exit(1);
+                        }
+
+                        /* Initialize the fields */
+                        vertex->x = invertex->x;
+                        vertex->y = invertex->y;
+                        vertex->z = invertex->z;
+                        vertex->owner = invertex->owner;
+                        vertex->lnid = -1;
+                        vertex->touches = invertex->touches;
+                        vertex->level = invertex->level;
+                        vertex->share = NULL;
+                        vertex->qleid = invertex->qleid;
+                        vertex->cid   = invertex->cid;
+
+                        /* Link into the hash table */
+                        link->record = vertex;
+                        link->next = vertexHashTable[hashentry];
+                        vertexHashTable[hashentry] = link;
+
+                        /* Update the statistics !!! */
+                        harborcount++;
+
+                    } else {
+                        /* I do not use this vertex, nor do I own
+                           this vertex. Ignore it */
+                    }
+                } /* Haven't seen this vertex before */
+
+                if ((link != NULL) && (vertex->owner == tree->procid)) {
+                    /* We need to add the sending processor to the
+                       share list if this proc is the owner */
+
+                    int32link_t *int32link;
+
+                    int32link = (int32link_t *)mem_newobj(mess->int32linkpool);
+                    if (int32link == NULL) {
+                        fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                                tree->procid, __FILE__, __LINE__);
+                        MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+                        exit(1);
+                    }
+
+                    int32link->id = frompctl->procid;
+                    int32link->next = vertex->share;
+                    vertex->share = int32link;
+                }
+
+                mem_advcursor(frompctl->rcvmem);
+            } /* while there are more incoming vertices */
+
+            frompctl = frompctl->next;
+        } /* While there are unprocessed incoming message */
+    } /* Update vertex touches in a multi-processor environment */
+
+
+    /*-----Indirect sharing: share via anchored vertices  -------------*/
+
+    /* Go through the vertices I have harbored. Set the node
+       property for each vertex. In case I own a dangling vertex,
+       figure out who else (anchored vertices) I shall harbor. */
+
+    if (tree->groupsize > 1) {
+        int32_t nbrprocid, msgsize;
+
+        /* Note we do not use the interval array for allcom */
+        allcom = com_new(tree->procid, tree->groupsize);
+        if (allcom == NULL) {
+            fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                    tree->procid, __FILE__, __LINE__);
+            MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+            exit(1);
+        }
+
+        /* Initialize allcom manually. Every processor is adjacent
+           with every other processors */
+
+        msgsize = sizeof(point_t);
+        for (nbrprocid = tree->groupsize - 1; nbrprocid >= 0; nbrprocid--) {
+            if (nbrprocid == tree->procid)
+                continue;
+
+            if ((allcom->pctltab[nbrprocid] = pctl_new(nbrprocid, msgsize))
+                == NULL) {
+                fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                        tree->procid, __FILE__, __LINE__);
+                MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+                exit(1);
+            }
+
+            /* link into the pctl list */
+            allcom->pctltab[nbrprocid]->next = allcom->firstpctl;
+            allcom->firstpctl = allcom->pctltab[nbrprocid];
+            allcom->nbrcnt++;
+        }
+    } /* if groupsize > 1 */
+
+
+    for (hashentry = 0; hashentry < ecount; hashentry++) {
+        int dep;
+        tick_t smalloctsize;
+
+        link = vertexHashTable[hashentry];
+
+        while (link != NULL) {
+
+            vertex = (vertex_t *)link->record;
+
+            int32_t rp = node_setproperty(tree, vertex, &vertex->property,
+                    bldgs_nodesearch);
+
+            if ( rp != 0) {
+                double x = vertex->x * tree->ticksize;
+                double y = vertex->y * tree->ticksize;
+                double z = vertex->z * tree->ticksize;
+                fprintf( stderr,
+                         "\n\nThread %d: %s %d: "
+                         "node_setproperty() error %d\n"
+                         "vertex coords (x,y,z): %f %f %f\n",
+                         tree->procid, __FILE__, __LINE__, rp, x, y, z);
+                MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+                exit(1);
+            }
+
+            if (vertex->owner != tree->procid) {
+                /* I do not own this vertex */
+                link = link->next;
+                continue;
+            }
+
+            /* I own this vertex. If it is an dangling node, I might
+               need to harbor its parent anchors */
+
+            smalloctsize = (tick_t)1 << (PIXELLEVEL - vertex->level);
+
+            switch ((int)vertex->property) {
+            case (XFACE):
+                for (dep = 0; dep < 4; dep++) {
+                    point_t pt;
+
+                    pt.x = vertex->x;
+                    pt.y = vertex->y +
+                        ((dep & 0x1) ? smalloctsize : -smalloctsize);
+                    pt.z = vertex->z +
+                        ((dep & 0x2) ? smalloctsize : -smalloctsize);
+
+                    if (tree->groupsize > 1) {
+                        node_harboranchored(tree, vertexHashTable, ecount,
+                                            linkpool, vertexpool, allcom,
+                                            pt, &harborcount);
+                    }
+                }
+
+                break;
+
+            case (YFACE):
+                for (dep = 0; dep < 4; dep++) {
+                    point_t pt;
+
+                    pt.y = vertex->y;
+                    pt.x = vertex->x +
+                        ((dep & 0x1) ? smalloctsize : -smalloctsize);
+                    pt.z = vertex->z +
+                        ((dep & 0x2) ? smalloctsize : -smalloctsize);
+
+                    if (tree->groupsize > 1) {
+                        node_harboranchored(tree, vertexHashTable, ecount,
+                                            linkpool, vertexpool, allcom,
+                                            pt, &harborcount);
+                    }
+                }
+                break;
+
+            case (ZFACE):
+                for (dep = 0; dep < 4; dep++) {
+                    point_t pt;
+
+                    pt.z = vertex->z;
+                    pt.x = vertex->x +
+                        ((dep & 0x1) ? smalloctsize : -smalloctsize);
+                    pt.y = vertex->y +
+                        ((dep & 0x2) ? smalloctsize : -smalloctsize);
+
+                    if (tree->groupsize > 1) {
+                        node_harboranchored(tree, vertexHashTable, ecount,
+                                            linkpool, vertexpool, allcom,
+                                            pt, &harborcount);
+                    }
+                }
+                break;
+
+            case (XEDGE):
+                for (dep = 0; dep < 2; dep++) {
+                    point_t pt;
+
+                    pt.x = vertex->x +
+                        ((dep == 1) ? smalloctsize : -smalloctsize);
+                    pt.y = vertex->y;
+                    pt.z = vertex->z;
+
+                    if (tree->groupsize > 1) {
+                        node_harboranchored(tree, vertexHashTable, ecount,
+                                            linkpool, vertexpool, allcom,
+                                            pt, &harborcount);
+                    }
+                }
+                break;
+
+            case (YEDGE):
+                for (dep = 0; dep < 2; dep++) {
+                    point_t pt;
+
+                    pt.y = vertex->y +
+                        ((dep == 1) ? smalloctsize : -smalloctsize);
+                    pt.x = vertex->x;
+                    pt.z = vertex->z;
+
+                    if (tree->groupsize > 1) {
+                        node_harboranchored(tree, vertexHashTable, ecount,
+                                            linkpool, vertexpool, allcom,
+                                            pt, &harborcount);
+                    }
+                }
+                break;
+
+
+            case (ZEDGE):
+                for (dep = 0; dep < 2; dep++) {
+                    point_t pt;
+
+                    pt.z = vertex->z +
+                        ((dep == 1) ? smalloctsize : -smalloctsize);
+                    pt.x = vertex->x;
+                    pt.y = vertex->y;
+
+                    if (tree->groupsize > 1) {
+                        node_harboranchored(tree, vertexHashTable, ecount,
+                                            linkpool, vertexpool, allcom,
+                                            pt, &harborcount);
+                    }
+                }
+                break;
+
+            default:
+                /* Anchored node. Do nothing. */
+                break;
+            }
+
+            /* Get to the next link */
+            link = link->next;
+        }
+
+    } /* for all the hash table entries */
+
+
+    if (tree->groupsize > 1) {
+        pctl_t *frompctl;
+
+        /* Exchange the ANCHORED_MSG to finish builing the sharing
+           relationship */
+        com_OrchestrateExchange(allcom, ANCHORED_MSG, tree->comm_tree);
+
+        /* Some of my neighbors are telling me that they share
+           anchored vertices owned by me */
+        frompctl = allcom->firstpctl;
+
+        while (frompctl != NULL) {
+            point_t *anchored;
+
+            mem_initcursor(frompctl->rcvmem);
+
+            while ((anchored = (point_t *)mem_getcursor(frompctl->rcvmem))
+                   != NULL) {
+
+                hashentry = math_hashuint32(&anchored->x, 3) % ecount;
+                link = vertexHashTable[hashentry];
+
+                while (link != NULL) {
+                    vertex = (vertex_t *)link->record;
+
+                    if ((vertex->x == anchored->x) &&
+                        (vertex->y == anchored->y) &&
+                        (vertex->z == anchored->z)) {
+                        break;
+                    } else
+                        link = link->next;
+                }
+
+                if ((link == NULL) ||
+                    (vertex->owner != tree->procid)) {
+                    fprintf(stderr, "Thread %d: %s %d: internal error",
+                            tree->procid, __FILE__, __LINE__);
+                    fprintf(stderr, "(cannot find my own anchored vertex)\n");
+                    MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+                    exit(1);
+
+                } else {
+                    int32link_t *int32link;
+
+                    /* Add the sending processor to the share list */
+                    int32link = (int32link_t *)mem_newobj(mess->int32linkpool);
+                    if (int32link == NULL) {
+                        fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                                tree->procid, __FILE__, __LINE__);
+                        MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+                        exit(1);
+                    }
+
+                    int32link->id = frompctl->procid;
+                    int32link->next = vertex->share;
+                    vertex->share = int32link;
+                }
+
+                mem_advcursor(frompctl->rcvmem);
+            } /* while there are more sharing information */
+
+            frompctl = frompctl->next;
+        }
+    } /* Add indirect sharing information */
+
+    if (tree->groupsize > 1) {
+        /* Release the allcom */
+        com_delete(allcom);
+    }
+
+
+    /*-------------Create node table ---------------------------------*/
+
+    /* Allocate node table and initialize the fields. We cound't do
+       this earlier since we don't know how many vertices this
+       processor will have to harbor */
+
+    nodeTable = (node_t *)malloc(sizeof(node_t) * harborcount);
+    if (nodeTable == NULL) {
+        fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                tree->procid, __FILE__, __LINE__);
+        fprintf(stderr, "Total memory allocated by Octor : %d bytes\n",
+                (int)(theAllocatedMemSum));
+        MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+        exit(1);
+    } else {
+        theAllocatedMemSum += sizeof(node_t) * harborcount;
+    }
+
+    ncount = 0; /* Number of nodes owned by this processor */
+    ldnnum = 0; /* Number of dangling nodes owned by this processor */
+    nindex = 0;
+
+    /* Visit all the vertices I have harbored */
+    for (hashentry = 0; hashentry < ecount; hashentry++) {
+
+        link = vertexHashTable[hashentry];
+
+        while (link != NULL) {
+            vertex = (vertex_t *)link->record;
+
+            /* Install the node data into the nodeTable. */
+
+            node = &nodeTable[nindex];
+
+            /* Adjust the node coordinate for ordering purpose. We
+               shall reverse the coordiante at later stage */
+            node->x = (vertex->x == tree->farendp[0]) ?
+                tree->farbound[0] : vertex->x;
+            node->y = (vertex->y == tree->farendp[1]) ?
+                tree->farbound[1] : vertex->y;
+            node->z = (vertex->z == tree->farendp[2]) ?
+                tree->farbound[2] : vertex->z;
+
+            if (vertex->owner == tree->procid) {
+                ncount++;
+                node->ismine = 1;
+            } else {
+                node->ismine = 0;
+            }
+
+            /* We don't know of the gnid yet. Will assign later. */
+
+            if (node->ismine) {
+                node->proc.share = vertex->share;
+            } else {
+                if (vertex->share != NULL) {
+                    fprintf(stderr, "Thread %d: %s %d: internal error\n",
+                            tree->procid, __FILE__, __LINE__);
+                    MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+                    exit(1);
+                }
+                node->proc.ownerid = vertex->owner;
+            }
+
+
+            if (vertex->property & 0x80) {
+            	node->isanchored = 1;
+
+            	/* HAYDAR QUADRATIC EFFORT */
+            	/* Keep the local element id within the quadratic element for each node as kept for each vertex*/
+
+            	node->qleid = vertex->qleid;
+
+            } else {
+
+                node->isanchored = 0;
+
+                if (node->ismine) {
+                    unsigned char *ptr;
+
+                	/* HAYDAR QUADRATIC EFFORT */
+                	/* Keep the local element id within the quadratic element for each node as kept for each vertex*/
+
+                	node->qleid = vertex->cid;
+
+                    /* I need to allocate space for it in dnodeTable */
+                    ldnnum++;
+
+                    /* Store various dangling node property
+                       temporarily in gnid */
+                    ptr = (unsigned char *)&node->gnid;
+                    *ptr = vertex->property;
+                    ptr++;
+
+                    /* Level of the smaller octants who share this
+                       dangling node */
+                    *ptr = vertex->level;
+                }
+            }
+
+            /* Move to the next empty entry in the node table */
+            nindex++;
+
+            /* Get to the next link */
+            link = link->next;
+        }
+
+
+    } /* for all the hash table entries */
+
+    /* Sort all the nodes I've harbored in ascending Z-order */
+    qsort(nodeTable, harborcount, sizeof(node_t), octor_zcompare);
+
+    /* Set up the nodeCountTable and nodeStartTable, in a similar
+       way as for the elements */
+    if (tree->groupsize > 1) {
+
+        /* Get node count distribution */
+        tree_setdistribution(tree, &nodeCountTable, &nodeStartTable, ncount);
+        startgnid = nodeStartTable[tree->procid];
+
+    } else {
+        /* Single processor */
+        startgnid = 0;
+    }
+
+    /* Allocate space of the dnodeTable */
+    if (ldnnum == 0) {
+        dnodeTable = NULL;
+    } else {
+        dnodeTable = (dnode_t *)malloc(sizeof(dnode_t) * ldnnum);
+        if (dnodeTable == NULL) {
+            fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                    tree->procid, __FILE__, __LINE__);
+            fprintf(stderr, "Total memory allocated by Octor : %d bytes\n",
+                    (int)(theAllocatedMemSum));
+            MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+            exit(1);
+        } else {
+            theAllocatedMemSum += sizeof(dnode_t) * ldnnum;
+        }
+    }
+
+    /* Assign the global node id to nodes owned by me and fill the
+       lnid field of vertex_t in the hash table. Obtain the global
+       node id from the owner processors for those not owned by me */
+
+    gnid = startgnid;
+    dnindex = 0; /* Dangling node index */
+
+    if (tree->groupsize > 1) {
+        partcom = com_new(tree->procid, tree->groupsize);
+        if (partcom == NULL) {
+            fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                    tree->procid, __FILE__, __LINE__);
+            MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+            exit(1);
+        }
+    }
+
+
+    for (nindex = 0; nindex < harborcount; nindex++) {
+
+        /* Reverse the adjustments made earlier to make hashing work */
+        nodeTable[nindex].x = (nodeTable[nindex].x == tree->farbound[0]) ?
+            tree->farendp[0] : nodeTable[nindex].x;
+        nodeTable[nindex].y = (nodeTable[nindex].y == tree->farbound[1]) ?
+            tree->farendp[1] : nodeTable[nindex].y;
+        nodeTable[nindex].z = (nodeTable[nindex].z == tree->farbound[2]) ?
+            tree->farendp[2] : nodeTable[nindex].z;
+
+        if (nodeTable[nindex].ismine &&
+            (!nodeTable[nindex].isanchored)) {
+
+            /* gnid is holding some temporary information regarding
+               this DANGING node owned by me */
+
+            /* Create a new record for the dangling node */
+            dnodeTable[dnindex].ldnid = nindex;
+
+            /* Copy the temperary information to deps */
+            dnodeTable[dnindex].deps = *(uint32_t *)(&nodeTable[nindex].gnid);
+
+            dnodeTable[dnindex].lanid = NULL;
+
+            /* HAYDAR QUADRATIC EFFORT */
+            /* Keep the local element id (0...7) within the quadratic element as kept for each node */
+
+            dnodeTable[dnindex].qleid = nodeTable[nindex].qleid;
+
+            dnindex++;
+        }
+
+        /* We can safely overwrite gnid now */
+        nodeTable[nindex].gnid = -1; /* indicate invalid */
+
+        if (nodeTable[nindex].ismine) {
+            int32link_t *int32link;
+
+            /* Assign gnid to nodes owned by me. */
+            nodeTable[nindex].gnid = gnid;
+            gnid++;
+
+            /* Create gnid_info for each processor who shares the node
+               with me */
+
+            int32link = nodeTable[nindex].proc.share;
+
+            while (int32link != NULL) {
+                int32_t procid;
+                gnid_info_t *out_gnid_info;
+                pctl_t *topctl;
+
+                procid = int32link->id;
+                topctl = partcom->pctltab[procid];
+                if (topctl == NULL) {
+                    /* First occurrence */
+                    topctl = pctl_new(procid, sizeof(gnid_info_t));
+                    if (topctl == NULL) {
+                        fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                                tree->procid, __FILE__, __LINE__);
+                        MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+                        exit(1);
+                    }
+
+                    /* link into the pctl list */
+                    partcom->pctltab[procid] = topctl;
+                    partcom->pctltab[procid]->next = partcom->firstpctl;
+                    partcom->firstpctl = partcom->pctltab[procid];
+
+                    partcom->nbrcnt++;
+                }
+
+                /* Allocate space for outgoing gnid_info */
+                out_gnid_info =
+                    (gnid_info_t *)mem_newobj(topctl->sndmem);
+
+                if (out_gnid_info == NULL) {
+                        fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                                tree->procid, __FILE__, __LINE__);
+                        MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+                        exit(1);
+                    }
+
+                out_gnid_info->x = nodeTable[nindex].x;
+                out_gnid_info->y = nodeTable[nindex].y;
+                out_gnid_info->z = nodeTable[nindex].z;
+                out_gnid_info->gnid = nodeTable[nindex].gnid;
+
+                /* Get to the next sharing processor */
+                int32link = int32link->next;
+            }
+
+        } else {
+            /* This vertex is not owned by me. Let me expect to
+               receive the information from its owner */
+            int32_t procid;
+            pctl_t *frompctl;
+
+            procid = nodeTable[nindex].proc.ownerid;
+            frompctl = partcom->pctltab[procid];
+
+            if (frompctl == NULL) {
+                /* First occurrence */
+                frompctl = pctl_new(procid, sizeof(gnid_info_t));
+                if (frompctl == NULL) {
+                    fprintf(stderr, "Thread %d: %s %d: out of memory\n",
+                            tree->procid, __FILE__, __LINE__);
+                    MPI_Abort(MPI_COMM_WORLD, OUTOFMEM_ERR);
+                    exit(1);
+                }
+
+                /* link into the pctl list */
+                partcom->pctltab[procid] = frompctl;
+                partcom->pctltab[procid]->next = partcom->firstpctl;
+                partcom->firstpctl = partcom->pctltab[procid];
+
+                partcom->nbrcnt++;
+
+            } else {
+                /* I already know I need to receive from procid */
+            }
+        } /* I don't own this node */
+
+        hashentry = math_hashuint32(&nodeTable[nindex], 3) % ecount;
+        link = vertexHashTable[hashentry];
+
+        while (link != NULL) {
+            vertex = (vertex_t *)link->record;
+
+            if ((vertex->x == nodeTable[nindex].x) &&
+                (vertex->y == nodeTable[nindex].y) &&
+                (vertex->z == nodeTable[nindex].z)) {
+                /* Hit */
+                vertex->lnid = nindex;
+                break;
+            }
+            link = link->next;
+        }
+
+        if (link == NULL) {
+            fprintf(stderr, "Thread %d: %s %d: internal error\n",
+                    tree->procid, __FILE__, __LINE__);
+            MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+            exit(1);
+        }
+    } /* for all the harbored nodes */
+
+
+    /* Fill in the gnid of those vertices I harbor but don't own */
+    if (tree->groupsize > 1) {
+        pctl_t *frompctl;
+
+        com_OrchestrateExchange(partcom, GNID_MSG, tree->comm_tree);
+
+        /* Retreive global node ids sent to me */
+        frompctl = partcom->firstpctl;
+
+        while (frompctl != NULL) {
+            gnid_info_t *in_gnid_info;
+
+            mem_initcursor(frompctl->rcvmem);
+
+            while ((in_gnid_info =
+                    (gnid_info_t *)mem_getcursor(frompctl->rcvmem))
+                   != NULL) {
+
+                int32_t lnid;
+
+                /* Find the vertex in my hashtable */
+                hashentry = math_hashuint32(&in_gnid_info->x, 3) % ecount;
+                link = vertexHashTable[hashentry];
+
+                while (link != NULL) {
+                    vertex = (vertex_t *)link->record;
+
+                    if ((vertex->x == in_gnid_info->x) &&
+                        (vertex->y == in_gnid_info->y) &&
+                        (vertex->z == in_gnid_info->z)) {
+                        lnid = vertex->lnid;
+                        break;
+                    } else
+                        link = link->next;
+                }
+
+                if (link == NULL) {
+                    fprintf(stderr, "Thread %d: %s %d: ",
+                            tree->procid, __FILE__, __LINE__);
+                    fprintf(stderr,"received unrelated vertex info.\n");
+                    MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+                    exit(1);
+                }
+
+                /* Fill in the global node id properly */
+                if (nodeTable[lnid].gnid != -1) {
+                    fprintf(stderr, "Thread %d: %s %d: ",
+                            tree->procid, __FILE__, __LINE__);
+                    fprintf(stderr,"receive gnid that I already have.\n");
+                    MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+                    exit(1);
+                }
+
+                nodeTable[lnid].gnid = in_gnid_info->gnid;
+
+                mem_advcursor(frompctl->rcvmem);
+            } /* while there are more incoming vertices */
+
+            frompctl = frompctl->next;
+        } /* While there are unprocessed incoming message */
+
+        com_delete(partcom);
+    }
+
+
+#ifdef DEBUG
+    /* Debug: sanity check. */
+    for (nindex = 0; nindex < harborcount; nindex++) {
+        if (nodeTable[nindex].gnid == -1) {
+            fprintf(stderr, "Thread %d: %s %d: unassigned gnid\n",
+                    tree->procid, __FILE__, __LINE__);
+            fprintf(stderr, "nindex = %d\n", (int32_t)nindex);
+            MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+            exit(1);
+        }
+    }
+#endif /* DEBUG */
+
+    /* Correlate the element table to the node table */
+    oct = oct_getleftmost(tree->root);
+
+    for (eindex = 0; eindex < ecount; eindex++) {
+        tick_t edgesize;
+        point_t pt;
+        int32_t i, j, k;
+        int32_t whichchild;
+
+        edgesize = (tick_t)1 << (PIXELLEVEL - oct->level);
+
+        whichchild = 0;
+        for (k = 0; k < 2; k++) {
+            pt.z = oct->lz + k * edgesize;
+
+            for (j = 0; j < 2; j++) {
+                pt.y = oct->ly + j * edgesize;
+
+                for (i = 0; i < 2; i++) {
+
+                    pt.x = oct->lx + i * edgesize;
+
+                    hashentry = math_hashuint32(&pt, 3) % ecount;
+                    link = vertexHashTable[hashentry];
+
+                    while (link != NULL) {
+                        vertex = (vertex_t *)link->record;
+                        if ((vertex->x == pt.x) &&
+                            (vertex->y == pt.y) &&
+                            (vertex->z == pt.z)) {
+
+                            elemTable[eindex].lnid[whichchild] =
+                                vertex->lnid;
+                            whichchild++;
+                            break;
+                        }
+
+                        link = link->next;
+                    }
+
+                    if (link == NULL) {
+                        fprintf(stderr, "Thread %d: %s %d: internal error\n",
+                                tree->procid, __FILE__, __LINE__);
+                        MPI_Abort(MPI_COMM_WORLD, INTERNAL_ERR);
+                        exit(1);
+                    }
+
+                } /* i */
+            } /* j */
+        } /* k */
+
+        oct = oct_getnextleaf(oct);
+
+    } /* for all the local octants */
+
+    /* Correlate the dangling node to anchored nodes */
+
+    for (dnindex = 0; dnindex < ldnnum; dnindex++) {
+    	unsigned char *ptr;
+        int8_t level;
+        unsigned char property;
+        tick_t smalloctsize;
+        int32_t dep;
+        int32_t ldnid;
+
+        ptr = (unsigned char *)&dnodeTable[dnindex].deps;
+        property = *ptr;
+
+        ptr++;
+        level = *(int8_t *)ptr;
+
+        smalloctsize = (tick_t)1 << (PIXELLEVEL - level);
+        ldnid = dnodeTable[dnindex].ldnid;
+
+        /* HAYDAR QUADRATIC EFFORT */
+        /* Change the anchored nodes assigned for each dangling node */
+
+        int32_t locn = dnodeTable[dnindex].qleid;
+
+        switch ((int)property) {
+        case (XEDGE):
+
+                		    				dnodeTable[dnindex].deps = 3;
+
+        if(locn == 0 || locn == 2 || locn == 4 || locn == 6)
+        {
+        	for (dep = 0; dep < 3; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		if(dep == 0){
+        			pt.x = nodeTable[ldnid].x - smalloctsize;
+        			weight = 0.375;
+        		}
+        		else if(dep == 1){
+        			pt.x = nodeTable[ldnid].x + smalloctsize;
+        			weight = 0.75; //0.75
+        		}
+        		else if(dep == 2){
+        			pt.x = nodeTable[ldnid].x + (tick_t)3 * smalloctsize;
+        			weight = -0.125; //-0.125
+        		}
+        		pt.y = nodeTable[ldnid].y;
+        		pt.z = nodeTable[ldnid].z;
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+        else
+        {
+        	for (dep = 0; dep < 3; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		if(dep == 0){
+        			pt.x = nodeTable[ldnid].x - (tick_t)3 * smalloctsize;
+        			weight = -0.125; //-0.125
+        		}
+        		else if(dep == 1){
+        			pt.x = nodeTable[ldnid].x - smalloctsize;
+        			weight = 0.75; //0.75
+        		}
+        		else if(dep == 2)
+        		{
+        			pt.x = nodeTable[ldnid].x +  smalloctsize;
+        			weight = 0.375; //0.375
+        		}
+
+        		pt.y = nodeTable[ldnid].y;
+        		pt.z = nodeTable[ldnid].z;
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+        }
+
+        break;
+
+        case (YEDGE):
+
+                								dnodeTable[dnindex].deps = 3;
+
+        if(locn == 0 || locn == 1 || locn == 4 || locn == 5)
+        {
+        	for (dep = 0; dep < 3; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		if(dep == 0){
+        			pt.y = nodeTable[ldnid].y - smalloctsize;
+        			weight = 0.375; //0.375
+        		}
+        		else if(dep == 1){
+        			pt.y = nodeTable[ldnid].y + smalloctsize;
+        			weight = 0.75; //0.75
+        		}
+        		else if(dep == 2){
+        			pt.y = nodeTable[ldnid].y + (tick_t)3 * smalloctsize;
+        			weight = -0.125; //-0.125
+        		}
+
+        		pt.x = nodeTable[ldnid].x;
+        		pt.z = nodeTable[ldnid].z;
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+        else
+        {
+        	for (dep = 0; dep < 3; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		if(dep == 0)
+        		{
+        			pt.y = nodeTable[ldnid].y - (tick_t)3 * smalloctsize;
+        			weight = -0.125; //-0.125
+        		}
+        		else if(dep == 1){
+        			pt.y = nodeTable[ldnid].y - smalloctsize;
+        			weight = 0.75; //0.75
+        		}
+        		else if(dep == 2){
+        			pt.y = nodeTable[ldnid].y + smalloctsize;
+        			weight = 0.375; //0.375
+        		}
+
+        		pt.x = nodeTable[ldnid].x;
+        		pt.z = nodeTable[ldnid].z;
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+        }
+
+        break;
+
+        case (ZEDGE):
+
+                								dnodeTable[dnindex].deps = 3;
+
+        if(locn == 0 || locn == 1 || locn == 2 || locn == 3)
+        {
+        	for (dep = 0; dep < 3; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		if(dep == 0){
+        			pt.z = nodeTable[ldnid].z - smalloctsize;
+        			weight = 0.375; //0.375
+        		}
+        		else if(dep == 1){
+        			pt.z = nodeTable[ldnid].z + smalloctsize;
+        			weight = 0.75; //0.75
+        		}
+        		else if(dep == 2){
+        			pt.z = nodeTable[ldnid].z + (tick_t)3 * smalloctsize;
+        			weight = -0.125; //-0.125
+        		}
+        		pt.x = nodeTable[ldnid].x;
+        		pt.y = nodeTable[ldnid].y;
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+        else
+        {
+        	for (dep = 0; dep < 3; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		if(dep == 0){
+        			pt.z = nodeTable[ldnid].z - (tick_t)3 * smalloctsize;
+        			weight = -0.125; //-0.125
+        		}
+        		else if(dep == 1){
+        			pt.z = nodeTable[ldnid].z - smalloctsize;
+        			weight = 0.75; //0.75
+        		}
+        		else if(dep == 2){
+        			pt.z = nodeTable[ldnid].z + smalloctsize;
+        			weight = 0.375; //0.375
+        		}
+
+        		pt.x = nodeTable[ldnid].x;
+        		pt.y = nodeTable[ldnid].y;
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+        }
+
+        break;
+
+        case (XFACE):
+
+                								dnodeTable[dnindex].deps = 9;
+
+        if(locn == 0 || locn == 1){
+
+        	for (dep = 0; dep < 9; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		pt.x = nodeTable[ldnid].x;
+
+        		if(dep == 0 || dep == 3 || dep == 6){
+        			pt.y = nodeTable[ldnid].y - smalloctsize;
+        			weight = weight * 0.375; // * 0.375
+        		}
+        		else if(dep == 1 || dep == 4 || dep == 7){
+        			pt.y = nodeTable[ldnid].y + smalloctsize;
+        			weight = weight * 0.75; // 0.75
+        		}
+        		else if(dep == 2 || dep == 5 || dep == 8){
+        			pt.y = nodeTable[ldnid].y + (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+
+
+        		if(dep == 0 || dep == 1 || dep == 2){
+        			pt.z = nodeTable[ldnid].z - smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+        		else if(dep == 3 || dep == 4 || dep == 5){
+        			pt.z = nodeTable[ldnid].z + smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 6 || dep == 7 || dep == 8){
+        			pt.z = nodeTable[ldnid].z + (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+        else if(locn == 2 || locn == 3){
+
+        	for (dep = 0; dep < 9; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		pt.x = nodeTable[ldnid].x;
+
+        		if(dep == 0 || dep == 3 || dep == 6)
+        		{
+        			pt.y = nodeTable[ldnid].y - (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+        		else if(dep == 1 || dep == 4 || dep == 7){
+        			pt.y = nodeTable[ldnid].y - smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 2 || dep == 5 || dep == 8){
+        			pt.y = nodeTable[ldnid].y + smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+
+
+        		if(dep == 0 || dep == 1 || dep == 2){
+        			pt.z = nodeTable[ldnid].z - smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+        		else if(dep == 3 || dep == 4 || dep == 5){
+        			pt.z = nodeTable[ldnid].z + smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 6 || dep == 7 || dep == 8){
+        			pt.z = nodeTable[ldnid].z + (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+        else if(locn == 4 || locn == 5){
+
+        	for (dep = 0; dep < 9; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		pt.x = nodeTable[ldnid].x;
+
+        		if(dep == 0 || dep == 3 || dep == 6){
+        			pt.y = nodeTable[ldnid].y - smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+        		else if(dep == 1 || dep == 4 || dep == 7){
+        			pt.y = nodeTable[ldnid].y + smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 2 || dep == 5 || dep == 8){
+        			pt.y = nodeTable[ldnid].y + (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+
+
+        		if(dep == 0 || dep == 1 || dep == 2)
+        		{
+        			pt.z = nodeTable[ldnid].z - (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+        		else if(dep == 3 || dep == 4 || dep == 5){
+        			pt.z = nodeTable[ldnid].z - smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 6 || dep == 7 || dep == 8){
+        			pt.z = nodeTable[ldnid].z + smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+        else if(locn == 6 || locn == 7){
+
+        	for (dep = 0; dep < 9; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		pt.x = nodeTable[ldnid].x;
+
+        		if(dep == 0 || dep == 3 || dep == 6){
+        			pt.y = nodeTable[ldnid].y - (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+        		else if(dep == 1 || dep == 4 || dep == 7){
+        			pt.y = nodeTable[ldnid].y - smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 2 || dep == 5 || dep == 8){
+        			pt.y = nodeTable[ldnid].y + smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+
+
+        		if(dep == 0 || dep == 1 || dep == 2){
+        			pt.z = nodeTable[ldnid].z - (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+        		else if(dep == 3 || dep == 4 || dep == 5){
+        			pt.z = nodeTable[ldnid].z - smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 6 || dep == 7 || dep == 8){
+        			pt.z = nodeTable[ldnid].z + smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+
+        break;
+
+        case (YFACE):
+
+                								dnodeTable[dnindex].deps = 9;
+
+        if(locn == 0 || locn == 2){
+
+        	for (dep = 0; dep < 9; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		pt.y = nodeTable[ldnid].y;
+
+        		if(dep == 0 || dep == 3 || dep == 6){
+        			pt.x = nodeTable[ldnid].x - smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+        		else if(dep == 1 || dep == 4 || dep == 7){
+        			pt.x = nodeTable[ldnid].x + smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 2 || dep == 5 || dep == 8){
+        			pt.x = nodeTable[ldnid].x + (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+
+
+        		if(dep == 0 || dep == 1 || dep == 2){
+        			pt.z = nodeTable[ldnid].z - smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+        		else if(dep == 3 || dep == 4 || dep == 5){
+        			pt.z = nodeTable[ldnid].z + smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 6 || dep == 7 || dep == 8){
+        			pt.z = nodeTable[ldnid].z + (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+        else if(locn == 1 || locn == 3){
+
+        	for (dep = 0; dep < 9; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		pt.y = nodeTable[ldnid].y;
+
+        		if(dep == 0 || dep == 3 || dep == 6){
+        			pt.x = nodeTable[ldnid].x - (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+        		else if(dep == 1 || dep == 4 || dep == 7){
+        			pt.x = nodeTable[ldnid].x - smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 2 || dep == 5 || dep == 8){
+        			pt.x = nodeTable[ldnid].x + smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+
+
+        		if(dep == 0 || dep == 1 || dep == 2){
+        			pt.z = nodeTable[ldnid].z - smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+        		else if(dep == 3 || dep == 4 || dep == 5){
+        			pt.z = nodeTable[ldnid].z + smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 6 || dep == 7 || dep == 8){
+        			pt.z = nodeTable[ldnid].z + (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+        else if(locn == 4 || locn == 6){
+
+        	for (dep = 0; dep < 9; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		pt.y = nodeTable[ldnid].y;
+
+        		if(dep == 0 || dep == 3 || dep == 6){
+        			pt.x = nodeTable[ldnid].x - smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+        		else if(dep == 1 || dep == 4 || dep == 7){
+        			pt.x = nodeTable[ldnid].x + smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 2 || dep == 5 || dep == 8){
+        			pt.x = nodeTable[ldnid].x + (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+
+
+        		if(dep == 0 || dep == 1 || dep == 2){
+        			pt.z = nodeTable[ldnid].z - (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+        		else if(dep == 3 || dep == 4 || dep == 5){
+        			pt.z = nodeTable[ldnid].z - smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 6 || dep == 7 || dep == 8){
+        			pt.z = nodeTable[ldnid].z + smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+        else if(locn == 5 || locn == 7){
+
+        	for (dep = 0; dep < 9; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		pt.y = nodeTable[ldnid].y;
+
+        		if(dep == 0 || dep == 3 || dep == 6){
+        			pt.x = nodeTable[ldnid].x - (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+        		else if(dep == 1 || dep == 4 || dep == 7){
+        			pt.x = nodeTable[ldnid].x - smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 2 || dep == 5 || dep == 8){
+        			pt.x = nodeTable[ldnid].x + smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+
+
+        		if(dep == 0 || dep == 1 || dep == 2){
+        			pt.z = nodeTable[ldnid].z - (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+        		else if(dep == 3 || dep == 4 || dep == 5){
+        			pt.z = nodeTable[ldnid].z - smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 6 || dep == 7 || dep == 8){
+        			pt.z = nodeTable[ldnid].z + smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+
+        break;
+
+        case (ZFACE):
+
+                								dnodeTable[dnindex].deps = 9;
+
+        if(locn == 0 || locn == 4){
+
+        	for (dep = 0; dep < 9; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		pt.z = nodeTable[ldnid].z;
+
+        		if(dep == 0 || dep == 3 || dep == 6){
+        			pt.x = nodeTable[ldnid].x - smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+        		else if(dep == 1 || dep == 4 || dep == 7){
+        			pt.x = nodeTable[ldnid].x + smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 2 || dep == 5 || dep == 8){
+        			pt.x = nodeTable[ldnid].x + (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+
+
+        		if(dep == 0 || dep == 1 || dep == 2){
+        			pt.y = nodeTable[ldnid].y - smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+        		else if(dep == 3 || dep == 4 || dep == 5){
+        			pt.y = nodeTable[ldnid].y + smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 6 || dep == 7 || dep == 8){
+        			pt.y = nodeTable[ldnid].y + (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+
+
+//                printf("%d,    %d,     %d,  %lf; ...\n", pt.x, pt.y, pt.z,weight);
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+        else if(locn == 1 || locn == 5){
+        	for (dep = 0; dep < 9; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		pt.z = nodeTable[ldnid].z;
+
+        		if(dep == 0 || dep == 3 || dep == 6){
+        			pt.x = nodeTable[ldnid].x - (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+        		else if(dep == 1 || dep == 4 || dep == 7){
+        			pt.x = nodeTable[ldnid].x - smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 2 || dep == 5 || dep == 8){
+        			pt.x = nodeTable[ldnid].x + smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+
+
+        		if(dep == 0 || dep == 1 || dep == 2){
+        			pt.y = nodeTable[ldnid].y - smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+        		else if(dep == 3 || dep == 4 || dep == 5){
+        			pt.y = nodeTable[ldnid].y + smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 6 || dep == 7 || dep == 8){
+        			pt.y = nodeTable[ldnid].y + (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+
+
+//        		printf("%d,    %d,     %d,  %lf; ...\n", pt.x, pt.y, pt.z,weight);
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+
+        }
+        else if(locn == 2 || locn == 6){
+
+        	for (dep = 0; dep < 9; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		pt.z = nodeTable[ldnid].z;
+
+        		if(dep == 0 || dep == 3 || dep == 6){
+        			pt.x = nodeTable[ldnid].x - smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+        		else if(dep == 1 || dep == 4 || dep == 7){
+        			pt.x = nodeTable[ldnid].x + smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 2 || dep == 5 || dep == 8){
+        			pt.x = nodeTable[ldnid].x + (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+
+
+        		if(dep == 0 || dep == 1 || dep == 2){
+        			pt.y = nodeTable[ldnid].y - (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+        		else if(dep == 3 || dep == 4 || dep == 5){
+        			pt.y = nodeTable[ldnid].y - smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 6 || dep == 7 || dep == 8){
+        			pt.y = nodeTable[ldnid].y + smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+
+
+//        		printf("%d,    %d,     %d,  %lf; ...\n", pt.x, pt.y, pt.z,weight);
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+        else if(locn == 3 || locn == 7){
+
+        	for (dep = 0; dep < 9; dep++) {
+        		point_t pt;
+        		double weight = 1.;
+
+        		pt.z = nodeTable[ldnid].z;
+
+        		if(dep == 0 || dep == 3 || dep == 6){
+        			pt.x = nodeTable[ldnid].x - (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+        		else if(dep == 1 || dep == 4 || dep == 7){
+        			pt.x = nodeTable[ldnid].x - smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 2 || dep == 5 || dep == 8){
+        			pt.x = nodeTable[ldnid].x + smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+
+
+        		if(dep == 0 || dep == 1 || dep == 2){
+        			pt.y = nodeTable[ldnid].y - (tick_t)3 * smalloctsize;
+        			weight = weight * -0.125; //-0.125
+        		}
+        		else if(dep == 3 || dep == 4 || dep == 5){
+        			pt.y = nodeTable[ldnid].y - smalloctsize;
+        			weight = weight * 0.75; //0.75
+        		}
+        		else if(dep == 6 || dep == 7 || dep == 8){
+        			pt.y = nodeTable[ldnid].y + smalloctsize;
+        			weight = weight * 0.375; //0.375
+        		}
+
+
+//        		printf("%d,    %d,     %d,  %lf; ...\n", pt.x, pt.y, pt.z,weight);
+
+        		dnode_correlate_quadratic(tree, mess, vertexHashTable, ecount,
+        				dnodeTable, dnindex, pt, weight);
+        	}
+
+        }
+
+        break;
+        }
+
     } /* for all DANGLING nodes owned by me */
 
 

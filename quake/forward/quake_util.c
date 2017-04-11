@@ -67,6 +67,30 @@ int vector_is_zero( const fvector_t* v )
     return 0;
 }
 
+/* HAYDAR QUADRATIC EFFORT */
+
+int vector_is_zero_quadratic( fvector_t **v )
+{
+    /*
+     * For scalability studies, uncomment the immediate return.
+     */
+
+    /* return 1; */
+
+    int i,j;
+
+    for (i = 0; i < 27; i++) {
+        for(j = 0; j < 3; j++){
+            if (fabs( v[i]->f[j] ) > UNDERFLOW_CAP) {
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+
 /**
  * For conventional stiffness method:
  *
@@ -117,6 +141,44 @@ void MultAddMatVec( fmatrix_t* M, fvector_t* V1, double c, fvector_t* V2 )
 
     for (row = 0; row < 3; row++)
         V2->f[row] += c * tmpV.f[row];
+
+    return;
+}
+
+/* HAYDAR QUADRATIC EFFORT */
+
+void MultAddMatVec_Quadratic( double *K, fvector_t **disp, double c, fvector_t **force, int32_t ecounter )
+{
+    int row, col, disp_node, force_node, k;
+    double tmpV;
+
+
+    for (row = 0; row < 81; row++)
+    {
+    	tmpV = 0;
+        disp_node = 0;
+
+    	force_node = row % 3;
+//
+    	for (col = 0; col < 81; col = col + 3)
+    	{
+    		for (k = 0; k < 3; k++)
+    		{
+    			tmpV += K[row * 81 + col + k] * disp[disp_node]->f[k];
+//    			if(ecounter == 0)
+//    				printf("%f ",K[row * 81 + col + k]);
+    		}
+    		disp_node++;
+    	}
+
+//  		force[row / 3]->f[row % 3] = 0.;
+
+    		force[row / 3]->f[row % 3] += c * tmpV;
+
+    }
+
+//	for(j = 0; j<27; j++)
+//		printf("%e ",force[j].f[1]);
 
     return;
 }

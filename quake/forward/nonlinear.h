@@ -25,13 +25,6 @@
 /* -------------------------------------------------------------------------- */
 
 typedef enum {
-
-    RATE_DEPENDANT = 0, RATE_INDEPENDANT
-
-} plasticitytype_t;
-
-
-typedef enum {
     /*
      * The Linear option is intended for calculating nonlinear associated
      * entities (e.g., strains, stresses, k, J2) while keeping all elements
@@ -53,13 +46,6 @@ typedef enum {
     COHEFRICTION = 0, ALPHAKAY
 } materialproperties_t;
 
-typedef struct vector_t {
-
-	double ep;
-
-} vector_t;
-
-
 typedef struct tensor_t {
 
     double xx;
@@ -70,12 +56,6 @@ typedef struct tensor_t {
     double xz;
 
 } tensor_t;
-
-typedef struct qpvectors_t {
-
-    double qv[8];
-
-} qpvectors_t;
 
 typedef struct qptensors_t {
 
@@ -93,7 +73,6 @@ typedef struct nlconstants_t {
     double dLambda[8]; /* yield control */
     double strainrate;
     double sensitivity;
-    double hardmodulus; /* the effective yield stress is defined as : ( k + hardmodulus*ep ) */
 
     double maxFs;
     double avgFs;
@@ -107,9 +86,6 @@ typedef struct nlsolver_t {
     qptensors_t   *strains;
     qptensors_t   *pstrains1;
     qptensors_t   *pstrains2;
-    qpvectors_t   *ep1;         /* effective plastic strains */
-    qpvectors_t   *ep2;
-
 
 } nlsolver_t;
 
@@ -119,7 +95,6 @@ typedef struct nlstation_t {
     tensor_t strain;
     tensor_t pstrain1;
     tensor_t pstrain2;
-    double   ep;
 
 } nlstation_t;
 
@@ -195,7 +170,7 @@ qptensors_t compute_qp_stresses ( qptensors_t strains, double mu, double lambda)
 qptensors_t subtrac_qptensors   ( qptensors_t A, qptensors_t B);
 
 double   compute_yield_surface_state ( double J2, double I1, double alpha );
-double   compute_dLambdaII           ( nlconstants_t constants, double fs, double eff_ps, double J2, double I1 );
+double   compute_dLambda             ( nlconstants_t constants, double fs );
 tensor_t compute_dfds                ( tensor_t dev, double J2, double alpha);
 tensor_t compute_pstrain2            ( tensor_t pstrain1, tensor_t dfds,
                                        double dLambda, double dt);

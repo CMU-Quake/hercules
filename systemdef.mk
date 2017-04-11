@@ -27,9 +27,7 @@ ifeq ($(SYSTEM), XT5)
         LDFLAGS += 
         ifdef IOBUF_INC
             CPPFLAGS += -I${IOBUF_INC}
-        endif        
-        CPPFLAGS    += -D_USE_FILE_OFFSET64 -D_FILE_OFFSET_BITS=64 -D_USE_LARGEFILE64       
-        
+        endif
 endif
 
 
@@ -164,7 +162,7 @@ ifeq ($(SYSTEM), HOOKE)
 endif
 
 ifeq ($(SYSTEM), MACBOOK)
-	MPI_DIR      = /usr/
+	MPI_DIR      = /usr/local
         MPI_INCLUDE  = $(MPI_DIR)/include/openmpi/ompi/mpi/cxx
         CC           = $(MPI_DIR)/bin/mpicc
         CXX          = $(MPI_DIR)/bin/mpicxx

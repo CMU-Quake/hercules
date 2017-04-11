@@ -34,10 +34,7 @@ int bldgs_nodesearch ( tick_t x, tick_t y, tick_t z, double ticksize );
 int bldgs_setrec   ( octant_t *leaf,
                      double    ticksize,
                      edata_t  *edata,
-                     etree_t  *cvm,
-                     double xoriginm,
-                     double yoriginm,
-                     double zoriginm);
+                     etree_t  *cvm );
 
 int bldgs_toexpand ( octant_t *leaf,
                      double    ticksize,
